@@ -1,0 +1,44 @@
+# Modular RAG Configuration
+# This file controls which modules are active and their parameters
+
+pipeline:
+  type: modular  # or 'simple'
+
+knowledge_base:
+  description: "the team's graduation project workspace, including project plans, meeting notes, team member information, task assignments, technical decisions, and development guidelines"
+  domain: "team collaboration and project management"
+
+retriever:
+  model: text-embedding-3-small
+  top_k: 8
+  dense_weight: 0.7
+  sparse_weight: 0.3
+
+reranker:
+  enabled: true  # Set to false to disable reranking
+  model: cross-encoder/ms-marco-MiniLM-L-6-v2
+  top_n: 5  # Number of documents to keep after reranking (increased for better context)
+
+generator:
+  model: gpt-4o-mini
+  temperature: 0.1  # Low temperature for factual accuracy
+  max_tokens: 500
+
+query_processor:
+  enabled: true  # Set to false to disable query processing
+  expansion: true  # Expand queries with related terms
+  rewriting: true  # Rewrite unclear queries
+
+orchestration:
+  routing_enabled: true  # Set to false to disable query routing
+  max_iterations: 3  # Maximum retrieval iterations for complex queries
+
+memory:
+  max_history: 10  # Maximum number of conversation turns to remember
+
+# Notes:
+# - Reranker improves relevance but adds latency
+# - Query processing helps with unclear or complex questions
+# - Routing automatically adapts the pipeline to query type
+# - Memory enables conversational capabilities and follow-up questions
+# - Disable components for faster responses or lower API costs

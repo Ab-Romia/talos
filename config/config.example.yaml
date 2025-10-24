@@ -1,0 +1,46 @@
+# Example configuration file for Modular RAG Framework
+# Copy this file to config.yaml and update with your settings
+
+retriever:
+  type: "hybrid"  # Options: sparse, dense, hybrid
+  sparse:
+    algorithm: "bm25"
+    k1: 1.5
+    b: 0.75
+  dense:
+    model: "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_dim: 384
+  top_k: 10
+
+reranker:
+  enabled: true
+  type: "cross-encoder"  # Options: cross-encoder, llm, none
+  model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  top_k: 5
+
+generator:
+  provider: "openai"  # Options: openai, anthropic, local
+  model: "gpt-4"
+  temperature: 0.7
+  max_tokens: 500
+  system_prompt: "You are a helpful assistant that answers questions based on the provided context."
+
+evaluator:
+  metrics:
+    - "mrr"
+    - "ndcg"
+    - "recall@k"
+    - "rouge"
+  benchmark_dataset: null
+
+vector_db:
+  backend: "faiss"  # Options: faiss, chromadb, pinecone
+  index_type: "IVFFlat"  # FAISS index type
+  dimension: 384
+  index_path: "data/embeddings/faiss.index"
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins:
+    - "http://localhost:3000"
