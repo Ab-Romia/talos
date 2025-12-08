@@ -1,0 +1,19 @@
+[project]
+name = "graduation-project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.124.0",
+    "jinja2>=3.1.6",
+    "langchain>=1.1.2",
+    "numpy>=2.3.5",
+    "openai>=2.9.0",
+    "psycopg2-binary>=2.9.11",
+    "python-dotenv>=1.2.1",
+    "rank-bm25>=0.2.2",
+    "sentence-transformers>=5.1.2",
+    "sqlmodel>=0.0.27",
+    "uvicorn>=0.38.0",
+]
