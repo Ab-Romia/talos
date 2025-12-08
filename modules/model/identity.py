@@ -23,6 +23,8 @@ class User(Base):
     id = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     username: Mapped[str] = mapped_column(unique=True, index=True)
     primary_email: Mapped[str] = mapped_column(unique=True, index=True)
+    email_verified: Mapped[bool] = mapped_column(default=False, index=True)
+
     name: Mapped[Optional[str]] = mapped_column()
 
     created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.now)
@@ -34,19 +36,32 @@ class User(Base):
                                                        back_populates="users")
 
 
-class AuthType(PyEnum):
-    PASSWORD = "password"
-    OAUTH = "oauth"
-    SAML = "saml"
-    LDAP = "ldap"
+class OTP(Base):
+    __tablename__ = "otp"
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), default=None)
+    code: Mapped[str] = mapped_column()
 
 
-class AuthProvider(Base):
-    __tablename__ = "auth_providers"
-    id = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    auth_type: Mapped[AuthType] = mapped_column(Enum(AuthType), nullable=False)
-    name: Mapped[str] = mapped_column(unique=True, index=True)
-    description: Mapped[Optional[str]] = mapped_column()
+class UserPassword(Base):
+    __tablename__ = "user_passwords"
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    hashed_password: Mapped[str] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.now)
+
+
+class AuthUrl(PyEnum):
+    password = "/private/auth/password"
+    otp = "/private/auth/otp"
+    google = "/private/auth/google"
+
+
+class IdentityProvider(Base):
+    __tablename__ = "identity_providers"
+    # id = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    auth_url: Mapped[AuthUrl] = mapped_column(Enum(AuthUrl), primary_key=True)
+    sub: Mapped[str] = mapped_column()
 
 
 platform_roles_permissions = Table(
