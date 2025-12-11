@@ -1,3 +1,4 @@
+# System Evaluation
 
 The evaluation step is essential to quantify how effective is our implementation of the RAG System compared to a baseline (usually the plain LLM, or a previous iteration on the implementation).
 
