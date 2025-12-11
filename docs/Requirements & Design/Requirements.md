@@ -1,0 +1,106 @@
+# 1. AI System:
+- User facing interactions:
+	- Inline [[Chatbot]]
+	- Suggestions while typing
+		- Document links/reference
+		- 3rd-party integration
+			- Git, jira...
+	- Summary
+		- Video/Audio Meeting Minutes
+		- Chat range summary
+	- On-boarding
+		- Give summary and help to newcomers
+		- configurable tutorials/guides 
+	- Model customization
+		- Self hosting
+		- Control model options
+		- Use Users' API keys
+- Technical
+	- Rag System
+		- Multiple document support
+		- [Modular Rag implementation](https://arxiv.org/abs/2407.21059)
+		- (Indexing)[]
+		- (Retrieval)[]
+	- Generation
+	- Database
+	- [[Evaluation]]
+	- Security & Privacy
+		- Access Control on user data
+		- (Model Security)[]
+	
+# 2. Platform
+- **[[Authentication & Authorization]]**
+	- Authentication channels
+		- Sign-in with ...
+		- Password Login 
+		- O-Auth
+		- OTP
+		- Passkey
+		- Biometrics (?)
+	-  Roles and Permission
+- Global Search
+	- Search Everywhere
+		- Notifications
+		- Messages
+		- People
+		- Files/External Resources
+	- Filters
+	- Semantic Search
+- Security & Privacy
+	- Mute (with set time)
+	- Block
+	- Leave any workspace
+- [[Notifications]]
+	- Muti-Channel
+		- Email
+		- Push Notifications
+		- Custom Channels (Extensions)
+	- Auto Rate-limit
+	- Opt-in/out for certain types
+	- Retries
+	- Scheduled Notifications
+- [[Extensions]]
+	- **File hosting/integration with cloud storage**
+	- Integration with development tools
+		- Git + Github
+		- Integration with code editors
+- User Interface
+	- Tabs/Split Screen/Multitasking
+
+- **Workspace**
+	- **Management** 
+		- **Manage Members**
+		- Permission controls
+		- Notification control/mentions
+	- Private Chatrooms
+	- One-to-many/Broadcast messages 
+	- Event Scheduling System
+		- Deliverables 
+		- Calendar planner
+		- Custom Reminders 
+			- (Member can add self-reminder to any message/chat)
+	- Announcement Channel
+	- **Chatroom**
+		- **Text chat**
+		- Audio/video meeting
+
+		- Messages
+			- Replies
+			- Mentions
+			- Reactions
+			- Stickers
+			- Threads
+			- Rich-text/formatting
+				- Time format
+		- **Message Attachments**
+			- Forms (inc. polls)
+			- Pictures
+			- Video
+			- Audio/Voice Notes
+			- Plaintext files
+				- Treesitter Highlights
+			- Structured documents w/builtin rendering
+				- PDF
+				- Word
+				- Excel
+			- Diagrams/Dkkwings
