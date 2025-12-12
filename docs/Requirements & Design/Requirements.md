@@ -103,4 +103,4 @@
 				- PDF
 				- Word
 				- Excel
-			- Diagrams/Dkkwings
+			- Diagrams/Drawings
