@@ -11,7 +11,7 @@ load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    import modules.model  # noqa: F401
+    import backend.model  # noqa: F401
 
     SQLModel.metadata.create_all(engine)
     yield

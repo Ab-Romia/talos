@@ -1,9 +1,9 @@
 import os
 import sys
 from dotenv import load_dotenv
-from modules.rag.retriever import DenseRetriever
-from modules.rag.generator import LLMGenerator
-from modules.rag.modular_rag import ModularRAG
+from backend.rag.retriever import DenseRetriever
+from backend.rag.generator import LLMGenerator
+from backend.rag.modular_rag import ModularRAG
 
 
 class SimpleRAG:
