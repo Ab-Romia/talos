@@ -10,7 +10,7 @@ import {
 
 const ChatContent = () => {
   return (
-    <Container>
+    <Container fluid>
       <Row>
         <ChatHeaderBar>
           <i class="bi bi-robot" />

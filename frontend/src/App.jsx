@@ -1,5 +1,5 @@
 import { useState } from "react";
-import ChatPage from "./page/ChatPage";
+import ChatPage from "./page/ChatPage/ChatPage";
 import { Routes, Route } from "react-router-dom";
 
 function App() {

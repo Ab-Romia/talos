@@ -8,6 +8,7 @@ export const ChatPageLayout = styled.div`
 
 export const SidebarLayoutWrapper = styled.div`
   flex: 2;
+  min-width: 0;
 `;
 
 export const ContentLayoutWrapper = styled.div`
