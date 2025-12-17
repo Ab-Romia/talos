@@ -5,7 +5,7 @@ from typing import Optional
 from sqlalchemy import DateTime, UUID, ForeignKey
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 
-from modules.model.base import Base
+from backend.model.base import Base
 
 
 class Workspace(Base):
@@ -29,7 +29,7 @@ class Chatroom(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.now)
     deleted_at: Mapped[Optional[datetime]] = mapped_column()
 
-    messages: Mapped[list["Message"]] = relationship("Message", back_populates="chatrooms")
+    messages: Mapped[list["Message"]] = relationship("Message", back_populates="chatroom")
     workspace: Mapped["Workspace"] = relationship("Workspace", back_populates="chatrooms")
 
 

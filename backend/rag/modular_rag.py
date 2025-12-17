@@ -5,13 +5,13 @@ A flexible RAG system implementing the Modular RAG framework with
 configurable pre-retrieval, retrieval, and orchestration components.
 """
 
-from modules.rag.retriever import HybridRetriever
-from modules.rag.generator import LLMGenerator
-from modules.rag.reranker import CrossEncoderReranker
-from modules.rag.pre_retrieval import QueryProcessor, QueryTransformationType
-from modules.rag.orchestration import QueryRouter, QueryType
-from modules.config import RAGConfig
-from modules.rag.memory import ConversationMemory
+from backend.rag.retriever import HybridRetriever
+from backend.rag.generator import LLMGenerator
+from backend.rag.reranker import CrossEncoderReranker
+from backend.rag.pre_retrieval import QueryProcessor, QueryTransformationType
+from backend.rag.orchestration import QueryRouter, QueryType
+from backend.config import RAGConfig
+from backend.rag.memory import ConversationMemory
 from typing import List
 
 

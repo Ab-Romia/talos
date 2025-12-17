@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 from sqlalchemy import create_engine, text
-from modules.model.base import Base
+from backend.model.base import Base
 from sqlalchemy.orm import Session
 
 load_dotenv()
@@ -14,6 +14,8 @@ load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import backend.model  # noqa: F401
+
     with Session(engine) as session:
         session.execute(text("CREATE EXTENSION IF NOT EXISTS citext;"))
         session.commit()
@@ -22,7 +24,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title='Temp', lifespan=lifespan)
+app = FastAPI(title='Talos', lifespan=lifespan)
 
 engine = create_engine(
     os.environ.get('DATABASE_URL'),

@@ -7,7 +7,7 @@ from sqlalchemy import DateTime, UUID, Table, Column, ForeignKey, Enum
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from modules.model.base import Base
+from backend.model.base import Base
 
 users_platform_roles = Table(
     "users_platform_roles", Base.metadata,
@@ -30,7 +30,7 @@ class User(Base):
 
     data: Mapped[dict[str, Any]] = mapped_column()
     roles: Mapped[list["PlatformRole"]] = relationship("PlatformRole",
-                                                       secondary="user_platform_roles",
+                                                       secondary="users_platform_roles",
                                                        back_populates="users")
 
 
