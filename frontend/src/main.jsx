@@ -5,11 +5,18 @@ import "./index.css";
 import App from "./App.jsx";
 import "bootstrap/dist/css/bootstrap.min.css";
 import "bootstrap-icons/font/bootstrap-icons.css";
+import { AuthProvider, WorkspaceProvider, ChatProvider } from "./context";
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>
     <BrowserRouter>
-      <App />
+      <AuthProvider>
+        <WorkspaceProvider>
+          <ChatProvider>
+            <App />
+          </ChatProvider>
+        </WorkspaceProvider>
+      </AuthProvider>
     </BrowserRouter>
   </StrictMode>
 );
