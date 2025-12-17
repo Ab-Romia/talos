@@ -31,10 +31,16 @@ dependencies = [
 
     # Database
     "psycopg2-binary>=2.9.11",
-    "sqlmodel>=0.0.27",
+    "sqlalchemy>=2.0.44",
+
+    # Authentication
+    "bcrypt>=5.0.0",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
 
     # Document processing
     "pypdf>=3.0.0",
+    "python-multipart>=0.0.6",
 ]
 
 [project.optional-dependencies]

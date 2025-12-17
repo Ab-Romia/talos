@@ -4,16 +4,21 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
-from sqlmodel import create_engine, SQLModel
+
+from sqlalchemy import create_engine, text
+from modules.model.base import Base
+from sqlalchemy.orm import Session
 
 load_dotenv()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    import modules.model  # noqa: F401
+    with Session(engine) as session:
+        session.execute(text("CREATE EXTENSION IF NOT EXISTS citext;"))
+        session.commit()
 
-    SQLModel.metadata.create_all(engine)
+    Base.metadata.create_all(engine)
     yield
 
 
@@ -30,6 +35,11 @@ engine = create_engine(
 async def root():
     with open('templates/index.html', 'r') as f:
         return f.read()
+
+
+@app.get('/smily', response_class=HTMLResponse)
+async def smily():
+    return HTMLResponse('<p style="font-size:24em";>🙂</p>')
 
 
 if __name__ == '__main__':
