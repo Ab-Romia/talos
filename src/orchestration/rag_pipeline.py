@@ -260,6 +260,32 @@ class RAGPipeline(BaseRAGPipeline):
             if self.memory.has_history() and pipeline_config.get("use_conversation_context"):
                 conversation_history = self.memory.get_history(max_turns=3)
 
+            # Handle case where no documents were retrieved
+            if not documents:
+                # Check if collection exists
+                collection_name = self.config.milvus.collection_name
+                if not self.vector_store.collection_exists(collection_name):
+                    no_docs_answer = (
+                        "I don't have any documents loaded yet. Please load some documents first using:\n"
+                        "  /load <path>  - Load document(s) from a file or directory\n\n"
+                        "Example: /load data/docs/sample.txt"
+                    )
+                else:
+                    no_docs_answer = (
+                        "I couldn't find any relevant documents to answer your question. "
+                        "Try rephrasing your question or loading more relevant documents."
+                    )
+
+                return QueryResult(
+                    answer=no_docs_answer,
+                    sources=[],
+                    query=question,
+                    processed_query=processed_query if processed_query != question else None,
+                    query_type=query_type,
+                    total_latency_ms=(time.perf_counter() - start_time) * 1000,
+                    metadata={"no_documents": True},
+                )
+
             generation_result = self.llm_service.generate(
                 query=question,
                 context=documents,
@@ -320,6 +346,12 @@ class RAGPipeline(BaseRAGPipeline):
         verbose: bool,
     ) -> List[Document]:
         """Execute retrieval with appropriate method."""
+        # Check if collection exists
+        collection_name = self.config.milvus.collection_name
+        if not self.vector_store.collection_exists(collection_name):
+            logger.warning(f"Collection '{collection_name}' does not exist. No documents to retrieve.")
+            return []
+
         # Check for HyDE
         if processing_result.get("hypothetical_doc"):
             # Use hypothetical document for dense retrieval

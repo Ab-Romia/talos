@@ -65,6 +65,18 @@ class DenseRetriever(BaseRetriever):
         start_time = time.perf_counter()
 
         try:
+            # Check if collection exists
+            if not self.vector_store.collection_exists(self.collection_name):
+                logger.warning(f"Collection '{self.collection_name}' does not exist")
+                return RetrievalResult(
+                    documents=[],
+                    query=query,
+                    method="dense",
+                    total_found=0,
+                    latency_ms=0,
+                    metadata={"error": "collection_not_found"},
+                )
+
             # Generate query embedding
             query_embedding = self.embedding_service.embed_query(query)
 

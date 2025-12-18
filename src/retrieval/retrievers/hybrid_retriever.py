@@ -204,6 +204,11 @@ class HybridRetriever(BaseRetriever):
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[Tuple[Document, float]]:
         """Perform dense retrieval."""
+        # Check if collection exists
+        if not self.vector_store.collection_exists(self.collection_name):
+            logger.warning(f"Collection '{self.collection_name}' does not exist, skipping dense retrieval")
+            return []
+
         query_embedding = self.embedding_service.embed_query(query)
 
         documents = self.vector_store.search(

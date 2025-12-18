@@ -213,6 +213,33 @@ class RAGCLIDemo:
 
     def query(self, question: str) -> Dict[str, Any]:
         """Execute a query with full pipeline visualization."""
+        # Check if documents are loaded first
+        if not self.documents_loaded:
+            collection_exists = False
+            if hasattr(self.pipeline, 'vector_store') and hasattr(self.pipeline, 'config'):
+                try:
+                    collection_name = self.pipeline.config.milvus.collection_name
+                    collection_exists = self.pipeline.vector_store.collection_exists(collection_name)
+                except Exception:
+                    pass
+
+            if not collection_exists:
+                print_error("No documents loaded!")
+                print_info("Please load documents first using:")
+                print("  /load <path>  - Load document(s) from a file or directory")
+                print("")
+                print("Examples:")
+                print("  /load data/docs/sample.txt")
+                print("  /load ./my_documents/")
+                print("")
+                return {
+                    "question": question,
+                    "steps": [],
+                    "answer": "No documents loaded. Use /load <path> to load documents first.",
+                    "sources": [],
+                    "timing": {"total": 0}
+                }
+
         print_header("RAG Query Pipeline")
 
         result = {
@@ -424,6 +451,13 @@ class RAGCLIDemo:
     def interactive_loop(self):
         """Run interactive query loop."""
         print_header("Interactive Mode")
+
+        # Check if documents are loaded
+        if not self.documents_loaded:
+            print(f"{Colors.YELLOW}⚠ No documents loaded yet!{Colors.RESET}")
+            print(f"  Load documents with: {Colors.CYAN}/load <path>{Colors.RESET}")
+            print("")
+
         print_info("Commands:")
         print("  /load <path>  - Load document(s)")
         print("  /clear        - Clear conversation history")
