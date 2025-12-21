@@ -1,106 +1,94 @@
-# 1. AI System:
+# Project Requirements Index
+
+---
+
+## 1. LLM & Rag System:
+
 - User facing interactions:
-	- Inline [[Chatbot]]
-	- Suggestions while typing
-		- Document links/reference
-		- 3rd-party integration
-			- Git, jira...
-	- Summary
-		- Video/Audio Meeting Minutes
-		- Chat range summary
-	- On-boarding
-		- Give summary and help to newcomers
-		- configurable tutorials/guides 
-	- Model customization
-		- Self hosting
-		- Control model options
-		- Use Users' API keys
+  - Inline [Chatbot](LLM%20and%20Rag%20System/AI%20Assistant.md)
+  - Suggestions while typing
+    - Document links/reference
+    - 3rd-party integration
+      - Git, jira...
+  - Summary
+    - Video/Audio Meeting Minutes
+    - Chat range summary
+  - On-boarding
+    - Give summary and help to newcomers
+    - configurable tutorials/guides
+  - Model customization
+    - Self-hosting
+    - Control model options
+    - Use Users' API keys
 - Technical
-	- Rag System
-		- Multiple document support
-		- [Modular Rag implementation](https://arxiv.org/abs/2407.21059)
-		- (Indexing)[]
-		- (Retrieval)[]
-	- Generation
-	- Database
-	- [[Evaluation]]
-	- Security & Privacy
-		- Access Control on user data
-		- (Model Security)[]
-	
-# 2. Platform
-- **[[Authentication & Authorization]]**
-	- Authentication channels
-		- Sign-in with ...
-		- Password Login 
-		- O-Auth
-		- OTP
-		- Passkey
-		- Biometrics (?)
-	-  Roles and Permission
+  - Rag System
+    - Multiple document support
+    - [Modular Rag implementation](https://arxiv.org/abs/2407.21059)
+    - (Indexing)[]
+    - (Retrieval)[]
+  - Generation
+  - Database
+  - [Evaluation](LLM%20and%20Rag%20System/Evaluation.md)
+  - Security & Privacy
+    - Access Control on user data
+    - (Model Security)[]
+
+## 2. Platform
+
+- [Authentication & Authorization](Platform/Authentication%20&%20Authorization.md)
+  - Authentication Providers
+  - Roles and Permission
 - Global Search
-	- Search Everywhere
-		- Notifications
-		- Messages
-		- People
-		- Files/External Resources
-	- Filters
-	- Semantic Search
+  - Search Everywhere
+    - Notifications
+    - Messages
+    - People
+    - Files/External Resources
+  - Filters
+  - Semantic Search
 - Security & Privacy
-	- Mute (with set time)
-	- Block
-	- Leave any workspace
-- [[Notifications]]
-	- Muti-Channel
-		- Email
-		- Push Notifications
-		- Custom Channels (Extensions)
-	- Auto Rate-limit
-	- Opt-in/out for certain types
-	- Retries
-	- Scheduled Notifications
-- [[Extensions]]
-	- **File hosting/integration with cloud storage**
-	- Integration with development tools
-		- Git + Github
-		- Integration with code editors
+  - Mute (with set time)
+  - Block
+  - Leave any workspace
+- [Notifications](Platform/Notifications.md)
+  - Muti-Channel
+    - Email
+    - Push Notifications
+    - Custom Channels (Extensions)
+  - Auto Rate-limit
+  - Opt-in/out for certain types
+  - Retries
+  - Scheduled Notifications
+- [Extensions](Platform/Extensions.md)
+  - File hosting/integration with cloud storage
+  - Integration with development tools
+    - Git & git hosting providers
+    - Integration with code editors
 - User Interface
-	- Tabs/Split Screen/Multitasking
+  - Tabs/Split Screen/Multitasking
 
-- **Workspace**
-	- **Management** 
-		- **Manage Members**
-		- Permission controls
-		- Notification control/mentions
-	- Private Chatrooms
-	- One-to-many/Broadcast messages 
-	- Event Scheduling System
-		- Deliverables 
-		- Calendar planner
-		- Custom Reminders 
-			- (Member can add self-reminder to any message/chat)
-	- Announcement Channel
-	- **Chatroom**
-		- **Text chat**
-		- Audio/video meeting
-
-		- Messages
-			- Replies
-			- Mentions
-			- Reactions
-			- Stickers
-			- Threads
-			- Rich-text/formatting
-				- Time format
-		- **Message Attachments**
-			- Forms (inc. polls)
-			- Pictures
-			- Video
-			- Audio/Voice Notes
-			- Plaintext files
-				- Treesitter Highlights
-			- Structured documents w/builtin rendering
-				- PDF
-				- Word
-				- Excel
-			- Diagrams/Drawings
+- Workspace
+  - Workspace Management
+    - Manage Members
+    - Permission controls
+    - Notification control/mentions
+  - One-to-many/Broadcast messages
+  - Event Scheduling System
+    - Deliverables
+    - Calendar planner
+    - Custom Reminders
+  - Channel
+    - Announcement Channel
+    - Access control
+    - Audio/video meetings
+    - [Messaging](Platform/Workspace/Messaging.md)
+      - Rich-text
+      - Message Interactions
+      - Threads
+      - Message Attachments
+        - Forms
+        - Pictures/Video/Audio/Voice Notes
+        - Documents w/builtin rendering
+          - Markdown
+          - PDF
+          - Spreadsheets
