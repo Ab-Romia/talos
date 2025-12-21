@@ -131,6 +131,24 @@ class RAGPipeline(BaseRAGPipeline):
             collection_name=collection_name,
         )
 
+        # Populate BM25 index from vector store
+        try:
+            # We fetch documents to build the sparse index in memory
+            # This is necessary because Milvus (in this config) is storing the dense vectors
+            # but we need the raw text for BM25.
+            if self.vector_store.collection_exists(collection_name):
+                logger.info(f"Loading documents from '{collection_name}' for sparse index...")
+                existing_docs = self.vector_store.get_all_documents(collection_name)
+                
+                if existing_docs:
+                    self.hybrid_retriever.set_documents(existing_docs)
+                    self._indexed_documents = existing_docs
+                    logger.info(f"Initialized BM25 index with {len(existing_docs)} documents")
+                else:
+                    logger.info("No documents found in collection.")
+        except Exception as e:
+            logger.warning(f"Failed to initialize BM25 index: {e}")
+
         # Reranker
         self.reranker = None
         if self.config.reranker.enabled:

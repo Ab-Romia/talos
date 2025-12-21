@@ -5,6 +5,7 @@ Provides multiple chunking strategies optimized for different use cases.
 """
 
 import re
+import hashlib
 from abc import ABC
 from typing import Any, Dict, List, Optional
 
@@ -36,7 +37,15 @@ class TextChunker(BaseChunker, ABC):
         if metadata:
             chunk_metadata.update(metadata)
 
-        return Document(content=content, metadata=chunk_metadata)
+        # Generate deterministic ID based on content
+        content_hash = hashlib.md5(content.encode()).hexdigest()
+        doc_id = f"doc_{content_hash}"
+
+        return Document(
+            content=content, 
+            metadata=chunk_metadata,
+            id=doc_id
+        )
 
     def chunk_documents(self, documents: List[Document]) -> List[Document]:
         """Chunk multiple documents."""

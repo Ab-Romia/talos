@@ -1142,6 +1142,47 @@ class OptimizedMilvusVectorStore(BaseVectorStore):
             "cached_collections": list(self._collection_cache.keys()),
         }
 
+    def get_all_documents(
+        self,
+        collection_name: str,
+        limit: int = 10000,
+    ) -> List[Document]:
+        """
+        Retrieve all documents from collection (up to limit).
+        
+        Uses Milvus query iterator for efficient retrieval.
+        """
+        self._ensure_connected()
+
+        if not self.collection_exists(collection_name):
+            return []
+
+        try:
+            collection = self._get_collection(collection_name)
+            
+            # Use query iterator for large datasets
+            # Query for all documents (expression "id != ''" effectively selects all)
+            results = collection.query(
+                expr="id != ''",
+                output_fields=["id", "content", "metadata"],
+                limit=limit,
+            )
+
+            documents = []
+            for hit in results:
+                doc = Document(
+                    id=hit.get("id"),
+                    content=hit.get("content", ""),
+                    metadata=hit.get("metadata", {}),
+                )
+                documents.append(doc)
+
+            return documents
+
+        except Exception as e:
+            logger.error(f"Failed to fetch all documents: {e}")
+            return []
+
 
 def create_milvus_store(config: MilvusConfig) -> OptimizedMilvusVectorStore:
     """Factory function to create an optimized Milvus vector store."""

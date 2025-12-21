@@ -176,12 +176,18 @@ class RAGCLIDemo:
                         if file.suffix.lower() in ['.txt', '.md', '.pdf', '.json']:
                             result = self._ingest_file(file)
                             if result:
-                                total_chunks += result.get('chunks_created', 0)
+                                chunks = result.get('chunks_created', 0)
+                                if chunks == 0:
+                                    chunks = result.get('documents_indexed', 0)
+                                total_chunks += chunks
                                 total_docs += 1
                 else:
                     result = self._ingest_file(path)
                     if result:
-                        total_chunks += result.get('chunks_created', 0)
+                        chunks = result.get('chunks_created', 0)
+                        if chunks == 0:
+                            chunks = result.get('documents_indexed', 0)
+                        total_chunks += chunks
                         total_docs += 1
 
                 elapsed = time.time() - start_time
@@ -202,7 +208,10 @@ class RAGCLIDemo:
         if hasattr(self.pipeline, 'ingest_file'):
             result = self.pipeline.ingest_file(str(file_path))
             if self.verbose:
-                print_substep(f"Created {result.get('chunks_created', 0)} chunks")
+                chunks = result.get('chunks_created', 0)
+                if chunks == 0:
+                    chunks = result.get('documents_indexed', 0)
+                print_substep(f"Created {chunks} chunks")
             return result
         else:
             # Simple mode - just read content

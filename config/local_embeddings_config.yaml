@@ -1,0 +1,15 @@
+embedding:
+  provider: "huggingface"
+  model_name: "sentence-transformers/all-MiniLM-L6-v2"
+  dimension: 384
+  normalize: true
+  batch_size: 32
+
+retriever:
+  dense_weight: 0.7
+  sparse_weight: 0.3
+  top_k: 10
+
+milvus:
+  collection_name: "rag_local_embeddings"
+  dimension: 384  # Must match embedding dimension

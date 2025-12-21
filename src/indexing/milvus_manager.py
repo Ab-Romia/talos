@@ -522,6 +522,47 @@ class MilvusVectorStore(BaseVectorStore):
                 cause=e,
             )
 
+    def get_all_documents(
+        self,
+        collection_name: str,
+        limit: int = 10000,
+    ) -> List[Document]:
+        """
+        Retrieve all documents from collection (up to limit).
+        
+        Uses Milvus query iterator for efficient retrieval.
+        """
+        self._ensure_connected()
+
+        if not self.collection_exists(collection_name):
+            return []
+
+        try:
+            collection = self._Collection(collection_name)
+            
+            # Use query iterator for large datasets
+            # Query for all documents (expression "id != ''" effectively selects all)
+            results = collection.query(
+                expr="id != ''",
+                output_fields=["id", "content", "metadata"],
+                limit=limit,
+            )
+
+            documents = []
+            for hit in results:
+                doc = Document(
+                    id=hit.get("id"),
+                    content=hit.get("content", ""),
+                    metadata=hit.get("metadata", {}),
+                )
+                documents.append(doc)
+
+            return documents
+
+        except Exception as e:
+            logger.error(f"Failed to fetch all documents: {e}")
+            return []
+
     def hybrid_search(
         self,
         collection_name: str,
@@ -695,3 +736,16 @@ class InMemoryVectorStore(BaseVectorStore):
             "num_entities": len(self._collections[collection_name]["documents"]),
             "dimension": self._collections[collection_name]["dimension"],
         }
+
+    def get_all_documents(
+        self,
+        collection_name: str,
+        limit: int = 10000,
+    ) -> List[Document]:
+        """Retrieve all documents from collection (up to limit)."""
+        if collection_name not in self._collections:
+            return []
+        
+        # Get all documents from dict
+        documents = list(self._collections[collection_name]["documents"].values())
+        return documents[:limit]

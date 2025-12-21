@@ -123,7 +123,7 @@ class RerankerConfig(BaseModel):
     top_n: int = Field(default=5, description="Number of documents after reranking")
     batch_size: int = Field(default=32, description="Batch size for reranking")
     relevance_threshold: float = Field(
-        default=0.0, ge=0.0, le=1.0, description="Minimum relevance score threshold"
+        default=-100.0, ge=-1000.0, le=1.0, description="Minimum relevance score threshold"
     )
     use_gpu: bool = Field(default=False, description="Use GPU for reranking")
 
