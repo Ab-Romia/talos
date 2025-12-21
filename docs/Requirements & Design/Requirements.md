@@ -40,7 +40,6 @@
   - Roles and Permission
 - Global Search
   - Search Everywhere
-    - Notifications
     - Messages
     - People
     - Files/External Resources
