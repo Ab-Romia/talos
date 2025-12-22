@@ -21,7 +21,7 @@ retriever:
   retrieval_method: "hybrid"
 
 reranker:
-  enabled: false  # Disabled to avoid quota/resource issues by default
+  enabled: true  # Disabled to avoid quota/resource issues by default
   model: cross-encoder/ms-marco-MiniLM-L-6-v2
   top_n: 5
 
@@ -32,11 +32,13 @@ generator:
   max_tokens: 500
 
 query_processor:
-  enabled: false  # Disabled to avoid OpenAI calls during retrieval
+  enabled: true  # Disabled to avoid OpenAI calls during retrieval
 
 orchestration:
-  routing_enabled: false  # Disabled to avoid OpenAI calls during routing
+  routing_enabled: true  # Disabled to avoid OpenAI calls during routing
   max_iterations: 3
+  answer_completeness_threshold: 0.8
+
 
 chunking:
   strategy: "recursive" # Switched from semantic to avoid embedding calls during chunking

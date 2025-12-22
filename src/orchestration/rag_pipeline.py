@@ -500,7 +500,15 @@ class RAGPipeline(BaseRAGPipeline):
             chunker=chunker,
         )
 
-        return pipeline.ingest_file(file_path, additional_metadata=metadata)
+        stats, ingested_docs = pipeline.ingest_file(file_path, additional_metadata=metadata)
+
+        # Update BM25 index
+        if ingested_docs:
+            self._indexed_documents.extend(ingested_docs)
+            self.hybrid_retriever.set_documents(self._indexed_documents)
+            logger.info(f"Updated BM25 index with {len(ingested_docs)} new documents.")
+
+        return stats
 
     def get_pipeline_info(self) -> Dict[str, Any]:
         """Get information about the pipeline configuration."""

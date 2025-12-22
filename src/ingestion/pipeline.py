@@ -69,7 +69,7 @@ class IngestionPipeline:
         file_path: Union[str, Path],
         collection_name: Optional[str] = None,
         additional_metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    ) -> tuple[dict[str, Any], list[Document]]:
         """
         Ingest a single file.
 
@@ -79,7 +79,7 @@ class IngestionPipeline:
             additional_metadata: Extra metadata to add to all documents
 
         Returns:
-            Ingestion statistics
+            A tuple containing ingestion statistics and the ingested documents.
         """
         file_path = Path(file_path)
 
@@ -104,7 +104,7 @@ class IngestionPipeline:
         )
 
         logger.info(f"Ingested file: {file_path}", **stats)
-        return stats
+        return stats, documents
 
     def ingest_directory(
         self,

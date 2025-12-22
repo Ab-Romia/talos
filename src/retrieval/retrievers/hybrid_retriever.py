@@ -265,10 +265,19 @@ class HybridRetriever(BaseRetriever):
         sorted_ids = sorted(doc_scores.keys(), key=lambda x: doc_scores[x], reverse=True)
 
         results = []
+        max_score = 0.0
+
         for doc_id in sorted_ids[:top_k]:
             doc = doc_map[doc_id]
             doc.score = doc_scores[doc_id]
             results.append(doc)
+            if doc_scores[doc_id] > max_score:
+                max_score = doc_scores[doc_id]
+
+        # Normalize scores to 0-1 scale
+        if max_score > 0:
+            for doc in results:
+                doc.score /= max_score
 
         return results
 
