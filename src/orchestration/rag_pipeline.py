@@ -139,7 +139,7 @@ class RAGPipeline(BaseRAGPipeline):
             if self.vector_store.collection_exists(collection_name):
                 logger.info(f"Loading documents from '{collection_name}' for sparse index...")
                 existing_docs = self.vector_store.get_all_documents(collection_name)
-                
+
                 if existing_docs:
                     self.hybrid_retriever.set_documents(existing_docs)
                     self._indexed_documents = existing_docs

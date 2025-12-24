@@ -176,18 +176,12 @@ class RAGCLIDemo:
                         if file.suffix.lower() in ['.txt', '.md', '.pdf', '.json']:
                             result = self._ingest_file(file)
                             if result:
-                                chunks = result.get('chunks_created', 0)
-                                if chunks == 0:
-                                    chunks = result.get('documents_indexed', 0)
-                                total_chunks += chunks
+                                total_chunks += result.get('documents_indexed', 0)
                                 total_docs += 1
                 else:
                     result = self._ingest_file(path)
                     if result:
-                        chunks = result.get('chunks_created', 0)
-                        if chunks == 0:
-                            chunks = result.get('documents_indexed', 0)
-                        total_chunks += chunks
+                        total_chunks += result.get('documents_indexed', 0)
                         total_docs += 1
 
                 elapsed = time.time() - start_time
@@ -208,17 +202,14 @@ class RAGCLIDemo:
         if hasattr(self.pipeline, 'ingest_file'):
             result = self.pipeline.ingest_file(str(file_path))
             if self.verbose:
-                chunks = result.get('chunks_created', 0)
-                if chunks == 0:
-                    chunks = result.get('documents_indexed', 0)
-                print_substep(f"Created {chunks} chunks")
+                print_substep(f"Created {result.get('documents_indexed', 0)} chunks")
             return result
         else:
             # Simple mode - just read content
             with open(file_path, 'r', errors='ignore') as f:
                 content = f.read()
             self.pipeline.add_document(content, {"source": str(file_path)})
-            return {"chunks_created": 1}
+            return {"documents_indexed": 1}
 
     def query(self, question: str) -> Dict[str, Any]:
         """Execute a query with full pipeline visualization."""
@@ -403,9 +394,16 @@ class RAGCLIDemo:
 
         try:
             if hasattr(self.pipeline, 'llm_service') and compressed_docs:
+                # Get conversation history for context
+                conversation_history = None
+                if hasattr(self.pipeline, 'memory') and self.pipeline.memory:
+                    if self.pipeline.memory.has_history():
+                        conversation_history = self.pipeline.memory.get_history(max_turns=3)
+
                 generation_result = self.pipeline.llm_service.generate(
                     query=question,
                     context=compressed_docs,
+                    conversation_history=conversation_history,
                 )
                 answer = generation_result.answer
                 print_substep(f"Generated answer ({len(answer)} chars)")
@@ -454,6 +452,19 @@ class RAGCLIDemo:
             if step_name != "total":
                 print(f"  {step_name}: {format_time(duration)}")
         print(f"  {Colors.BOLD}Total: {format_time(total_time)}{Colors.RESET}")
+
+        # Update conversation memory
+        if hasattr(self.pipeline, 'memory') and self.pipeline.memory:
+            try:
+                self.pipeline.memory.add_turn(
+                    question=question,
+                    answer=answer,
+                    sources=compressed_docs,
+                    metadata={"query_type": query_type}
+                )
+            except Exception as e:
+                # Silently fail if memory update fails
+                pass
 
         return result
 

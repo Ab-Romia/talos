@@ -144,6 +144,7 @@ class QueryRouter(BaseQueryRouter):
                 "retrieval_top_k": 5,
                 "use_reranking": True,
                 "reranker_top_n": 3,
+                "use_conversation_context": True,
                 "max_iterations": 1,
             },
             QueryType.ANALYTICAL: {
@@ -154,6 +155,7 @@ class QueryRouter(BaseQueryRouter):
                 "use_reranking": True,
                 "reranker_top_n": 5,
                 "use_hyde": False,
+                "use_conversation_context": True,
                 "max_iterations": 2,
             },
             QueryType.COMPARATIVE: {
@@ -164,6 +166,7 @@ class QueryRouter(BaseQueryRouter):
                 "use_reranking": True,
                 "reranker_top_n": 8,
                 "use_decomposition": True,
+                "use_conversation_context": True,
                 "max_iterations": 2,
             },
             QueryType.PROCEDURAL: {
@@ -174,6 +177,7 @@ class QueryRouter(BaseQueryRouter):
                 "use_reranking": True,
                 "reranker_top_n": 5,
                 "use_step_back": True,
+                "use_conversation_context": True,
                 "max_iterations": 2,
             },
             QueryType.CONVERSATIONAL: {
@@ -193,6 +197,7 @@ class QueryRouter(BaseQueryRouter):
                 "retrieval_top_k": 20,
                 "use_reranking": True,
                 "reranker_top_n": 10,
+                "use_conversation_context": True,
                 "max_iterations": 2,
             },
             QueryType.UNCLEAR: {
@@ -202,6 +207,7 @@ class QueryRouter(BaseQueryRouter):
                 "retrieval_top_k": 10,
                 "use_reranking": True,
                 "reranker_top_n": 5,
+                "use_conversation_context": True,
                 "max_iterations": 1,
             },
         }

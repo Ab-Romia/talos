@@ -69,7 +69,7 @@ class IngestionPipeline:
         file_path: Union[str, Path],
         collection_name: Optional[str] = None,
         additional_metadata: Optional[Dict[str, Any]] = None,
-    ) -> tuple[dict[str, Any], list[Document]]:
+    ) -> tuple[dict[str, Any], list]:
         """
         Ingest a single file.
 

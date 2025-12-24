@@ -170,15 +170,6 @@ class BaseVectorStore(ABC):
         """Get collection statistics."""
         pass
 
-    @abstractmethod
-    def get_all_documents(
-        self,
-        collection_name: str,
-        limit: int = 10000,
-    ) -> List[Document]:
-        """Retrieve all documents from collection (up to limit)."""
-        pass
-
 
 class BaseRetriever(ABC):
     """Abstract base class for document retrievers."""

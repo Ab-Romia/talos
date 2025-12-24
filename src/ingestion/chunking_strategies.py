@@ -42,7 +42,7 @@ class TextChunker(BaseChunker, ABC):
         doc_id = f"doc_{content_hash}"
 
         return Document(
-            content=content, 
+            content=content,
             metadata=chunk_metadata,
             id=doc_id
         )

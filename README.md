@@ -1,52 +1,68 @@
-# Talos: AI-Powered Collaborative RAG System
+# Talos: Modular RAG System
 
-A production-ready full-stack application combining Retrieval-Augmented Generation (RAG) with collaborative workspaces. Built as a graduation project featuring CLaRa-inspired optimizations, modular architecture, and seamless frontend-backend integration.
+A production-ready Retrieval-Augmented Generation (RAG) system featuring modular architecture, hybrid retrieval, cross-encoder reranking, and advanced query processing capabilities. Built as a graduation project with emphasis on best practices and extensibility.
 
 ## Overview
 
-Talos transforms your documents into intelligent conversations. Upload files, ask questions, and get accurate answers with source citations - all within organized workspaces.
+Talos is a comprehensive RAG system that transforms your documents into intelligent conversations. The modular architecture allows you to swap components, configure parameters, and customize the pipeline to your needs without code changes.
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Talos Architecture                          │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│   ┌─────────────┐     ┌─────────────┐     ┌─────────────────────┐  │
-│   │   React     │────▶│   FastAPI   │────▶│   RAG Pipeline      │  │
-│   │   Frontend  │     │   Backend   │     │   (CLaRa-inspired)  │  │
-│   └─────────────┘     └──────┬──────┘     └──────────┬──────────┘  │
-│                              │                       │              │
-│                              ▼                       ▼              │
-│                       ┌─────────────┐     ┌─────────────────────┐  │
-│                       │  PostgreSQL │     │   Vector Store      │  │
-│                       │  Database   │     │   (Milvus/Memory)   │  │
-│                       └─────────────┘     └─────────────────────┘  │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    Talos RAG Architecture                       │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌──────────────┐    ┌──────────────┐    ┌─────────────────┐  │
+│  │  Document    │───▶│  Ingestion   │───▶│  Vector Store   │  │
+│  │  Loaders     │    │  Pipeline    │    │  (Milvus)       │  │
+│  └──────────────┘    └──────────────┘    └─────────────────┘  │
+│                                                  │              │
+│                           ┌──────────────────────┘              │
+│                           ▼                                     │
+│  ┌──────────────┐    ┌──────────────┐    ┌─────────────────┐  │
+│  │  Query       │───▶│  Hybrid      │───▶│  Cross-Encoder  │  │
+│  │  Processor   │    │  Retriever   │    │  Reranker       │  │
+│  └──────────────┘    └──────────────┘    └─────────────────┘  │
+│                                                  │              │
+│                           ┌──────────────────────┘              │
+│                           ▼                                     │
+│                      ┌──────────────┐                           │
+│                      │  LLM Service │                           │
+│                      │  (OpenAI)    │                           │
+│                      └──────────────┘                           │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ## Features
 
-### Core Features
-- **RAG-Powered Chat**: Intelligent Q&A with document retrieval and source citations
-- **Document Management**: Upload and process PDFs, text, markdown, and more
-- **Workspaces**: Organize knowledge into separate projects/teams
-- **Real-time Chat**: Conversational interface with AI assistant
+### Core RAG Features
+- **Modular Architecture**: Swap components and providers without code changes
+- **Hybrid Retrieval**: Combines dense (semantic) and sparse (BM25) retrieval
+- **Cross-Encoder Reranking**: Two-stage retrieval for improved relevance
+- **Query Processing**: Query rewriting, expansion, and HyDE for better retrieval
+- **Context Compression**: Reduce token usage while preserving relevance
+- **Conversation Memory**: Multi-turn conversations with context awareness
+- **Interactive CLI**: Comprehensive testing and demonstration interface
 
-### Technical Features
-- **Zero Hardcoding**: All parameters configurable via YAML/environment
-- **CLaRa-Inspired Optimizations**: Semantic chunking, two-stage retrieval, context compression
-- **Modular Architecture**: Swap providers, strategies, and components easily
-- **Production Ready**: Error handling, logging, caching, retry logic
-- **Type Safety**: Pydantic models and TypeScript-ready API
+### Document Processing
+- **Multiple Formats**: Support for PDF, TXT, Markdown, JSON, and more
+- **Flexible Chunking**: Recursive, fixed-size, sentence-based strategies
+- **Metadata Extraction**: Automatic extraction and enrichment
+- **Batch Processing**: Efficient directory ingestion
+
+### Production Ready
+- **Configuration-Driven**: All parameters in YAML or environment variables
+- **Logging & Monitoring**: Comprehensive structured logging
+- **Error Handling**: Graceful degradation and informative errors
+- **Type Safety**: Full Pydantic models and type hints
+- **Extensible**: Easy to add new providers and strategies
 
 ## Quick Start
 
 ### Prerequisites
 
 - Python 3.10+
-- Node.js 18+
-- PostgreSQL (or Docker)
+- Docker (for Milvus vector store)
 - OpenAI API key
 
 ### 1. Clone and Setup
@@ -57,10 +73,10 @@ cd gp-artifact
 
 # Copy environment configuration
 cp .env.example .env
-# Edit .env with your API keys and settings
+# Edit .env with your API keys
 ```
 
-### 2. Install Backend Dependencies
+### 2. Install Dependencies
 
 ```bash
 # Using uv (recommended)
@@ -74,161 +90,69 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 3. Install Frontend Dependencies
-
-```bash
-cd frontend
-npm install
-cd ..
-```
-
-### 4. Start Database
+### 3. Start Milvus Vector Store
 
 ```bash
 docker compose up -d
 ```
 
-### 5. Run the Application
+### 4. Test the RAG System
 
-**Terminal 1 - Backend:**
 ```bash
-# From project root
-python -m backend.app
-# Or: uv run -m backend.app
+# Interactive CLI
+python rag_cli.py
+
+# Load documents and query
+/load /path/to/your/documents
+What is this document about?
 ```
-
-**Terminal 2 - Frontend:**
-```bash
-cd frontend
-npm run dev
-```
-
-### 6. Access the Application
-
-- **Frontend**: http://localhost:5173
-- **Backend API**: http://localhost:8000
-- **API Documentation**: http://localhost:8000/api/docs
-- **Database Admin**: http://localhost:8080
 
 ## Project Structure
 
 ```
 gp-artifact/
-├── backend/                    # FastAPI Backend
-│   ├── api/                    # API Layer
-│   │   ├── routes/             # API Endpoints
-│   │   │   ├── auth.py         # Authentication routes
-│   │   │   ├── workspaces.py   # Workspace management
-│   │   │   ├── chatrooms.py    # Chatroom management
-│   │   │   ├── messages.py     # Chat with RAG integration
-│   │   │   ├── documents.py    # Document upload/management
-│   │   │   └── rag.py          # Direct RAG queries
-│   │   ├── schemas/            # Pydantic request/response models
-│   │   └── deps/               # Dependencies (auth, db)
-│   ├── model/                  # SQLAlchemy Models
-│   │   ├── identity.py         # User, Role, Permission, Session
-│   │   └── messaging.py        # Workspace, Chatroom, Message
-│   ├── services/               # Business Logic
-│   │   └── rag_service.py      # RAG pipeline integration
-│   ├── app/                    # Application utilities
-│   │   └── auth.py             # Password hashing
-│   └── app.py                  # FastAPI application entry
-│
-├── frontend/                   # React Frontend
-│   ├── src/
-│   │   ├── components/         # React components
-│   │   │   └── chat-components/
-│   │   │       ├── ChatContent.jsx
-│   │   │       └── ChatSidebar.jsx
-│   │   ├── context/            # React Context providers
-│   │   │   ├── AuthContext.jsx
-│   │   │   ├── WorkspaceContext.jsx
-│   │   │   └── ChatContext.jsx
-│   │   ├── services/           # API client
-│   │   │   └── api.js
-│   │   └── page/               # Page components
-│   │       ├── LandingPage/
-│   │       ├── LoginPage/
-│   │       └── ChatPage/
-│   └── package.json
-│
 ├── src/                        # Modular RAG Implementation
 │   ├── core/                   # Configuration & base classes
 │   │   ├── config_loader.py    # Pydantic configuration models
 │   │   ├── base_interfaces.py  # Abstract base classes
 │   │   └── exceptions.py       # Custom exceptions
 │   ├── indexing/               # Vector storage & embeddings
-│   │   ├── milvus_manager.py   # Vector store implementations
+│   │   ├── milvus_manager.py   # Milvus vector store
+│   │   ├── index_builder.py    # Indexing orchestration
 │   │   └── embedding_service.py # Multi-provider embeddings
 │   ├── ingestion/              # Document processing
+│   │   ├── pipeline.py         # Ingestion orchestration
 │   │   ├── document_loaders.py # File loaders
-│   │   └── chunking_strategies.py # Chunking methods
+│   │   ├── chunking_strategies.py # Chunking methods
+│   │   └── metadata_extractor.py # Metadata extraction
 │   ├── retrieval/              # Document retrieval
-│   │   ├── retrievers/         # Dense, Hybrid, Reranker
-│   │   └── query_processing/   # Query enhancement
+│   │   ├── retrievers/
+│   │   │   ├── dense_retriever.py   # Vector search
+│   │   │   ├── sparse_retriever.py  # BM25 search
+│   │   │   ├── hybrid_retriever.py  # Combined retrieval
+│   │   │   └── reranker.py          # Cross-encoder reranking
+│   │   └── query_processing/
+│   │       ├── hyde.py              # HyDE query processing
+│   │       ├── query_expander.py    # Query expansion
+│   │       └── query_router.py      # Query classification
 │   ├── generation/             # Response generation
-│   │   └── llm_service.py      # LLM providers
+│   │   └── llm_service.py      # LLM providers (OpenAI)
 │   └── orchestration/          # Pipeline coordination
-│       └── rag_pipeline.py     # Main orchestrator
+│       ├── rag_pipeline.py     # Main RAG orchestrator
+│       └── memory.py           # Conversation memory
 │
 ├── config/                     # Configuration files
 │   ├── rag_config.yaml         # RAG pipeline configuration
 │   └── prompts/                # Prompt templates
+│       ├── answer_generation.txt
+│       ├── query_rewriting.txt
+│       └── query_classification.txt
 │
-├── docker-compose.yaml         # Docker services
+├── rag_cli.py                  # Interactive CLI tool
+├── docker-compose.yaml         # Milvus and dependencies
 ├── .env.example                # Environment template
 └── requirements.txt            # Python dependencies
 ```
-
-## API Endpoints
-
-### Authentication
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/auth/register` | Register new user |
-| POST | `/api/auth/login` | Login and get token |
-| GET | `/api/auth/me` | Get current user |
-| POST | `/api/auth/logout` | Logout |
-
-### Workspaces
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/workspaces` | List workspaces |
-| POST | `/api/workspaces` | Create workspace |
-| GET | `/api/workspaces/{id}` | Get workspace |
-| PATCH | `/api/workspaces/{id}` | Update workspace |
-| DELETE | `/api/workspaces/{id}` | Delete workspace |
-
-### Chatrooms
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/chatrooms` | List chatrooms |
-| POST | `/api/chatrooms` | Create chatroom |
-| GET | `/api/chatrooms/{id}` | Get chatroom |
-| DELETE | `/api/chatrooms/{id}` | Delete chatroom |
-
-### Messages & Chat
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/messages` | List messages |
-| POST | `/api/messages/chat` | Send message (RAG-powered) |
-| POST | `/api/messages/chat/stream` | Stream chat response |
-| DELETE | `/api/messages/{id}` | Delete message |
-
-### Documents
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/documents/upload` | Upload document |
-| GET | `/api/documents` | List documents |
-| GET | `/api/documents/{id}/status` | Get ingestion status |
-| DELETE | `/api/documents/{id}` | Delete document |
-
-### RAG
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/rag/query` | Execute RAG query |
-| GET | `/api/rag/config` | Get RAG configuration |
-| GET | `/api/rag/health` | Health check |
 
 ## Configuration
 
@@ -237,17 +161,15 @@ gp-artifact/
 Key variables in `.env`:
 
 ```bash
-# Database
-DATABASE_URL=postgresql://talos_app:password@localhost:5432/talos
-
-# Security
-JWT_SECRET=your-secret-key
-
-# RAG System
+# OpenAI API
 OPENAI_API_KEY=sk-your-key
 
-# CORS
-CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+# Milvus Vector Store
+MILVUS_HOST=localhost
+MILVUS_PORT=19530
+
+# Logging
+LOG_LEVEL=INFO
 ```
 
 ### RAG Configuration
@@ -255,109 +177,209 @@ CORS_ORIGINS=http://localhost:5173,http://localhost:3000
 Edit `config/rag_config.yaml`:
 
 ```yaml
+# Embedding configuration
 embedding:
-  provider: openai
-  model_name: text-embedding-3-small
+  provider: "huggingface"
+  model_name: "sentence-transformers/all-MiniLM-L6-v2"
+  dimension: 384
+  normalize: true
 
+# Retrieval configuration
 retriever:
-  retrieval_method: hybrid  # dense, sparse, or hybrid
-  top_k: 10
+  top_k: 8
+  dense_weight: 0.7
+  sparse_weight: 0.3
+  retrieval_method: "hybrid"  # dense, sparse, or hybrid
 
+# Reranker configuration
 reranker:
   enabled: true
-  model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+  model: cross-encoder/ms-marco-MiniLM-L-6-v2
+  top_n: 5
 
+# Generator configuration
+generator:
+  provider: "openai"
+  model_name: gpt-4o-mini
+  temperature: 0.1
+  max_tokens: 500
+
+# Query processing
+query_processor:
+  enabled: true  # Query rewriting and expansion
+
+# Orchestration
+orchestration:
+  routing_enabled: true  # Adaptive pipeline based on query type
+  max_iterations: 3
+
+# Chunking
 chunking:
-  strategy: semantic  # or fixed, recursive, sentence
-  chunk_size: 1000
+  strategy: "recursive"  # recursive, fixed, or sentence
+
+# Milvus
+milvus:
+  collection_name: "rag_local"
+  dimension: 384
 ```
+
+## Interactive CLI
+
+The `rag_cli.py` provides a comprehensive interface for testing the RAG system:
+
+```bash
+# Start interactive mode
+python rag_cli.py
+
+# Available commands:
+/load <path>   - Load document(s)
+/clear         - Clear conversation history
+/info          - Show pipeline configuration
+/verbose       - Toggle verbose output
+/help          - Show help
+/quit          - Exit
+```
+
+### CLI Features
+
+- **Step-by-step visualization**: See each pipeline stage in action
+- **Timing information**: Track performance of each component
+- **Document inspection**: View retrieved and reranked documents
+- **Source citations**: See which documents contributed to answers
+- **Conversation memory**: Multi-turn conversations with context
 
 ## Technology Stack
 
-### Frontend
-- **React 18** - UI framework
-- **Vite** - Build tool
-- **React Router** - Routing
-- **Styled Components** - Styling
-- **React Bootstrap** - UI components
+### RAG Components
+- **HuggingFace Transformers** - Embeddings and reranking
+- **Sentence Transformers** - Semantic embeddings
+- **OpenAI GPT-4** - Answer generation
+- **Milvus** - Vector database
+- **BM25** - Sparse retrieval (rank_bm25)
 
-### Backend
-- **FastAPI** - Web framework
-- **SQLAlchemy 2.0** - ORM
-- **PostgreSQL** - Database
-- **Pydantic** - Data validation
+### Core Framework
+- **Pydantic** - Configuration and data validation
+- **PyYAML** - Configuration files
+- **Python 3.10+** - Modern Python features
 
-### RAG System
-- **OpenAI** - Embeddings & LLM
-- **Milvus** - Vector database (optional)
-- **Sentence Transformers** - Cross-encoder reranking
-- **BM25** - Sparse retrieval
+## RAG Pipeline Stages
 
-## CLaRa-Inspired Optimizations
+### 1. Document Ingestion
+```
+Document → Loader → Chunker → Metadata Extractor → Index Builder → Vector Store
+```
 
-1. **Semantic Chunking**: Documents split based on embedding similarity at natural breakpoints
-2. **Two-Stage Retrieval**: Dense retrieval followed by cross-encoder reranking
-3. **Context Compression**: Reduce context while preserving relevant information
-4. **Query Enhancement**: LLM-based query rewriting and expansion
+### 2. Query Processing
+```
+Query → Router → Processor (Rewrite/Expand/HyDE) → Enhanced Query
+```
+
+### 3. Retrieval
+```
+Enhanced Query → Dense Retriever (Semantic)
+                → Sparse Retriever (BM25)
+                → Hybrid Fusion → Top-K Documents
+```
+
+### 4. Reranking
+```
+Top-K Documents → Cross-Encoder → Top-N Most Relevant
+```
+
+### 5. Generation
+```
+Top-N Documents + Query + Memory → LLM → Answer with Citations
+```
+
+## Advanced Features
+
+### Hybrid Retrieval
+Combines semantic (dense) and keyword (sparse) search:
+```python
+# Dense: Find semantically similar content
+# Sparse: Find exact keyword matches
+# Hybrid: Weighted fusion of both
+```
+
+### Query Router
+Automatically adapts pipeline based on query type:
+- **Factual**: Direct retrieval and generation
+- **Comparative**: Enhanced retrieval with multiple perspectives
+- **Summarization**: Broader context gathering
+- **Conversational**: Memory-aware processing
+
+### HyDE (Hypothetical Document Embeddings)
+Generates hypothetical answers to improve retrieval:
+```
+Query → LLM → Hypothetical Answer → Embed → Retrieve Similar
+```
+
+### Cross-Encoder Reranking
+Two-stage retrieval for precision:
+```
+Stage 1: Fast retrieval (10-20 candidates)
+Stage 2: Precise reranking (top 5)
+```
+
+## Performance Optimizations
+
+- **Batch Processing**: Efficient embedding generation
+- **Index Caching**: Reuse BM25 indices
+- **Lazy Loading**: Components loaded on-demand
+- **Connection Pooling**: Milvus connection reuse
 
 ## Development
 
 ### Running Tests
 
 ```bash
-# Backend tests
-pytest backend/tests/
+# Unit tests
+pytest tests/
 
-# Frontend tests
-cd frontend && npm test
+# Integration tests
+pytest tests/integration/
+
+# With coverage
+pytest --cov=src tests/
 ```
 
-### Code Quality
+### Adding New Components
 
-```bash
-# Backend linting
-ruff check .
-black --check .
+1. **New Retriever**: Implement `BaseRetriever` interface
+2. **New Chunker**: Implement `BaseChunker` interface
+3. **New Embedder**: Implement `BaseEmbeddingService` interface
+4. **New LLM**: Implement `BaseLLMService` interface
 
-# Frontend linting
-cd frontend && npm run lint
-```
+## Troubleshooting
 
-## Deployment
+### Common Issues
 
-### Production Checklist
+**Issue**: "Collection not found"
+**Solution**: Documents need to be ingested first using `/load`
 
-- [ ] Set secure `JWT_SECRET`
-- [ ] Configure `DATABASE_URL` for production
-- [ ] Set `CORS_ORIGINS` to production domains
-- [ ] Enable HTTPS
-- [ ] Configure rate limiting
-- [ ] Set up monitoring/logging
+**Issue**: "Reranked to top 0 documents"
+**Solution**: Check that documents were properly indexed (look for "Created X chunks")
 
-### Docker Deployment
-
-```bash
-# Build and run all services
-docker compose -f docker-compose.prod.yaml up -d
-```
+**Issue**: "Failed to initialize BM25 index"
+**Solution**: Ensure Milvus is running: `docker compose ps`
 
 ## Documentation
 
-- **[GUIDE.md](GUIDE.md)** - Complete architecture guide
-- **[QUICKSTART.md](QUICKSTART.md)** - Quick reference
-- **[API Docs](http://localhost:8000/api/docs)** - Interactive API documentation
+- **[Architecture Guide](docs/ARCHITECTURE.md)** - Detailed system design
+- **[API Reference](docs/API.md)** - Component APIs
+- **[Configuration Guide](docs/CONFIGURATION.md)** - All config options
 
 ## Contributing
 
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Run tests
+4. Add tests
 5. Submit a pull request
 
 ## License
 
-This project is part of a graduation project for Talos AI-Powered Collaborative Workspace.
+This project is part of a graduation project for Talos AI-Powered RAG System.
 
 ---
 
