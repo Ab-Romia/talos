@@ -4,14 +4,19 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
-from sqlalchemy import create_engine
+
+from sqlalchemy import create_engine, text
+from modules.model.base import Base
+from sqlalchemy.orm import Session
 
 load_dotenv()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from modules.model.base import Base
+    with Session(engine) as session:
+        session.execute(text("CREATE EXTENSION IF NOT EXISTS citext;"))
+        session.commit()
 
     Base.metadata.create_all(engine)
     yield
