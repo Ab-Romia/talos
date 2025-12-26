@@ -30,7 +30,7 @@ class User(Base):
 
     data: Mapped[dict[str, Any]] = mapped_column()
     roles: Mapped[list["PlatformRole"]] = relationship("PlatformRole",
-                                                       secondary="user_platform_roles",
+                                                       secondary="users_platform_roles",
                                                        back_populates="users")
 
 
@@ -85,6 +85,11 @@ class PlatformRole(Base):
     description: Mapped[Optional[str]] = mapped_column()
     permissions: Mapped[list["Permission"]] = relationship("Permission",
                                                            secondary="platform_role_permissions")
+    users: Mapped[list["User"]] = relationship(
+        "User",
+        secondary="users_platform_roles",
+        back_populates="roles"
+    )
 
 
 class Permission(Base):
