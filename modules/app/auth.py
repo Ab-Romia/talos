@@ -139,7 +139,7 @@ async def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm,
     return {'access_token': token, 'token_type': 'bearer'}
 
 
-@auth.post('/refreshn', response_model=Token)
+@auth.post('/refresh', response_model=Token)
 async def refresh_access_token(current_user: Annotated[dict, Depends(get_current_user)]):
     # TODO: validate refresh token
     #  load expiry from config
