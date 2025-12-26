@@ -1,7 +1,29 @@
-from typing import Any
+import os
+from typing import Any, Annotated
 
+from fastapi import Depends
+from sqlalchemy import create_engine
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 Base = declarative_base()
 Base.registry.type_annotation_map[dict[str, Any]] = JSONB
+
+engine = create_engine(
+    os.environ.get('DATABASE_URL'),
+    echo=True,
+    connect_args={}
+)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+db_dependency = Annotated[Session, Depends(get_db)]
