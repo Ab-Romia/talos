@@ -52,5 +52,59 @@ The above should be rendered in a built-in viewer, to limit requiring external p
 
 ## System Requirements
 
-# TODO
+### Functional Requirements
+
+#### Message Storage
+
+- Each message shall be stored with a unique identifier (UUID).
+- Messages shall reference their workspace and chatroom.
+- Messages shall reference the sender (nullable for system messages or deleted users).
+- Message content shall be stored as text supporting rich formatting.
+- Message creation timestamps shall be recorded.
+
+#### Message Delivery
+
+- Messages shall be delivered in real-time to connected clients via WebSockets. [TODO]
+- The system shall maintain message ordering based on creation timestamp.
+- Messages shall be persisted before delivery confirmation. [TODO]
+
+#### Message Retrieval
+
+- The system shall support paginated retrieval of message history. [TODO]
+- Messages shall be retrievable by chatroom. [TODO]
+- The system shall support filtering messages by date range. [TODO]
+
+#### Data Integrity
+
+- Messages shall maintain referential integrity with chatrooms and workspaces.
+- When a chatroom is deleted, associated messages shall be cascade deleted.
+- When a sender is deleted, the sender reference shall be set to NULL.
+
+### Non-Functional Requirements
+
+#### Performance
+
+- Message sending shall have minimal latency for real-time experience.
+- Message history loading shall be optimized for large chatrooms.
+
+#### Scalability
+
+- The system shall handle high message volumes in active chatrooms.
+- The database schema shall support efficient indexing on workspace and chatroom.
+
+#### Reliability
+
+- Messages shall not be lost during transmission. [TODO]
+- The system shall handle reconnection and message synchronization. [TODO]
+
+### Data Model
+
+| Field | Type | Description |
+|-------|------|-------------|
+| id | UUID | Unique message identifier |
+| workspace_id | UUID (FK) | Reference to parent workspace |
+| chatroom_id | UUID (FK) | Reference to parent chatroom |
+| sender_id | UUID (FK, nullable) | Reference to sender user |
+| content | String | Message content |
+| created_at | DateTime | Message timestamp |
 
