@@ -2,12 +2,15 @@ from langchain_core.runnables import RunnablePassthrough, RunnableParallel, Runn
 from langchain_core.output_parsers import StrOutputParser
 from src_v2.vectorstore.milvus_store import get_vectorstore, create_vectorstore_from_documents
 from src_v2.retrieval.retrievers import get_retriever
+from src_v2.retrieval.query_processing import get_hyde_embeddings, get_query_rewriter, get_multiquery_retriever
+from src_v2.retrieval.compression import get_compression_retriever
 from src_v2.generation.chains import get_llm
 from src_v2.generation.memory import get_memory
 from src_v2.config.prompts import RAG_PROMPT
 from src_v2.config.settings import settings
 from src_v2.ingestion.loaders import load_documents
 from src_v2.ingestion.splitters import get_text_splitter
+from src_v2.utils.citations import add_citations_to_response, format_citations
 
 
 class RAGChain:
@@ -27,7 +30,10 @@ class RAGChain:
         self.retrieved_docs = []
         self.last_query_info = {}
 
-        self.vectorstore = get_vectorstore(collection_name=collection_name)
+        hyde_embeddings = get_hyde_embeddings()
+        self.query_rewriter = get_query_rewriter()
+
+        self.vectorstore = get_vectorstore(collection_name=collection_name, embeddings=hyde_embeddings)
 
         self.retriever = get_retriever(
             vectorstore=self.vectorstore,
@@ -35,14 +41,12 @@ class RAGChain:
         )
 
         if use_multiquery:
-            from src_v2.retrieval.query_processing import get_multiquery_retriever
             self.retriever = get_multiquery_retriever(self.retriever)
             self.multiquery_retriever = self.retriever
         else:
             self.multiquery_retriever = None
 
         if use_compression:
-            from src_v2.retrieval.compression import get_compression_retriever
             self.retriever = get_compression_retriever(self.retriever, compression_type="llm")
 
         self.llm = get_llm()
@@ -50,14 +54,18 @@ class RAGChain:
         self.chain = self._build_chain()
 
     def _build_chain(self):
-        def retrieve_and_store(question):
-            docs = self.retriever.invoke(question)
+        def rewrite_and_retrieve(question):
+            result = self.query_rewriter.invoke({"query": question})
+            rewritten = result.content if hasattr(result, 'content') else str(result)
+            self.last_query_info['rewritten_query'] = rewritten.strip()
+
+            docs = self.retriever.invoke(rewritten)
             self.retrieved_docs = docs
             return docs
 
         retrieval_chain = RunnableParallel(
             {
-                "context": RunnableLambda(retrieve_and_store) | RunnableLambda(self._format_docs),
+                "context": RunnableLambda(rewrite_and_retrieve) | RunnableLambda(self._format_docs),
                 "question": RunnablePassthrough(),
                 "chat_history": RunnableLambda(lambda x: self.memory.get_messages() if self.memory else [])
             }
@@ -79,6 +87,7 @@ class RAGChain:
     def query(self, question: str, include_citations: bool = True) -> str:
         self.last_query_info = {
             'original_query': question,
+            'rewritten_query': None,
             'generated_queries': [],
             'retrieved_docs': [],
             'num_docs_retrieved': 0
@@ -96,7 +105,6 @@ class RAGChain:
         self.last_query_info['num_docs_retrieved'] = len(self.retrieved_docs)
 
         if include_citations:
-            from src_v2.utils.citations import add_citations_to_response
             response = add_citations_to_response(response, self.retrieved_docs)
 
         if self.memory:
@@ -110,6 +118,7 @@ class RAGChain:
     def stream_query(self, question: str, include_citations: bool = True):
         self.last_query_info = {
             'original_query': question,
+            'rewritten_query': None,
             'generated_queries': [],
             'retrieved_docs': [],
             'num_docs_retrieved': 0
@@ -131,7 +140,6 @@ class RAGChain:
         self.last_query_info['num_docs_retrieved'] = len(self.retrieved_docs)
 
         if include_citations:
-            from src_v2.utils.citations import format_citations
             citations = format_citations(self.retrieved_docs)
             if citations:
                 yield citations

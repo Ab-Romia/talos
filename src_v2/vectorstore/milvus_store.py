@@ -1,20 +1,18 @@
-#Milvus vector store management.
-
 import sys
 import io
-from contextlib import redirect_stderr
-
 from langchain_milvus import Milvus
-from pymilvus import connections
+from pymilvus import connections, Collection, utility
 from src_v2.config.settings import settings
 from src_v2.vectorstore.embeddings import get_embeddings
 
 
 def get_vectorstore(
     collection_name: str | None = None,
-    embedding_provider: str | None = None
+    embedding_provider: str | None = None,
+    embeddings=None
 ):
-    embeddings = get_embeddings(provider=embedding_provider)
+    if embeddings is None:
+        embeddings = get_embeddings(provider=embedding_provider)
 
     connections.connect(
         alias="default",
@@ -22,7 +20,6 @@ def get_vectorstore(
         port=settings.milvus_port
     )
 
-    # Suppress async event loop warnings
     stderr_backup = sys.stderr
     sys.stderr = io.StringIO()
 
@@ -52,7 +49,6 @@ def create_vectorstore_from_documents(documents, collection_name: str | None = N
         port=settings.milvus_port
     )
 
-    # Suppress async event loop warnings
     stderr_backup = sys.stderr
     sys.stderr = io.StringIO()
 
@@ -64,9 +60,53 @@ def create_vectorstore_from_documents(documents, collection_name: str | None = N
             connection_args={
                 "host": settings.milvus_host,
                 "port": settings.milvus_port
-            }
+            },
+            drop_old=False
         )
+
+        collection = Collection(collection_name or settings.milvus_collection_name)
+        collection.flush()
+
     finally:
         sys.stderr = stderr_backup
 
     return vectorstore
+
+
+def clear_collection(collection_name: str | None = None):
+    connections.connect(
+        alias="default",
+        host=settings.milvus_host,
+        port=settings.milvus_port
+    )
+
+    col_name = collection_name or settings.milvus_collection_name
+
+    if utility.has_collection(col_name):
+        utility.drop_collection(col_name)
+        return True
+    return False
+
+
+def get_collection_info(collection_name: str | None = None):
+    connections.connect(
+        alias="default",
+        host=settings.milvus_host,
+        port=settings.milvus_port
+    )
+
+    col_name = collection_name or settings.milvus_collection_name
+
+    if utility.has_collection(col_name):
+        collection = Collection(col_name)
+        collection.load()
+        return {
+            'name': col_name,
+            'num_entities': collection.num_entities,
+            'exists': True
+        }
+    return {
+        'name': col_name,
+        'num_entities': 0,
+        'exists': False
+    }

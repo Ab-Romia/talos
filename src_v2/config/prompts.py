@@ -1,4 +1,15 @@
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, PromptTemplate
+
+
+QUERY_REWRITE_PROMPT = PromptTemplate(
+    input_variables=["query"],
+    template="""Rewrite the following question to be more specific and searchable for document retrieval.
+Make it clearer and add relevant keywords, but keep the core intent.
+
+Original Question: {query}
+
+Rewritten Query:"""
+)
 
 
 RAG_PROMPT = ChatPromptTemplate.from_messages([

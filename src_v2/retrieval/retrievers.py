@@ -1,5 +1,3 @@
-"""Document retrieval with hybrid search and reranking."""
-
 from langchain_classic.retrievers import EnsembleRetriever, ContextualCompressionRetriever
 from langchain_classic.retrievers.document_compressors import CrossEncoderReranker
 from langchain_community.retrievers import BM25Retriever
