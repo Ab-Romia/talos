@@ -95,15 +95,25 @@ def main():
     print_header()
     print_help()
 
+    chain = None
     try:
         info = get_collection_info(settings.milvus_collection_name)
-        if not info['exists'] or info['num_entities'] == 0:
+        if info['exists'] and info['num_entities'] > 0:
+            print(f"{Colors.GREEN}Found {info['num_entities']} documents in collection{Colors.RESET}")
+            print(f"{Colors.YELLOW}Initializing RAG chain...{Colors.RESET}")
+            try:
+                chain = RAGChain(
+                    collection_name=settings.milvus_collection_name,
+                    use_memory=True
+                )
+                print(f"{Colors.GREEN}✓ RAG chain ready{Colors.RESET}\n")
+            except Exception as e:
+                print(f"{Colors.RED}✗ Failed to initialize RAG chain: {e}{Colors.RESET}\n")
+        else:
             print(f"{Colors.YELLOW}⚠ No documents found in collection '{settings.milvus_collection_name}'")
             print(f"  Use /ingest <file_paths> to add documents first{Colors.RESET}\n")
     except:
         print(f"{Colors.YELLOW}⚠ Collection not found. Use /ingest to add documents{Colors.RESET}\n")
-
-    chain = None
 
     while True:
         try:
