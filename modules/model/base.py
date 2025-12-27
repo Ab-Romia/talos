@@ -1,10 +1,13 @@
 import os
 from typing import Any, Annotated
+from dotenv import load_dotenv
 
 from fastapi import Depends
 from sqlalchemy import create_engine
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
+
+load_dotenv()
 
 Base = declarative_base()
 Base.registry.type_annotation_map[dict[str, Any]] = JSONB

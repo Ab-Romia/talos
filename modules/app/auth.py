@@ -1,6 +1,7 @@
 import os
 from datetime import timedelta, datetime, timezone
 from typing import Annotated
+from dotenv import load_dotenv
 
 import bcrypt
 import fastapi
@@ -22,6 +23,7 @@ from modules.model.base import db_dependency
 #  password reset,
 #  logout,
 
+load_dotenv()
 
 auth = fastapi.APIRouter(prefix='/api/auth')
 
@@ -29,6 +31,18 @@ auth = fastapi.APIRouter(prefix='/api/auth')
 JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY').encode('utf-8')
 JWT_ALGORITHM = 'HS256'
 oauth2_bearer = OAuth2PasswordBearer(tokenUrl='/api/auth/token')
+
+
+class CreateUserRequest(BaseModel):
+    username: str
+    primary_email: str
+    password: str
+    name: str
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
 
 
 def hash_password(password: str) -> str:
@@ -87,16 +101,35 @@ async def get_current_user(token: Annotated[str, Depends(oauth2_bearer)]):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='could not validate user.')
 
 
-class CreateUserRequest(BaseModel):
-    username: str
-    primary_email: str
-    password: str
-    name: str
+user_dependency = Annotated[dict, Depends(get_current_user)]
 
 
-class Token(BaseModel):
-    access_token: str
-    token_type: str
+@auth.post('/sudo_token', response_model=Token)
+async def login_for_sudo_token(user: user_dependency, form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+                               db: db_dependency):
+    sudo_user = authenticate_user(user.get('username'), form_data.password, db)
+    if not sudo_user or not user or sudo_user.id != user.get('id'):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='could not validate user.')
+        # return 'Failed Authentication'
+
+    token = create_access_token(sudo_user.username, sudo_user.id, timedelta(minutes=5))
+
+    return {'access_token': token, 'token_type': 'bearer'}
+
+
+@auth.put('/change_password', status_code=status.HTTP_200_OK)
+def password_reset(user: user_dependency, sudo: Annotated[dict, Depends(login_for_sudo_token)],
+                   db: db_dependency, current_password: str, new_password: str):
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='could not validate user.')
+    current_userpassword = db.query(UserPassword).filter(UserPassword.user_id == user.get('id')).first()
+
+    if not verify_password(current_password, current_userpassword.hashed_password):
+        raise HTTPException(status_code=status.HTTP_406_NOT_ACCEPTABLE, detail='password not correct')
+
+    current_userpassword.hashed_password = hash_password(new_password)
+
+    return {'username': user.get('username'), 'password': new_password}
 
 
 @auth.post('/signup', status_code=status.HTTP_201_CREATED)
