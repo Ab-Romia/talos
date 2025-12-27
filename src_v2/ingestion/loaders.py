@@ -26,7 +26,21 @@ def load_document(file_path: str):
 
 
 def load_documents(file_paths: list[str]):
+    supported_extensions = {'.pdf', '.txt', '.csv', '.md'}
     docs = []
-    for path in file_paths:
-        docs.extend(load_document(path))
+
+    for path_str in file_paths:
+        path = Path(path_str)
+
+        if path.is_dir():
+            files = []
+            for ext in supported_extensions:
+                files.extend(path.rglob(f'*{ext}'))
+            for file_path in sorted(files):
+                docs.extend(load_document(str(file_path)))
+        elif path.is_file():
+            docs.extend(load_document(str(path)))
+        else:
+            raise ValueError(f"Path not found: {path_str}")
+
     return docs

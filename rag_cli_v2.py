@@ -46,7 +46,12 @@ def ingest_command(file_paths_str: str):
     file_paths = [p.strip() for p in file_paths_str.split(',')]
 
     print(f"\n{Colors.YELLOW}[1/4] Loading documents...{Colors.RESET}")
-    print(f"      Files: {', '.join([Path(p).name for p in file_paths])}")
+    for p in file_paths:
+        path = Path(p)
+        if path.is_dir():
+            print(f"      Scanning directory: {p}")
+        else:
+            print(f"      File: {path.name}")
 
     try:
         vectorstore, info = ingest_documents(

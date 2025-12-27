@@ -150,15 +150,19 @@ class RAGChain:
 
 
 def ingest_documents(file_paths: list[str], collection_name: str | None = None):
+    docs = load_documents(file_paths)
+
+    unique_sources = set()
+    for doc in docs:
+        if hasattr(doc, 'metadata') and 'source' in doc.metadata:
+            unique_sources.add(doc.metadata['source'])
+
     ingestion_info = {
-        'num_files': len(file_paths),
-        'num_documents': 0,
+        'num_files': len(unique_sources) if unique_sources else len(file_paths),
+        'num_documents': len(docs),
         'num_chunks': 0,
         'files': file_paths
     }
-
-    docs = load_documents(file_paths)
-    ingestion_info['num_documents'] = len(docs)
 
     splitter = get_text_splitter()
     chunks = splitter.split_documents(docs)
