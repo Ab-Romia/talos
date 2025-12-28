@@ -9,12 +9,14 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
-from src.core.config_loader import LoggingConfig
+from src.config import LoggingConfig
+
+__all__ = ['get_logger']
 
 
-class RAGLogger:
+class Logger:
     """
     Custom logger wrapper with structured logging support.
 
@@ -22,14 +24,14 @@ class RAGLogger:
     """
 
     def __init__(
-        self,
-        name: str,
-        config: Optional[LoggingConfig] = None,
+            self,
+            name: str,
+            config: LoggingConfig = None,
     ):
         self.name = name
         self.config = config or LoggingConfig()
         self._logger = self._setup_logger()
-        self._metrics: Dict[str, Any] = {}
+        self._metrics: dict[str, Any] = {}
 
     def _setup_logger(self) -> logging.Logger:
         """Set up the logger with configured handlers."""
@@ -88,14 +90,15 @@ class RAGLogger:
         formatted_message = self._format_message(message, **kwargs)
         self._logger.log(level, formatted_message)
 
-    def _format_message(self, message: str, **kwargs) -> str:
+    @staticmethod
+    def _format_message(message: str, **kwargs) -> str:
         """Format message with additional context."""
         if kwargs:
             context = " | ".join(f"{k}={v}" for k, v in kwargs.items())
             return f"{message} | {context}"
         return message
 
-    def log_metric(self, metric_name: str, value: Any, tags: Optional[Dict[str, str]] = None) -> None:
+    def log_metric(self, metric_name: str, value: Any, tags: dict[str, str] | None = None) -> None:
         """Log a metric value."""
         if not self.config.enable_metrics:
             return
@@ -115,11 +118,11 @@ class RAGLogger:
         self.log_metric(f"{operation}_latency_ms", latency_ms)
 
     def log_retrieval(
-        self,
-        query: str,
-        num_results: int,
-        method: str,
-        latency_ms: float,
+            self,
+            query: str,
+            num_results: int,
+            method: str,
+            latency_ms: float,
     ) -> None:
         """Log retrieval operation."""
         self.info(
@@ -132,11 +135,11 @@ class RAGLogger:
         self.log_latency("retrieval", latency_ms)
 
     def log_generation(
-        self,
-        prompt_tokens: int,
-        completion_tokens: int,
-        latency_ms: float,
-        model: str,
+            self,
+            prompt_tokens: int,
+            completion_tokens: int,
+            latency_ms: float,
+            model: str,
     ) -> None:
         """Log generation operation."""
         self.info(
@@ -149,7 +152,7 @@ class RAGLogger:
         )
         self.log_latency("generation", latency_ms)
 
-    def get_metrics(self) -> Dict[str, Any]:
+    def get_metrics(self) -> dict[str, Any]:
         """Get collected metrics."""
         return self._metrics.copy()
 
@@ -159,10 +162,10 @@ class RAGLogger:
 
 
 # Module-level logger cache
-_loggers: Dict[str, RAGLogger] = {}
+_loggers: dict[str, Logger] = {}
 
 
-def get_logger(name: str, config: Optional[LoggingConfig] = None) -> RAGLogger:
+def get_logger(name: str, config: LoggingConfig = None) -> Logger:
     """
     Get or create a logger instance.
 
@@ -174,7 +177,7 @@ def get_logger(name: str, config: Optional[LoggingConfig] = None) -> RAGLogger:
         RAGLogger instance
     """
     if name not in _loggers:
-        _loggers[name] = RAGLogger(name, config)
+        _loggers[name] = Logger(name, config)
     return _loggers[name]
 
 
