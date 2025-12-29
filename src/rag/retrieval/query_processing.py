@@ -1,6 +1,6 @@
 from typing import override
 
-from langchain_classic.embeddings import HypotheticalDocumentEmbedder
+from langchain_classic.chains.hyde.base import HypotheticalDocumentEmbedder
 from langchain_classic.retrievers.multi_query import MultiQueryRetriever
 from langchain_core.callbacks import CallbackManagerForRetrieverRun as CallbackManager
 from langchain_core.documents import Document

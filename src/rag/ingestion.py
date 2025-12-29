@@ -1,67 +1,55 @@
+from collections.abc import Iterable
 from pathlib import Path
+from typing import cast
 
-from langchain_community.document_loaders import (
-    PyPDFLoader,
-    TextLoader,
-    CSVLoader,
-    UnstructuredMarkdownLoader,
-)
+from langchain_core.documents import Document
 from langchain_text_splitters import (
     RecursiveCharacterTextSplitter,
     MarkdownTextSplitter,
 )
+from langchain_unstructured import UnstructuredLoader
 
 from src.config import global_rag_config
 
-__all__ = ["load_document", "load_documents", "get_text_splitter"]
+__all__ = ["load_documents", "document_splitter", "format_citations"]
 
 
-# TODO: Add support for more file types as needed
-#   Better batch loading
-#   Async loading
-#   More loading sources (web, database)
+async def load_documents(file_paths: str | Path | list[str] | list[Path]):
+    """
+    Async generator that loads documents from given file paths.
+
+    TODO:
+        - Add support for more file types
+        - Add support for bytes, str or file-like objects
+        - More loading sources (web, database)
+        - Fallback
 
 
-def load_document(file_path: str | Path):
-    path = Path(file_path)
-    suffix = path.suffix.lower()
+    :param file_paths:
+    """
 
-    loaders = {
-        ".pdf": PyPDFLoader,
-        ".txt": TextLoader,
-        ".csv": CSVLoader,
-        ".md": UnstructuredMarkdownLoader,
-    }
+    if not isinstance(file_paths, list):
+        file_paths = [Path(file_paths)]
+    else:
+        file_paths = [Path(fp) for fp in file_paths]
 
-    loader_class = loaders.get(suffix)
-    if not loader_class:
-        raise ValueError(f"Unsupported file type: {suffix}")
+    loader = UnstructuredLoader(
+        file_paths,
+        chunking_strategy="basic",
+        max_characters=1_000_000,
+        include_orig_elements=False,
+    )
 
-    return loader_class(file_path).load()
-
-
-def load_documents(file_paths: list[str]):
-    supported_extensions = {".pdf", ".txt", ".csv", ".md"}
-    docs = []
-
-    for path_str in file_paths:
-        path = Path(path_str)
-
-        if path.is_dir():
-            files = []
-            for ext in supported_extensions:
-                files.extend(path.rglob(f"*{ext}"))
-            for file_path in sorted(files):
-                docs.extend(load_document(str(file_path)))
-        elif path.is_file():
-            docs.extend(load_document(str(path)))
-        else:
-            raise ValueError(f"Path not found: {path_str}")
-
-    return docs
+    async for doc in loader.alazy_load():
+        yield doc
 
 
-def get_text_splitter(strategy: str | None = None):
+def document_splitter(document: str) -> str:
+    return document
+
+
+# add config
+def document_splitter_(strategy: str | None = None):
     if strategy is None:
         strategy = global_rag_config.chunking_strategy
 
@@ -80,3 +68,45 @@ def get_text_splitter(strategy: str | None = None):
 
     else:
         raise ValueError(f"Unknown chunking strategy: {strategy}")
+
+
+# TODO: add more metadata fields to Citation as needed
+# Example metadata: https://docs.langchain.com/oss/python/integrations/document_loaders/unstructured_file
+# Document(metadata={
+#    'source': './example_data/layout-parser-paper.pdf',
+#    'coordinates': {
+#       'points': ((16.34, 213.36), (16.34, 253.36), (36.34, 253.36), (36.34, 213.36)),
+#       'system': 'PixelSpace',
+#       'layout_width': 612,
+#       'layout_height': 792
+#       },
+#    'file_directory': './example_data',
+#    'filename': 'layout-parser-paper.pdf',
+#    'languages': ['eng'],
+#    'last_modified': '2024-02-27T15:49:27',
+#    'page_number': 1,
+#    'filetype': 'application/pdf',
+#    'category': 'UncategorizedText',
+#    'element_id': 'd3ce55f220dfb75891b4394a18bcb973'},
+#       ...
+#    page_content='1 2 0 2')
+
+
+# TODO: use templates for formatting
+def format_citations(documents: Iterable[Document]) -> Iterable[str]:
+    """
+    Citation formatter for retrieved documents.
+
+    :param documents: Iterable of retrieved documents.
+    :return: Formatted citation string.
+    """
+
+    citations: set[str] = set()
+
+    # TODO: create polymorphic citation formatters
+    for i, doc in enumerate(documents, 1):
+        citation = cast(
+            str, doc.metadata.get("source", "unknown"))  # pyright: ignore[reportUnknownMemberType]; fmt: skip
+        if citation not in citations:
+            citations.add(citation)
+            yield f"[{i}] {citation}"

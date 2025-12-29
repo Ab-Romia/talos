@@ -11,7 +11,7 @@ from langchain_core.runnables import (
 from src.config import global_rag_config as global_rag_config, RagConfig
 from src.config.prompts import RAG_PROMPT
 
-__all__ = ["RAGChain", "ingest_documents"]
+__all__ = ["RAGChain"]
 
 
 @final
@@ -34,9 +34,7 @@ class RAGChain:
 
         self.query_rewriter = get_query_rewriter()
         self.hyde = get_hyde_embeddings()
-        self.vectorstore = get_vectorstore(
-            collection_name=collection_name, embeddings=self.hyde
-        )
+        self.vectorstore = get_vectorstore(collection_name, embeddings=self.hyde)
 
         self.retriever = get_retriever(
             vectorstore=self.vectorstore,
@@ -49,44 +47,35 @@ class RAGChain:
         )
 
         self.llm = get_llm()
-        # Keep the history-like object returned by get_memory to allow swapping later
         self.memory = get_memory(use_memory=config.conversation_memory_k > 0)
-        self.chain = self._build_chain()
-
-    def _build_chain(self):
-        def rewrite_and_retrieve(question: str):
-            result = self.query_rewriter.invoke({"query": question})
-            if isinstance(result.content, list):
-                rewritten = str(result)
-            else:
-                rewritten = result.content
-
-            self.last_query_info["rewritten_query"] = rewritten.strip()
-
-            docs = self.retriever.invoke(rewritten)
-            self.retrieved_docs = docs
-            return docs
-
-        retrieval_chain = RunnableParallel(
-            {
-                "context": RunnableLambda(rewrite_and_retrieve)
-                | RunnableLambda(self._format_docs),
-                "question": RunnablePassthrough(),
-                "chat_history": RunnableLambda(lambda _: self.memory.messages),
-            }
-        )
-
-        # fmt: off
-        rag_chain = (
-            retrieval_chain
+        self.chain = (
+            RunnableParallel(
+                {
+                    "context": RunnableLambda(self._rewrite_and_retrieve)
+                    | RunnableLambda(self._format_docs),
+                    "question": RunnablePassthrough(),
+                    "chat_history": RunnableLambda(lambda _: self.memory.messages),
+                }
+            )
             | RAG_PROMPT
             | self.llm
             | StrOutputParser()
         )
-        # fmt: on
 
-        return rag_chain
+    def _rewrite_and_retrieve(self, question: str):
+        result = self.query_rewriter.invoke({"query": question})
+        if isinstance(result.content, list):
+            rewritten = str(result)
+        else:
+            rewritten = result.content
 
+        self.last_query_info["rewritten_query"] = rewritten.strip()
+
+        docs = self.retriever.invoke(rewritten)
+        self.retrieved_docs = docs
+        return docs
+
+    # TODO: use prompt template
     @staticmethod
     def _format_docs(docs):
         return "\n\n".join(doc.page_content for doc in docs)
@@ -127,39 +116,16 @@ class RAGChain:
         self.last_query_info["num_docs_retrieved"] = len(self.retrieved_docs)
 
         if include_citations:
-            citations = format_citations(self.retrieved_docs)
-            if citations:
-                yield citations
-                full_response += citations
+            full_response += "\n\nSources:"
+            yield "\n\nSources:"
+            for citation in format_citations(self.retrieved_docs):
+                yield f"\n{citation}"
+                full_response += f"\n{citation}"
 
         self.memory.add_ai_message(full_response)
 
+    async def ingest_documents(self, file_paths: list[str]):
+        from src.rag import load_documents
 
-def ingest_documents(file_paths: list[str], collection_name: str | None = None):
-    from src.rag import (
-        load_documents,
-        get_text_splitter,
-        create_vectorstore_from_documents,
-    )
-
-    docs = load_documents(file_paths)
-
-    unique_sources = set()
-    for doc in docs:
-        if hasattr(doc, "metadata") and "source" in doc.metadata:
-            unique_sources.add(doc.metadata["source"])
-
-    ingestion_info = {
-        "num_files": len(unique_sources) if unique_sources else len(file_paths),
-        "num_documents": len(docs),
-        "num_chunks": 0,
-        "files": file_paths,
-    }
-
-    splitter = get_text_splitter()
-    chunks = splitter.split_documents(docs)
-    ingestion_info["num_chunks"] = len(chunks)
-
-    vectorstore = create_vectorstore_from_documents(chunks, collection_name)
-
-    return vectorstore, ingestion_info
+        documents = [doc async for doc in load_documents(file_paths)]
+        return self.vectorstore.add_documents(documents)

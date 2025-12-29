@@ -9,13 +9,14 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, final
 
 from src.config import LoggingConfig
 
-__all__ = ['get_logger']
+__all__ = ["get_logger"]
 
 
+@final
 class Logger:
     """
     Custom logger wrapper with structured logging support.
@@ -24,26 +25,26 @@ class Logger:
     """
 
     def __init__(
-            self,
-            name: str,
-            config: LoggingConfig = None,
+        self,
+        name: str,
+        config: LoggingConfig | None = None,
     ):
         self.name = name
         self.config = config or LoggingConfig()
         self._logger = self._setup_logger()
-        self._metrics: dict[str, Any] = {}
+        self._metrics: dict[str, object] = {}
 
     def _setup_logger(self) -> logging.Logger:
         """Set up the logger with configured handlers."""
         logger = logging.getLogger(self.name)
-        logger.setLevel(getattr(logging, self.config.level))
+        logger.setLevel(self.config.level)
 
         # Clear existing handlers
         logger.handlers = []
 
         # Console handler
         console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(getattr(logging, self.config.level))
+        console_handler.setLevel(self.config.level)
 
         # Format
         formatter = logging.Formatter(self.config.format)
@@ -98,7 +99,9 @@ class Logger:
             return f"{message} | {context}"
         return message
 
-    def log_metric(self, metric_name: str, value: Any, tags: dict[str, str] | None = None) -> None:
+    def log_metric(
+        self, metric_name: str, value: object, tags: dict[str, str] | None = None
+    ) -> None:
         """Log a metric value."""
         if not self.config.enable_metrics:
             return
@@ -118,11 +121,11 @@ class Logger:
         self.log_metric(f"{operation}_latency_ms", latency_ms)
 
     def log_retrieval(
-            self,
-            query: str,
-            num_results: int,
-            method: str,
-            latency_ms: float,
+        self,
+        query: str,
+        num_results: int,
+        method: str,
+        latency_ms: float,
     ) -> None:
         """Log retrieval operation."""
         self.info(
@@ -135,11 +138,11 @@ class Logger:
         self.log_latency("retrieval", latency_ms)
 
     def log_generation(
-            self,
-            prompt_tokens: int,
-            completion_tokens: int,
-            latency_ms: float,
-            model: str,
+        self,
+        prompt_tokens: int,
+        completion_tokens: int,
+        latency_ms: float,
+        model: str,
     ) -> None:
         """Log generation operation."""
         self.info(
@@ -165,7 +168,7 @@ class Logger:
 _loggers: dict[str, Logger] = {}
 
 
-def get_logger(name: str, config: LoggingConfig = None) -> Logger:
+def get_logger(name: str, config: LoggingConfig | None = None) -> Logger:
     """
     Get or create a logger instance.
 

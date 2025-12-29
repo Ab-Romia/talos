@@ -43,10 +43,9 @@ def get_memory(use_memory: bool = True) -> BaseChatMessageHistory:
     """
     Get chat message history memory.
 
-    Args:
-        use_memory (bool): Whether to use in-memory chat history.
+    :param use_memory: Whether to use in-memory chat history or null history.
+    :return: Chat message history instance.
     """
-
     if use_memory:
         return InMemoryChatMessageHistory()
     else:
