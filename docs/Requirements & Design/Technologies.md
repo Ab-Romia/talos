@@ -70,16 +70,22 @@ As it is a Python library, it is easy integrated with AI/ML libraries and tools.
 
 ### RAG & LLM System
 
+The system will be configurable via YAML files to allow easy adjustments of components and parameters.
+
 For the Retrieval-Augmented Generation (RAG) system, we will
 use [LangChain](https://github.com/langchain-ai/langchain) as the primary framework.
 LangChain provides a modular and flexible approach to building RAG systems, with support for various LLMs, vector
 databases, and retrieval methods.
 
-For vector database and similarity search, we will
-use [Milvus](https://milvus.io/) (specifically [pymilvus](https://github.com/milvus-io/pymilvus)),
-an open-source vector database designed for scalability and high performance.
+Document loading and chunking will be handled using multiple tools, including
+[Unstructured](https://unstructured.io), [LangChain's document loaders and text splitters](https://docs.langchain.com/oss/python/integrations/document_loaders)
+and custom implementations.
 
-[//]: # (TODO: Continue)
+For vector database and similarity search, we will
+use [Milvus](https://milvus.io/): an open-source vector database designed for scalability and high performance.
+
+For **query processing**, **orchestration** and **generation**, multiple LLM providers will be supported, such as
+OpenAI, Google Gemini, Anthropic, and HuggingFace... configurable via the YAML files on a per-workspace basis.
 
 ## Database
 
