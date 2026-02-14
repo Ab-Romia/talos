@@ -1,140 +1,202 @@
-import os
-import sys
+#!/usr/bin/env python3
+from enum import Enum
+from pathlib import Path
+
 from dotenv import load_dotenv
-from modules.rag.retriever import DenseRetriever
-from modules.rag.generator import LLMGenerator
-from modules.rag.modular_rag import ModularRAG
+
+from src.config import global_rag_config
+from src.rag import clear_collection, get_collection_info
+from src.rag.rag_chain import RAGChain
+
+_ = load_dotenv()
 
 
-class SimpleRAG:
-    def __init__(self, knowledge_file: str):
-        self.retriever = DenseRetriever()
-        self.generator = LLMGenerator()
-
-        self.retriever.load_knowledge(knowledge_file)
-        self.retriever.create_embeddings()
-
-    def query(self, question: str, top_k: int = 3):
-        print(f"\nQuestion: {question}")
-        print("-" * 60)
-
-        retrieved = self.retriever.retrieve(question, top_k=top_k)
-
-        print(f"\nRetrieved {len(retrieved)} relevant chunks:")
-        for i, (chunk, score) in enumerate(retrieved, 1):
-            print(f"{i}. [Score: {score:.3f}] {chunk}")
-
-        context_chunks = [chunk for chunk, _ in retrieved]
-
-        print("\nGenerating answer...")
-        answer = self.generator.generate(question, context_chunks)
-
-        print(f"\nAnswer: {answer}")
-        print("=" * 60)
-
-        return answer
+class Colors(str, Enum):
+    CYAN = "\033[96m"
+    BLUE = "\033[94m"
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    RED = "\033[91m"
+    BOLD = "\033[1m"
+    RESET = "\033[0m"
 
 
 def main():
-    load_dotenv()
+    print_header()
+    print_help()
 
-    if not os.getenv("OPENAI_API_KEY"):
-        print("Error: OPENAI_API_KEY not found in environment")
-        print("Please set it in your .env file")
-        return
+    rag = RAGChain(global_rag_config.milvus_collection_name)
+    info = get_collection_info(rag.collection_name)
+    print_color("✓ RAG rag ready\n", Colors.GREEN)
 
-    # Determine which mode to use
-    mode = "modular"  # Default to modular
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "--simple":
-            mode = "simple"
-        elif sys.argv[1] == "--modular":
-            mode = "modular"
-
-    knowledge_file = "data/raw/knowledge_base.txt"
-
-    if mode == "simple":
-        print("Initializing Simple RAG System")
-        print("=" * 60)
-        rag = SimpleRAG(knowledge_file)
+    if info and info.num_entities > 0:
+        print_color(f"Found {info.num_entities} documents in collection", Colors.GREEN)
+        print_color("Initializing RAG rag...", Colors.YELLOW)
     else:
-        config_path = "config/rag_config.yaml"
-        if not os.path.exists(config_path):
-            print(f"Warning: Config file not found at {config_path}")
-            print("Using default configuration")
-            config_path = None
-
-        rag = ModularRAG(knowledge_file, config_path)
-
-        # Print pipeline info
-        print("\n" + "=" * 60)
-        print("Pipeline Configuration:")
-        for component, status in rag.get_pipeline_info().items():
-            print(f"  {component.capitalize()}: {status}")
-
-    print("\n" + "=" * 60)
-    print(f"{'Modular' if mode == 'modular' else 'Simple'} RAG System Ready!")
-    print("Type your questions below (or 'exit' to quit)")
-    if mode == "modular":
-        print("\nSpecial commands:")
-        print("  /clear - Clear conversation history")
-        print("  /stats - Show conversation statistics")
-        print("  /history - Show conversation history")
-    print("=" * 60)
+        print_color(
+            f"⚠ No documents found in collection '{rag.collection_name}'",
+            Colors.YELLOW,
+        )
+        print(
+            f"  Use {color_text('/ingest <file_paths>', Colors.BOLD)} to add documents first\n"
+        )
 
     while True:
         try:
-            question = input("\nYour question: ").strip()
-
-            if not question:
-                continue
-
-            if question.lower() in ['exit', 'quit', 'q']:
-                print("\nGoodbye!")
+            if not main_loop(rag):
                 break
-
-            # Handle special commands (modular mode only)
-            if mode == "modular" and question.startswith('/'):
-                if question == '/clear':
-                    rag.clear_conversation()
-                    continue
-                elif question == '/stats':
-                    stats = rag.get_conversation_stats()
-                    print(f"\nConversation Statistics:")
-                    print(f"  Total turns: {stats['total_turns']}")
-                    print(f"  Session duration: {stats['session_duration']:.0f} seconds")
-                    print(f"  Session started: {stats['session_start']}")
-                    continue
-                elif question == '/history':
-                    history = rag.memory.get_full_history()
-                    if not history:
-                        print("No conversation history yet")
-                    else:
-                        print(f"\nConversation History ({len(history)} turns):")
-                        print("=" * 60)
-                        for i, turn in enumerate(history, 1):
-                            print(f"\nTurn {i}:")
-                            print(f"Q: {turn['question']}")
-                            print(f"A: {turn['answer']}")
-                            if turn.get('metadata', {}).get('query_type'):
-                                print(f"Type: {turn['metadata']['query_type']}")
-                        print("=" * 60)
-                    continue
-                else:
-                    print(f"Unknown command: {question}")
-                    print("Available commands: /clear, /stats, /history")
-                    continue
-
-            rag.query(question)
-
         except KeyboardInterrupt:
-            print("\n\nGoodbye!")
+            print_color("\nGoodbye!", Colors.CYAN)
             break
         except Exception as e:
-            print(f"\nError: {e}")
-            import traceback
-            traceback.print_exc()
-            print("Please try again.")
+            print_color(f"✗ Error: {e}\n", Colors.RED)
+
+
+def main_loop(rag: RAGChain):
+    user_input = input(color_text("Query:", Colors.BOLD) + " ").strip()
+
+    if not user_input:
+        return True
+
+    parts = user_input.split(" ", 1)
+    cmd = parts[0].lower()
+    arg = parts[1].strip() if len(parts) > 1 else ""
+
+    match cmd:
+        case "/quit" | "/exit":
+            print_color("Goodbye!", Colors.CYAN)
+            return False
+        case "/help":
+            print_help()
+        case "/ingest":
+            ingest_command(rag, arg)
+        case "/clear":
+            clear_command(rag)
+
+        case _:
+            query_command(rag, user_input)
+
+    return True
+
+
+def clear_command(rag: RAGChain):
+    confirm = input(
+        color_text(
+            "Are you sure you want to clear all documents? (y/N): ",
+            Colors.YELLOW,
+        )
+    )
+    if confirm.strip().lower() == "y":
+        if clear_collection(rag.collection_name):
+            print_color("✓ Collection cleared successfully\n", Colors.GREEN)
+        else:
+            print_color(
+                "Collection doesn't exist or is already empty\n",
+                Colors.YELLOW,
+            )
+    else:
+        print_color("Clear cancelled\n", Colors.YELLOW)
+
+
+def color_text(string: str, color: Colors) -> str:
+    return f"{color.value}{string}{Colors.RESET.value}"
+
+
+def print_color(string: str, color: Colors, **kwargs):
+    print(color_text(string, color), **kwargs)
+
+
+def print_header():
+    banner = r"""
+    ████████╗ █████╗ ██╗      ██████╗ ███████╗
+    ╚══██╔══╝██╔══██╗██║     ██╔═══██╗██╔════╝
+       ██║   ███████║██║     ██║   ██║███████╗
+       ██║   ██╔══██║██║     ██║   ██║╚════██║
+       ██║   ██║  ██║███████╗╚██████╔╝███████║
+       ╚═╝   ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚══════╝
+       
+    Retrieval-Augmented Generation CLI
+    V.2.0
+    """
+    banner_len = max(len(line) for line in banner.splitlines()) + 12
+    lines = [
+        "╔" + "═" * banner_len + "╗",
+        *(f"║{line.center(banner_len)}║" for line in banner.splitlines()),
+        "╚" + "═" * banner_len + "╝",
+    ]
+    mapping = {c: color_text(c, Colors.BLUE) for c in ["╔", "═", "╗", "║", "╚", "╝"]}
+
+    for line in lines:
+        print("".join(mapping.get(ch, ch) for ch in line))
+
+    print_color("Configuration:", Colors.BLUE)
+    print(f"Model: {global_rag_config.openai_model}")
+    print(f"Collection: {global_rag_config.milvus_collection_name}")
+    print(
+        f"Retrieval: {'Hybrid + Reranking' if global_rag_config.use_reranking else 'Dense Vector Search'}"
+    )
+    print(f"Milvus: {global_rag_config.milvus_host}:{global_rag_config.milvus_port}\n")
+
+
+def print_help():
+    print_color("Available Commands:", Colors.YELLOW)
+    print("  /ingest <file_paths>  - Ingest documents (comma-separated paths)")
+    print("  /clear                - Clear all ingested documents")
+    print("  /help                 - Show this help message")
+    print("  /quit or /exit        - Exit the CLI")
+    print("  <your question>       - Ask a question\n")
+
+
+def ingest_command(rag: RAGChain, file_paths_str: str):
+    import asyncio
+
+    if not file_paths_str:
+        print_color(
+            "✗ Please provide file paths to ingest. Usage: /ingest <file_paths>\n",
+            Colors.RED,
+        )
+        return
+
+    file_paths = [p.strip() for p in file_paths_str.split(",")]
+
+    print()
+    print_color("[1/4] Loading documents...", Colors.YELLOW)
+    for p in file_paths:
+        path = Path(p)
+        if path.is_dir():
+            print(f"      Scanning directory: {p}")
+        else:
+            print(f"      File: {path.name}")
+
+    try:
+        docs_ids = asyncio.run(rag.ingest_documents(file_paths=file_paths))
+        print_color(f"✓ {len(docs_ids)} documents added\n", Colors.GREEN)
+    except Exception as e:
+        print()
+        print_color(f"✗ Ingestion failed: {e}\n", Colors.RED)
+
+
+def query_command(rag: RAGChain | None, question: str):
+    if rag is None:
+        print_color(
+            "✗ No documents ingested yet. Use /ingest <file_paths> to add documents first\n",
+            Colors.RED,
+        )
+        return
+
+    streaming = global_rag_config.llm_streaming
+    try:
+        if streaming:
+            print_color("Response:", Colors.GREEN, end=" ")
+            for chunk in rag.stream_query(question):
+                print(chunk, end="", flush=True)
+            print("\n")
+        else:
+            response = rag.query(question)
+            print_color("Response:", Colors.GREEN, end=" ")
+            print(f"{response}\n")
+    except Exception as e:
+        print_color(f"✗ Query failed: {e}\n", Colors.RED)
 
 
 if __name__ == "__main__":
