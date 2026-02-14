@@ -1,7 +1,7 @@
 services:
   # PostgreSQL Databasedocker-compose.yaml: Compose Deployment
   postgres:
-    image: postgres
+    image: postgres:16-alpine
     hostname: postgres
     restart: unless-stopped
     env_file:
