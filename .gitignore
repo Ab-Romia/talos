@@ -77,3 +77,8 @@ htmlcov/
 *.tmp
 tmp/
 temp/
+
+# Terminal recordings
+*.cast
+
+node_modules
