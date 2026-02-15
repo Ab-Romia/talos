@@ -80,3 +80,5 @@ temp/
 
 # Terminal recordings
 *.cast
+
+node_modules
