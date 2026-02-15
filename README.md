@@ -101,4 +101,4 @@ pytest tests/ -v
 
 ## License
 
-Graduation project — Talos, 2025.
+Graduation project — Talos, 2026.
