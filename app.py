@@ -11,6 +11,10 @@ from modules.app.auth import auth as auth_router
 from modules.app.auth import get_current_user
 from modules.model.base import Base, engine
 
+
+
+from starlette.middleware.sessions import SessionMiddleware
+
 load_dotenv()
 
 
@@ -25,8 +29,9 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title='Temp', lifespan=lifespan)
-app.include_router(auth_router)
+app.add_middleware(SessionMiddleware,secret_key="any string")
 
+app.include_router(auth_router)
 
 @app.get('/', response_class=HTMLResponse)
 async def root():

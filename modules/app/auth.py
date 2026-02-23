@@ -8,11 +8,15 @@ import fastapi
 from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import jwt, JWTError
+from authlib.integrations.starlette_client import OAuth
 
 from pydantic import BaseModel
 from starlette import status
 
-from modules.model.identity import User, UserPassword
+from starlette.middleware.sessions import SessionMiddleware
+
+from modules.model.identity import User, UserPassword,IdentityProvider, AuthUrl
+import uuid
 from modules.model.base import db_dependency
 
 # TODO:
@@ -31,6 +35,34 @@ auth = fastapi.APIRouter(prefix='/api/auth')
 JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY').encode('utf-8')
 JWT_ALGORITHM = 'HS256'
 oauth2_bearer = OAuth2PasswordBearer(tokenUrl='/api/auth/token')
+
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+
+GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID")
+GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET")
+
+oauth = OAuth()
+
+oauth.register(
+    name="google",
+    client_id=GOOGLE_CLIENT_ID,
+    client_secret=GOOGLE_CLIENT_SECRET,
+    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+    client_kwargs={
+        "scope": "openid email profile"
+    }
+)
+
+oauth.register(
+    name="github",
+    client_id=GITHUB_CLIENT_ID,
+    client_secret=GITHUB_CLIENT_SECRET,
+    access_token_url="https://github.com/login/oauth/access_token",
+    authorize_url="https://github.com/login/oauth/authorize",
+    api_base_url="https://api.github.com/",
+    client_kwargs={"scope": "user:email"},
+)
 
 
 class CreateUserRequest(BaseModel):
@@ -85,6 +117,13 @@ def create_access_token(username: str, user_id: int, expires_delta: timedelta):
     encode.update({'exp': expires})
     return jwt.encode(encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
+def verify_jwt_token(token: str):
+    try:
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        return payload["sub"]
+    except JWTError:
+        return None
+
 
 async def get_current_user(token: Annotated[str, Depends(oauth2_bearer)]):
     """
@@ -102,8 +141,145 @@ async def get_current_user(token: Annotated[str, Depends(oauth2_bearer)]):
 
 
 user_dependency = Annotated[dict, Depends(get_current_user)]
+@auth.get("/google")
+async def google_login(request: fastapi.Request):
+    redirect_uri = request.url_for("google_callback")
+    return await oauth.google.authorize_redirect(request, redirect_uri)
 
+@auth.get("/github")
+async def github_login(request: fastapi.Request):
+    redirect_uri = request.url_for("github_callback")
+    return await oauth.github.authorize_redirect(request, redirect_uri)
+@auth.get("/google/callback")
+async def google_callback(
+        request: fastapi.Request,
+        db: db_dependency
+):
+    token = await oauth.google.authorize_access_token(request)
+    user_info = token.get("userinfo")
 
+    if not user_info:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Google authentication failed"
+        )
+
+    google_sub = user_info["sub"]
+    email = user_info["email"]
+    name = user_info.get("name")
+
+    identity = db.query(IdentityProvider).filter(
+        IdentityProvider.auth_url == AuthUrl.google,
+        IdentityProvider.sub == google_sub
+    ).first()
+
+    if identity:
+        user = db.query(User).filter(User.id == identity.user_id).first()
+
+    else:
+        user = db.query(User).filter(User.primary_email == email).first()
+
+        if not user:
+            user = User(
+                username=email,
+                primary_email=email,
+                email_verified=True,
+                name=name,
+                data={},
+                roles=[]
+            )
+            db.add(user)
+            db.flush()
+
+        identity = IdentityProvider(
+            user_id=user.id,
+            auth_url=AuthUrl.google,
+            sub=google_sub
+        )
+        db.add(identity)
+
+        db.commit()
+    access_token = create_access_token(
+        username=user.username,
+        user_id=user.id,
+        expires_delta=timedelta(minutes=20)
+    )
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer"
+    }
+
+@auth.get("/github/callback")
+async def github_callback(
+        request: fastapi.Request,
+        db: db_dependency
+):
+    token = await oauth.github.authorize_access_token(request)
+
+    resp = await oauth.github.get("user", token=token)
+    github_user = resp.json()
+
+    github_id = str(github_user["id"])
+    username = github_user["login"]
+    name = github_user.get("name")
+
+    email = github_user.get("email")
+
+    if not email:
+        emails_resp = await oauth.github.get("user/emails", token=token)
+        emails = emails_resp.json()
+        primary_email = next((e for e in emails if e["primary"]), None)
+        email = primary_email["email"] if primary_email else None
+
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="GitHub email not available"
+        )
+
+    identity = db.query(IdentityProvider).filter(
+        IdentityProvider.auth_url == AuthUrl.github,
+        IdentityProvider.sub == github_id
+    ).first()
+
+    if identity:
+        user = db.query(User).filter(User.id == identity.user_id).first()
+
+    else:
+        user = db.query(User).filter(User.primary_email == email).first()
+
+        if not user:
+            user = User(
+                username=username,
+                primary_email=email,
+                email_verified=True,
+                name=name,
+                data={},
+                roles=[]
+            )
+            db.add(user)
+            db.flush()
+
+        identity = IdentityProvider(
+            user_id=user.id,
+            auth_url=AuthUrl.github,
+            sub=github_id
+        )
+        db.add(identity)
+
+        db.commit()
+
+    access_token = create_access_token(
+        username=user.username,
+        user_id=user.id,
+        expires_delta=timedelta(minutes=20)
+    )
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer"
+    }
 @auth.post('/sudo_token', response_model=Token)
 async def login_for_sudo_token(user: user_dependency, form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
                                db: db_dependency):
