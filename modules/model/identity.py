@@ -52,6 +52,7 @@ class AuthUrl(PyEnum):
     password = "/private/auth/password"
     otp = "/private/auth/otp"
     google = "/private/auth/google"
+    github = "/private/auth/github"
 
 
 class IdentityProvider(Base):
