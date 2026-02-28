@@ -6,7 +6,6 @@ from fastapi import FastAPI, Depends
 from fastapi.responses import HTMLResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-from starlette.middleware.sessions import SessionMiddleware
 
 from backend.app.auth import auth as auth_router
 from backend.app.auth import get_current_user
