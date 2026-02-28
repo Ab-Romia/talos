@@ -26,7 +26,6 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title='Temp', lifespan=lifespan)
-app.add_middleware(SessionMiddleware, secret_key="any string")
 
 app.include_router(auth_router)
 
