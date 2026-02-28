@@ -5,8 +5,11 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "basedpyright>=1.38.1",
     "bcrypt>=5.0.0",
+    "black>=26.1.0",
     "fastapi>=0.127.0",
+    "itsdangerous>=2.2.0",
     "jinja2>=3.1.6",
     "langchain>=1.1.2",
     "numpy>=2.3.5",
@@ -18,5 +21,6 @@ dependencies = [
     "rank-bm25>=0.2.2",
     "sentence-transformers>=5.1.2",
     "sqlalchemy>=2.0.44",
+    "starlette>=0.50.0",
     "uvicorn>=0.38.0",
 ]
