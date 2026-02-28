@@ -6,14 +6,11 @@ from fastapi import FastAPI, Depends
 from fastapi.responses import HTMLResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-
-from modules.app.auth import auth as auth_router
-from modules.app.auth import get_current_user
-from modules.model.base import Base, engine
-
-
-
 from starlette.middleware.sessions import SessionMiddleware
+
+from backend.app.auth import auth as auth_router
+from backend.app.auth import get_current_user
+from backend.model.base import Base, engine
 
 load_dotenv()
 
@@ -29,13 +26,14 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title='Temp', lifespan=lifespan)
-app.add_middleware(SessionMiddleware,secret_key="any string")
+app.add_middleware(SessionMiddleware, secret_key="any string")
 
 app.include_router(auth_router)
 
+
 @app.get('/', response_class=HTMLResponse)
 async def root():
-    with open('templates/index.html', 'r') as f:
+    with open('frontend/templates/index.html', 'r') as f:
         return f.read()
 
 

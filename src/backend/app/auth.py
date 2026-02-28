@@ -12,8 +12,8 @@ from jose import jwt, JWTError
 from pydantic import BaseModel
 from starlette import status
 
-from modules.model.base import db_dependency
-from modules.model.identity import User, UserPassword, IdentityProvider, AuthUrl
+from backend.model.base import db_dependency
+from backend.model.identity import User, UserPassword, IdentityProvider, AuthUrl
 
 # TODO:
 #  cookies,

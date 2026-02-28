@@ -5,7 +5,7 @@ from typing import Optional
 from sqlalchemy import DateTime, UUID, ForeignKey
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 
-from modules.model.base import Base
+from backend.model.base import Base
 
 
 class Workspace(Base):
