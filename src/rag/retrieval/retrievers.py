@@ -10,8 +10,8 @@ from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
 from langchain_core.vectorstores import VectorStore
 
-from src.config import global_rag_config
-from src.config.config import RagConfig
+from model.config import RagConfig
+from model.config import global_rag_config
 
 __all__ = ["get_retriever"]
 
@@ -19,9 +19,9 @@ __all__ = ["get_retriever"]
 # TODO: instead of passing boolean flags, pass reranker and retriever
 #  add more config options
 def get_retriever(
-    vectorstore: VectorStore,
-    documents: Iterable[Document],
-    config: RagConfig = global_rag_config,
+        vectorstore: VectorStore,
+        documents: Iterable[Document],
+        config: RagConfig = global_rag_config,
 ):
     dense_retriever = vectorstore.as_retriever(
         search_type="similarity", search_kwargs={"k": config.retrieval_top_k}

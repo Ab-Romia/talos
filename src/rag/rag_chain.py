@@ -8,8 +8,8 @@ from langchain_core.runnables import (
     RunnableLambda,
 )
 
-from src.config import global_rag_config as global_rag_config, RagConfig
-from src.config.prompts import RAG_PROMPT
+from model.config import RAG_PROMPT
+from model.config import global_rag_config as global_rag_config, RagConfig
 
 __all__ = ["RAGChain"]
 
@@ -49,17 +49,17 @@ class RAGChain:
         self.llm = get_llm()
         self.memory = get_memory(use_memory=config.conversation_memory_k > 0)
         self.chain = (
-            RunnableParallel(
-                {
-                    "context": RunnableLambda(self._rewrite_and_retrieve)
-                    | RunnableLambda(self._format_docs),
-                    "question": RunnablePassthrough(),
-                    "chat_history": RunnableLambda(lambda _: self.memory.messages),
-                }
-            )
-            | RAG_PROMPT
-            | self.llm
-            | StrOutputParser()
+                RunnableParallel(
+                    {
+                        "context": RunnableLambda(self._rewrite_and_retrieve)
+                                   | RunnableLambda(self._format_docs),
+                        "question": RunnablePassthrough(),
+                        "chat_history": RunnableLambda(lambda _: self.memory.messages),
+                    }
+                )
+                | RAG_PROMPT
+                | self.llm
+                | StrOutputParser()
         )
 
     def _rewrite_and_retrieve(self, question: str):

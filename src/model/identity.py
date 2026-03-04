@@ -8,7 +8,7 @@ from sqlalchemy import DateTime, UUID, Table, Column, ForeignKey, Enum
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from backend.model.base import Base
+from model.base import Base
 
 users_platform_roles = Table(
     "users_platform_roles", Base.metadata,

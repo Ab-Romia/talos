@@ -4,8 +4,8 @@ import pyotp
 from fastapi import APIRouter, Depends, HTTPException, Response, status, Form
 from sqlalchemy.sql.annotation import Annotated
 
-from backend.model.base import DepDB
-from backend.model.identity import User, Issuer, IdentityProvider
+from model.base import DepDB
+from model.identity import User, Issuer, IdentityProvider
 from .common import JWTClaims, jwt_claims, _raw_user, create_session, set_cookie_from_token
 
 router = APIRouter()

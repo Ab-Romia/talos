@@ -5,8 +5,8 @@ import bcrypt
 from fastapi import Depends, HTTPException, status, APIRouter, Response
 from fastapi.security import OAuth2PasswordRequestForm
 
-from backend.model.base import DepDB
-from backend.model.identity import User, IdentityProvider, Issuer, OAuth2Token, TokenType
+from model.base import DepDB
+from model.identity import User, IdentityProvider, Issuer, OAuth2Token, TokenType
 from .common import create_session, sudo_token, clear_all_sessions, set_cookie_from_token, active_user, create_token
 
 router = APIRouter()
@@ -70,19 +70,18 @@ def password_authenticate(response: Response, db: DepDB, form_data: OAuth2Passwo
             token_type=TokenType.bearer,
             expires_at=exp,
         )
+        set_cookie_from_token(response, token, cookie_name="access_token", session_cookie=True)
+        return token
     else:
         token = create_session(user.id, db=db)
-
-    set_cookie_from_token(response, token, cookie_name="access_token")
-
-    return token
+        set_cookie_from_token(response, token, cookie_name="access_token")
+        return token
 
 
-@router.put("/change", status_code=status.HTTP_200_OK)
+@router.put("/change", dependencies=[Depends(sudo_token)])
 def change_password(
         response: Response,
         user: Annotated[User, Depends(active_user)],
-        sudo: Annotated[dict, Depends(sudo_token)],
         db: DepDB,
         new_password: str,
 ):

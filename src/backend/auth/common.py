@@ -15,8 +15,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Mapped
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from backend.model.base import DepDB
-from backend.model.identity import User, OAuth2Token, TokenType, Session
+from model.base import DepDB
+from model.identity import User, OAuth2Token, TokenType, Session
 
 # TODO:
 #  ✅ cookies,
@@ -44,17 +44,16 @@ class SessionCookieToHeaderMiddleware(BaseHTTPMiddleware):
         if ("Authorization" in request.headers
                 or "access_token" not in request.cookies
                 and "sudo_token" not in request.cookies):
-            return call_next(request)
+            return await call_next(request)
 
         token = request.cookies.get("sudo_token") \
                 or request.cookies.get("access_token")
 
-        headers = dict(request.scope['headers'])
-        headers[b"authorization"] = f"Bearer {token}".encode("utf-8")
+        headers = request.headers.mutablecopy()
+        headers.append("Authorization", f"Bearer {token}")
+        request.scope["headers"] = headers.raw
 
-        request.scope['headers'] = [(k, v) for k, v in headers.items()]
-
-        return call_next(request)
+        return await call_next(request)
 
 
 class AuthErrorCode(PyEnum):

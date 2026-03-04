@@ -6,7 +6,7 @@ from langchain_classic.retrievers.document_compressors import (
 )
 from langchain_core.retrievers import BaseRetriever
 
-from src.config import CompressionType
+from model.config import CompressionType
 from ..generation import get_llm
 from ..vector_store import get_embeddings
 
@@ -14,8 +14,8 @@ __all__ = ["compression_retriever"]
 
 
 def compression_retriever(
-    base_retriever: BaseRetriever,
-    compression_type: CompressionType = CompressionType.LLM,
+        base_retriever: BaseRetriever,
+        compression_type: CompressionType = CompressionType.LLM,
 ):
     """Context compression using CLaRa techniques."""
     match compression_type:

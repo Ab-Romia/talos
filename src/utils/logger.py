@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, final
 
-from src.config import LoggingConfig
+from model.config import LoggingConfig
 
 __all__ = ["get_logger"]
 
@@ -25,9 +25,9 @@ class Logger:
     """
 
     def __init__(
-        self,
-        name: str,
-        config: LoggingConfig | None = None,
+            self,
+            name: str,
+            config: LoggingConfig | None = None,
     ):
         self.name = name
         self.config = config or LoggingConfig()
@@ -100,7 +100,7 @@ class Logger:
         return message
 
     def log_metric(
-        self, metric_name: str, value: object, tags: dict[str, str] | None = None
+            self, metric_name: str, value: object, tags: dict[str, str] | None = None
     ) -> None:
         """Log a metric value."""
         if not self.config.enable_metrics:
@@ -121,11 +121,11 @@ class Logger:
         self.log_metric(f"{operation}_latency_ms", latency_ms)
 
     def log_retrieval(
-        self,
-        query: str,
-        num_results: int,
-        method: str,
-        latency_ms: float,
+            self,
+            query: str,
+            num_results: int,
+            method: str,
+            latency_ms: float,
     ) -> None:
         """Log retrieval operation."""
         self.info(
@@ -138,11 +138,11 @@ class Logger:
         self.log_latency("retrieval", latency_ms)
 
     def log_generation(
-        self,
-        prompt_tokens: int,
-        completion_tokens: int,
-        latency_ms: float,
-        model: str,
+            self,
+            prompt_tokens: int,
+            completion_tokens: int,
+            latency_ms: float,
+            model: str,
     ) -> None:
         """Log generation operation."""
         self.info(

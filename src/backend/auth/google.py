@@ -3,8 +3,8 @@ import os
 from authlib.integrations.starlette_client import OAuth
 from fastapi import Request, HTTPException, status, Response, APIRouter
 
-from backend.model.base import DepDB
-from backend.model.identity import IdentityProvider, Issuer, User
+from model.base import DepDB
+from model.identity import IdentityProvider, Issuer, User
 from .common import create_session, set_cookie_from_token
 
 oauth = OAuth()

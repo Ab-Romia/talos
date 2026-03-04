@@ -9,7 +9,7 @@ from langchain_text_splitters import (
 )
 from langchain_unstructured import UnstructuredLoader
 
-from src.config import global_rag_config
+from model.config import global_rag_config
 
 __all__ = ["load_documents", "document_splitter", "format_citations"]
 

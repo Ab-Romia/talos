@@ -4,7 +4,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from src.config import global_rag_config
+from model.config import global_rag_config
 from src.rag import clear_collection, get_collection_info
 from src.rag.rag_chain import RAGChain
 

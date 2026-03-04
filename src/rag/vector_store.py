@@ -7,7 +7,7 @@ from langchain_milvus import Milvus
 from langchain_openai import OpenAIEmbeddings
 from pymilvus import connections, Collection, utility
 
-from src.config import global_rag_config
+from model.config import global_rag_config
 
 __all__ = [
     "get_embeddings",
@@ -15,7 +15,6 @@ __all__ = [
     "clear_collection",
     "get_collection_info",
 ]
-
 
 connections.connect(
     alias="default",
@@ -42,9 +41,9 @@ def get_embeddings(provider: str | None = None) -> Embeddings:
 
 
 def get_vectorstore(
-    collection_name: str,
-    embedding_provider: str | None = None,
-    embeddings: Embeddings | None = None,
+        collection_name: str,
+        embedding_provider: str | None = None,
+        embeddings: Embeddings | None = None,
 ) -> VectorStore:
     if embeddings is None:
         embeddings = get_embeddings(embedding_provider)

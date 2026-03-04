@@ -2,13 +2,13 @@ from datetime import datetime, timezone, timedelta
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status, Form
+from fastapi import APIRouter, Depends, status, Form, Response
 from pydantic import BaseModel
 
-from backend.auth.common import active_user, set_auth_cookie, create_token, \
-    get_session, sudo_token
-from backend.model.base import DepDB
-from backend.model.identity import User, Session
+from backend.auth.common import active_user, create_token, \
+    get_session, sudo_token, set_cookie_from_token
+from model.base import DepDB
+from model.identity import User, Session, OAuth2Token, TokenType
 
 auth_router = APIRouter()
 
@@ -54,7 +54,6 @@ class SudoRequest(BaseModel):
 
 
 @auth_router.post("/sudo")
-@set_auth_cookie(cookie_name="sudo_token", session_cookie=True)
 async def sudo(
         login_credentials: SudoRequest,
         user: Annotated[User, Depends(active_user)],
@@ -69,21 +68,29 @@ async def sudo(
 # @auth_router.post("/logout_all")
 
 
-@auth_router.post("/revoke")
+@auth_router.post("/revoke", dependencies=[Depends(sudo_token)])
 async def revoke_token(session_id: Annotated[UUID, Form()],
-                       sudo: Annotated[dict, Depends(sudo_token)],
                        db: DepDB):
     db.delete(db.query(Session).filter(Session.id == session_id))
     db.commit()
 
 
 @auth_router.post("/refresh")
-@set_auth_cookie(cookie_name="access_token")
-async def refresh_token(user: Annotated[User, Depends(active_user)],
-                        session: Annotated[Session, Depends(get_session)],
-                        db: DepDB):
+async def refresh_token(
+        response: Response,
+        user: Annotated[User, Depends(active_user)],
+        session: Annotated[Session, Depends(get_session)],
+        db: DepDB):
     new_expiration = datetime.now(timezone.utc) + timedelta(days=30)
     db.get_one(Session, session.id).expires_at = new_expiration
     db.commit()
 
-    return create_token(user.id, exp=new_expiration, jti=session.id)
+    oauth = OAuth2Token(
+        access_token=create_token(user.id, exp=new_expiration, jti=session.id),
+        refresh_token="",
+        token_type=TokenType.bearer,
+        expires_at=new_expiration,
+    )
+
+    set_cookie_from_token(response, oauth, cookie_name="access_token")
+    return oauth
