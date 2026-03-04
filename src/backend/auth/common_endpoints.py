@@ -4,6 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, status, Form, Response
 from pydantic import BaseModel
+from sqlalchemy import delete
 
 from backend.auth.common import active_user, create_token, \
     get_session, sudo_token, set_cookie
@@ -43,7 +44,9 @@ async def create_user(db: DepDB, create_user: CreateUserRequest):
 @auth_router.post("/logout")
 async def logout(db: DepDB, session: Annotated[Session, Depends(get_session)] = None):
     if session:
-        db.query(Session).filter(Session.id == session.id).delete()
+        db.execute(
+            delete(Session).where(Session.id == session.id)
+        )
         db.commit()
 
 
@@ -76,7 +79,9 @@ async def sudo(
 @auth_router.post("/revoke", dependencies=[Depends(sudo_token)])
 async def revoke_token(session_id: Annotated[UUID, Form()],
                        db: DepDB):
-    db.delete(db.query(Session).filter(Session.id == session_id))
+    db.execute(
+        delete(Session).where(Session.id == session_id)
+    )
     db.commit()
 
 
@@ -88,7 +93,10 @@ async def refresh_token(
         response: Response
 ):
     new_expiration = datetime.now(timezone.utc) + timedelta(days=30)
-    db.get_one(Session, session.id).expires_at = new_expiration
+
+    # the session is guaranteed to exist by the dependency
+    sess = db.get_one(Session, session.id)
+    sess.expires_at = new_expiration
     db.commit()
 
     token = create_token(user.id, exp=new_expiration, jti=session.id)

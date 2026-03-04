@@ -1,19 +1,27 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict, YamlConfigSettingsSource
+from pydantic import BaseModel
+from pydantic_settings import BaseSettings, SettingsConfigDict, PydanticBaseSettingsSource, YamlConfigSettingsSource
 
 
-class AuthConfig(BaseSettings):
-    google_client_id: str = ""
-    google_client_secret: str = ""
+# name="google",
+# client_id=config().auth.google_client.id,
+# client_secret=config().auth.google_client.secret,
+# server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+# client_kwargs={"scope": "openid email profile"},
 
-    github_client_id: str = ""
-    github_client_secret: str = ""
+class OAuthClient(BaseModel):
+    id: str
+    secret: str
+
+
+class AuthConfig(BaseModel):
+    google_client: OAuthClient = None
+    github_client: OAuthClient = None
 
     totp_valid_window: int = 1
 
-    jwt_secret_key: bytes = b""
+    # ensure is 64 bytes
+    jwt_secret_key: bytes
     jwt_algorithm: str = "HS256"
-
-    yaml_file: str = "config/auth.yaml"
 
 
 class Config(BaseSettings):
@@ -21,20 +29,30 @@ class Config(BaseSettings):
     app_host: str = "localhost"
     app_port: int = 8000
 
-    auth: AuthConfig = AuthConfig()
+    database_url: str = ""
+
+    auth: AuthConfig = None
 
     model_config = SettingsConfigDict(
+        env_file='.env',
         env_nested_delimiter="__",
         extra="ignore",  # TODO: change to "forbid" in prod
+        yaml_file="config/config.yaml"
     )
 
     @classmethod
-    def settings_customise_sources(cls, settings_cls, init_settings,
-                                   env_settings, dotenv_settings, file_secret_settings):
+    def settings_customise_sources(
+            cls,
+            settings_cls: type[BaseSettings],
+            init_settings: PydanticBaseSettingsSource,
+            env_settings: PydanticBaseSettingsSource,
+            dotenv_settings: PydanticBaseSettingsSource,
+            file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (
+            init_settings,
             env_settings,
             dotenv_settings,
-            file_secret_settings,
             YamlConfigSettingsSource(settings_cls),
-            init_settings,
+            file_secret_settings,
         )

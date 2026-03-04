@@ -1,5 +1,6 @@
 from authlib.integrations.starlette_client import OAuth
 from fastapi import Request, HTTPException, status, Response, APIRouter
+from sqlalchemy import select
 
 from config import config
 from model.base import DepDB
@@ -9,17 +10,23 @@ from .common import create_session, set_cookie
 oauth = OAuth()
 router = APIRouter()
 
-oauth.register(
-    name="google",
-    client_id=config().auth.google_client_id,
-    client_secret=config().auth.google_client_secret,
-    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-    client_kwargs={"scope": "openid email profile"},
-)
+# TODO: generalize to multiple providers and dynamic registration
+if config().auth.google_client is not None:
+    oauth.register(
+        name="google",
+        client_id=config().auth.google_client.id,
+        client_secret=config().auth.google_client.secret,
+        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+        client_kwargs={"scope": "openid email profile"},
+    )
 
 
 @router.get("/login")
 async def google_login(request: Request):
+    # TODO: generalize to multiple providers
+    if not oauth.google:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                            detail="Google authentication not configured")
     redirect_uri = request.url_for("google_login_callback")
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
@@ -41,10 +48,12 @@ async def google_login_callback(request: Request, response: Response, db: DepDB)
     if not google_sub or not email:
         raise fail
 
-    user = db.query(User) \
-        .join(IdentityProvider, IdentityProvider.user_id == User.id) \
-        .filter(IdentityProvider.issuer == Issuer.google, IdentityProvider.sub == google_sub) \
-        .one_or_none()
+    user = db.scalar(
+        select(User)
+        .where(User.primary_email == email)
+        .where(IdentityProvider.issuer == Issuer.google, IdentityProvider.sub == google_sub)
+        .where(IdentityProvider.user_id == User.id)
+    )
 
     # if not user:
     #     # TODO: get user confirmation to link accounts if email already exists with password login

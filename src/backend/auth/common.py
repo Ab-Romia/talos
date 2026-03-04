@@ -5,12 +5,14 @@ from typing import Annotated
 from uuid import UUID
 from xmlrpc.client import DateTime
 
+import sqlalchemy
 from fastapi import HTTPException, Depends, Request, status, Response
 from fastapi.exception_handlers import http_exception_handler as fastapi_http_exception_handler
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2
 from jose import jwt, JWTError, ExpiredSignatureError
 from pydantic import BaseModel
+from sqlalchemy import insert, delete, select, update
 from sqlalchemy.orm import Mapped
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -94,7 +96,7 @@ async def auth_exception_handler(request: Request, exc: AuthException):
 
 
 def _raw_user(jwt_claims: Annotated[JWTClaims, Depends(jwt_claims)], db: DepDB):
-    user = db.query(User).filter(User.id == jwt_claims.sub).one_or_none()
+    user = db.scalar(select(User).where(User.id == jwt_claims.sub))
     if user is None:
         raise AuthException(detail="User not found", err_code=AuthErrorCode.USER_DELETED)
 
@@ -115,9 +117,10 @@ def jwt_claims(token: Annotated[str, Depends(oauth2_bearer)]):
 def active_user(user: Annotated[User, Depends(_raw_user)],
                 jwt_claims: Annotated[JWTClaims, Depends(jwt_claims)],
                 db: DepDB):
-    query = db.query(Session) \
-        .filter(Session.id == jwt_claims.jti, Session.user_id == user.id)
-    session = query.one_or_none()
+    session = db.scalar(
+        select(Session)
+        .where(Session.id == jwt_claims.jti, Session.user_id == user.id)
+    )
 
     if jwt_claims.requires_otp:
         raise AuthException(detail="OTP verification required", err_code=AuthErrorCode.OTP_REQUIRED)
@@ -131,14 +134,22 @@ def active_user(user: Annotated[User, Depends(_raw_user)],
     if session is None:
         raise AuthException(detail="Session expired", err_code=AuthErrorCode.EXPIRED_TOKEN)
 
-    query.update({Session.last_used_at: datetime.now()})
+    db.execute(
+        update(Session)
+        .where(Session.id == session.id)
+        .values(last_active_at=datetime.now(timezone.utc))
+    )
+
     db.commit()
 
     return user
 
 
 def get_session(jwt_claims: Annotated[JWTClaims, Depends(jwt_claims)], db: DepDB):
-    session = db.get(Session, jwt_claims.jti)
+    session = db.scalar(
+        select(Session)
+        .where(Session.id == jwt_claims.jti, Session.user_id == jwt_claims.sub)
+    )
 
     if session is None:
         raise AuthException(detail="Session expired", err_code=AuthErrorCode.EXPIRED_TOKEN)
@@ -147,7 +158,10 @@ def get_session(jwt_claims: Annotated[JWTClaims, Depends(jwt_claims)], db: DepDB
 
 
 def sudo_token(jwt_claims: Annotated[JWTClaims, Depends(jwt_claims)], db: DepDB):
-    session = db.get(Session, jwt_claims.jti)
+    session = db.scalar(
+        select(Session)
+        .where(Session.id == jwt_claims.jti, Session.user_id == jwt_claims.sub)
+    )
 
     if session is None:
         raise AuthException(detail="Session expired", err_code=AuthErrorCode.EXPIRED_TOKEN)
@@ -190,7 +204,7 @@ def create_token(user_id, exp, jti, requires_otp=False) -> OAuth2Token:
 
 def create_session(
         user_id: UUID | Mapped[UUID],
-        db,
+        db: sqlalchemy.orm.Session,
         expires_delta=timedelta(days=30),
         expires_at: DateTime = None,
         session_id: UUID = None,
@@ -198,13 +212,20 @@ def create_session(
     # TODO: handle case where token is provided (factory?)
     expires = expires_at or (datetime.now(timezone.utc) + expires_delta)
     session_id = session_id or uuid.uuid4()
-    db.add(Session(id=session_id, user_id=user_id))
+    db.execute(
+        insert(Session)
+        .values(id=session_id, user_id=user_id)
+    )
+    db.commit()
 
     return create_token(user_id, exp=expires, jti=session_id)
 
 
-async def clear_all_sessions(db: DepDB, user: Annotated[User, Depends(active_user)]):
-    db.delete(db.query(Session).filter(Session.user_id == user.id))
+async def clear_all_sessions(user: Annotated[User, Depends(active_user)], db: DepDB):
+    db.execute(
+        delete(Session)
+        .where(Session.user_id == user.id)
+    )
 
 
 # TODO: generalize this to handle all cookies

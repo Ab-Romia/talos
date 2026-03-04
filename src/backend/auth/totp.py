@@ -2,6 +2,7 @@ from datetime import datetime
 
 import pyotp
 from fastapi import APIRouter, Depends, HTTPException, Response, status, Form
+from sqlalchemy import insert, delete, select
 from sqlalchemy.sql.annotation import Annotated
 
 from config import config
@@ -19,14 +20,15 @@ def create_totp(user: Annotated[User, Depends(_raw_user)], db: DepDB):
         .provisioning_uri(name=user.primary_email,
                           issuer_name=config().app_name)
 
-    db.add(IdentityProvider(
-        user_id=user.id,
-        issuer=Issuer.totp,
-        sub=user.id,
-        secret=otp_base32,
-    ))
-
-    db.commit()
+    db.execute(
+        insert(IdentityProvider)
+        .values(
+            user_id=user.id,
+            issuer=Issuer.totp,
+            sub=user.id,
+            secret=otp_base32,
+        )
+    )
 
     # return the provisioning URI so a client (or test) can present it to the user
     return {"uri": uri}
@@ -45,9 +47,10 @@ def complete_verification(
 
     This separates state changes from the pure verification step.
     """
-    totp_provider = db.query(IdentityProvider) \
-        .filter(IdentityProvider.user_id == jwt_claims.sub, IdentityProvider.issuer == Issuer.totp) \
-        .one_or_none()
+    totp_provider = db.scalar(
+        select(IdentityProvider)
+        .where(IdentityProvider.user_id == jwt_claims.sub, IdentityProvider.issuer == Issuer.totp)
+    )
 
     if not totp_provider or not totp_provider.secret:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="TOTP not set up for user")
@@ -72,8 +75,9 @@ def complete_verification(
 @router.post("/clear")
 def clear_totp(user: Annotated[User, Depends(_raw_user)], db: DepDB):
     """Remove any TOTP identity providers for the current user."""
-    db.query(IdentityProvider) \
-        .filter(IdentityProvider.user_id == user.id, IdentityProvider.issuer == Issuer.totp) \
-        .delete()
+    db.execute(
+        delete(IdentityProvider)
+        .where(IdentityProvider.user_id == user.id, IdentityProvider.issuer == Issuer.totp)
+    )
     db.commit()
     return {"message": "TOTP cleared"}

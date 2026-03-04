@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from enum import Enum as PyEnum
-from typing import Optional, Any
+from typing import Any
 
 from pydantic import Field, BaseModel
 from sqlalchemy import DateTime, UUID, Table, Column, ForeignKey, Enum
@@ -24,10 +24,10 @@ class User(Base):
     primary_email: Mapped[str] = mapped_column(CITEXT(), unique=True, index=True)
     email_verified: Mapped[bool] = mapped_column(default=False, index=True)
 
-    name: Mapped[Optional[str]] = mapped_column()
+    name: Mapped[str | None] = mapped_column()
 
     created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.now)
-    deleted_at: Mapped[Optional[datetime]] = mapped_column()
+    deleted_at: Mapped[datetime | None] = mapped_column()
 
     data: Mapped[dict[str, Any]] = mapped_column()
     roles: Mapped[list["PlatformRole"]] = relationship("PlatformRole",
@@ -38,7 +38,7 @@ class User(Base):
 class OTP(Base):
     __tablename__ = "otp"
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), default=None)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(), default=None)
     code: Mapped[str] = mapped_column()
 
 
@@ -62,13 +62,14 @@ class TokenType(PyEnum):
 
 class IdentityProvider(Base):
     __tablename__ = "identity_providers"
-    # id = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    issuer: Mapped[Issuer] = mapped_column(Enum(Issuer), primary_key=True)
+    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    issuer: Mapped[Issuer] = mapped_column(Enum(Issuer), index=True)
     sub: Mapped[str | None] = mapped_column()
     secret: Mapped[str | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.now)
-    verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), default=None)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(), default=None)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(), default=None)
 
 
 platform_roles_permissions = Table(
@@ -80,17 +81,17 @@ platform_roles_permissions = Table(
 
 class Session(Base):
     __tablename__ = "sessions"
-    id = mapped_column(UUID(as_uuid=True), primary_key=True)
-    user_id = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.now)
     last_used_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.now)
 
 
 class PlatformRole(Base):
     __tablename__ = "platform_roles"
-    id = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(unique=True, index=True)
-    description: Mapped[Optional[str]] = mapped_column()
+    description: Mapped[str | None] = mapped_column()
     permissions: Mapped[list["Permission"]] = relationship("Permission",
                                                            secondary="platform_role_permissions")
     users: Mapped[list["User"]] = relationship(
@@ -102,9 +103,9 @@ class PlatformRole(Base):
 
 class Permission(Base):
     __tablename__ = "permissions"
-    id = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(unique=True, index=True)
-    description: Mapped[Optional[str]] = mapped_column()
+    description: Mapped[str | None] = mapped_column()
 
 
 class OAuth2Token(BaseModel):
