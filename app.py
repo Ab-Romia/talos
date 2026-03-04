@@ -2,13 +2,13 @@ import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from backend.app.auth import auth as auth_router
-from backend.app.auth import get_current_user
+from backend.auth import auth_router, active_user
+from backend.auth.common import SessionCookieToHeaderMiddleware
 from backend.model.base import Base, engine
 
 load_dotenv()
@@ -25,13 +25,15 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title='Temp', lifespan=lifespan)
-
-app.include_router(auth_router)
+app.include_router(auth_router, prefix="/auth")
+app.add_middleware(SessionCookieToHeaderMiddleware)
 
 
 @app.get('/', response_class=HTMLResponse)
-async def root():
-    with open('frontend/templates/index.html', 'r') as f:
+async def root(request: Request):
+    print(request.headers)
+
+    with open('frontend/templates/pages/home.html', 'r') as f:
         return f.read()
 
 
@@ -42,7 +44,7 @@ async def smily():
 
 @app.get('/smily-protected',
          response_class=HTMLResponse,
-         dependencies=[Depends(get_current_user)])
+         dependencies=[Depends(active_user)])
 async def smily():
     return HTMLResponse('<p style="font-size:24em";>🙃</p>')
 

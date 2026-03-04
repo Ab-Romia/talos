@@ -3,6 +3,7 @@ from datetime import datetime
 from enum import Enum as PyEnum
 from typing import Optional, Any
 
+from pydantic import Field, BaseModel
 from sqlalchemy import DateTime, UUID, Table, Column, ForeignKey, Enum
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -18,7 +19,7 @@ users_platform_roles = Table(
 
 class User(Base):
     __tablename__ = "users"
-    id = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     username: Mapped[str] = mapped_column(CITEXT(), unique=True, index=True)
     primary_email: Mapped[str] = mapped_column(CITEXT(), unique=True, index=True)
     email_verified: Mapped[bool] = mapped_column(default=False, index=True)
@@ -41,26 +42,33 @@ class OTP(Base):
     code: Mapped[str] = mapped_column()
 
 
-class UserPassword(Base):
-    __tablename__ = "user_passwords"
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    hashed_password: Mapped[str] = mapped_column()
-    created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.now)
+# class UserPassword(Base):
+#     __tablename__ = "user_passwords"
+#     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+#     hashed_password: Mapped[str] = mapped_column()
+#     created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.now)
 
 
-class AuthUrl(PyEnum):
-    password = "/private/auth/password"
-    otp = "/private/auth/otp"
-    google = "/private/auth/google"
-    github = "/private/auth/github"
+class Issuer(PyEnum):
+    password = "/api/auth/password"
+    totp = "/api/auth/totp"
+    google = "/api/auth/google"
+    github = "/api/auth/github"
+
+
+class TokenType(PyEnum):
+    bearer = "Bearer"
 
 
 class IdentityProvider(Base):
     __tablename__ = "identity_providers"
     # id = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    auth_url: Mapped[AuthUrl] = mapped_column(Enum(AuthUrl), primary_key=True)
-    sub: Mapped[str] = mapped_column()
+    issuer: Mapped[Issuer] = mapped_column(Enum(Issuer), primary_key=True)
+    sub: Mapped[str | None] = mapped_column()
+    secret: Mapped[str | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.now)
+    verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), default=None)
 
 
 platform_roles_permissions = Table(
@@ -72,11 +80,9 @@ platform_roles_permissions = Table(
 
 class Session(Base):
     __tablename__ = "sessions"
-    token = mapped_column(UUID(as_uuid=True), primary_key=True)
+    id = mapped_column(UUID(as_uuid=True), primary_key=True)
     user_id = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.now)
-    expires_at: Mapped[datetime] = mapped_column(DateTime())
-    expired_at: Mapped[Optional[datetime]] = mapped_column()
 
 
 class PlatformRole(Base):
@@ -98,3 +104,12 @@ class Permission(Base):
     id = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(unique=True, index=True)
     description: Mapped[Optional[str]] = mapped_column()
+
+
+class OAuth2Token(BaseModel):
+    # name: str = Field(..., max_length=40)
+    token_type: TokenType
+    access_token: str = Field(..., max_length=512)
+    refresh_token: str = Field(..., max_length=512)
+    requires_otp: bool = False
+    expires_at: datetime

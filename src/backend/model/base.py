@@ -1,7 +1,7 @@
 import os
 from typing import Any, Annotated
-from dotenv import load_dotenv
 
+from dotenv import load_dotenv
 from fastapi import Depends
 from sqlalchemy import create_engine
 from sqlalchemy.dialects.postgresql import JSONB
@@ -29,4 +29,4 @@ def get_db():
         db.close()
 
 
-db_dependency = Annotated[Session, Depends(get_db)]
+DepDB = Annotated[Session, Depends(get_db)]
