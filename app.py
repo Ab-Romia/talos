@@ -1,4 +1,3 @@
-import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -9,8 +8,10 @@ from sqlalchemy.orm import Session
 
 from backend.auth import auth_router, active_user
 from backend.auth.common import SessionCookieToHeaderMiddleware
+from config import config
 from model.base import engine, Base
-from model.config import get_config
+
+__all__ = []
 
 load_dotenv()
 
@@ -37,9 +38,8 @@ async def root():
 
 
 @app.get('/config')
-async def config():
-    config = get_config()
-    return config
+async def config_page():
+    return config()
 
 
 @app.get('/smily')
@@ -56,6 +56,6 @@ if __name__ == '__main__':
     import uvicorn
 
     uvicorn.run(app,
-                host=os.environ.get('HOST'),
-                port=int(os.environ.get('PORT'))
+                host=config().app_host,
+                port=config().app_port,
                 )

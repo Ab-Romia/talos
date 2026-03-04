@@ -6,7 +6,7 @@ from langchain_classic.retrievers.document_compressors import (
 )
 from langchain_core.retrievers import BaseRetriever
 
-from model.config import CompressionType
+from config import CompressionType
 from ..generation import get_llm
 from ..vector_store import get_embeddings
 

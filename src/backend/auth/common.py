@@ -1,4 +1,3 @@
-import os
 import uuid
 from datetime import timedelta, datetime, timezone
 from enum import Enum as PyEnum
@@ -15,6 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Mapped
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from config import config
 from model.base import DepDB
 from model.identity import User, OAuth2Token, TokenType, Session
 
@@ -33,8 +33,6 @@ from model.identity import User, OAuth2Token, TokenType, Session
 #   - revoke sessions
 #  2FA (TOTP, WebAuthn, etc.)
 
-JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY").encode("utf-8")
-JWT_ALGORITHM = "HS256"
 
 oauth2_bearer = OAuth2()
 
@@ -73,7 +71,7 @@ class AuthException(HTTPException):
 class JWTClaims(BaseModel):
     sub: UUID
     jti: UUID
-    exp: int
+    exp: datetime
     requires_otp: bool = False
     sudo: bool = False
 
@@ -117,7 +115,9 @@ def jwt_claims(token: Annotated[str, Depends(oauth2_bearer)]):
 def active_user(user: Annotated[User, Depends(_raw_user)],
                 jwt_claims: Annotated[JWTClaims, Depends(jwt_claims)],
                 db: DepDB):
-    session = db.get(Session, jwt_claims.jti)
+    query = db.query(Session) \
+        .filter(Session.id == jwt_claims.jti, Session.user_id == user.id)
+    session = query.one_or_none()
 
     if jwt_claims.requires_otp:
         raise AuthException(detail="OTP verification required", err_code=AuthErrorCode.OTP_REQUIRED)
@@ -130,6 +130,9 @@ def active_user(user: Annotated[User, Depends(_raw_user)],
 
     if session is None:
         raise AuthException(detail="Session expired", err_code=AuthErrorCode.EXPIRED_TOKEN)
+
+    query.update({Session.last_used_at: datetime.now()})
+    db.commit()
 
     return user
 
@@ -160,21 +163,29 @@ DepUser = Annotated[User, Depends(active_user)]
 
 
 def decode_token(token: str):
-    claims = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+    # TODO: use authlib.jwt, get algorithm from header
+    claims = jwt.decode(token, config().auth.jwt_secret_key)
     claims = JWTClaims.model_validate(claims)
 
     return claims
 
 
-def create_token(user_id, exp, jti, requires_otp=False) -> str:
+def create_token(user_id, exp, jti, requires_otp=False) -> OAuth2Token:
     """Create a JWT token with the given user ID, expiration time, and session ID (jti)."""
     claims = JWTClaims(sub=user_id,
                        exp=exp,
                        jti=jti,
                        requires_otp=requires_otp)
 
-    access_token = jwt.encode(claims.model_dump(), JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
-    return access_token
+    access_token = jwt.encode(claims.model_dump(mode="json"),
+                              config().auth.jwt_secret_key,
+                              algorithm=config().auth.jwt_algorithm)
+    return OAuth2Token(
+        access_token=access_token,
+        refresh_token="",
+        token_type=TokenType.bearer,
+        expires_at=exp,
+    )
 
 
 def create_session(
@@ -187,31 +198,26 @@ def create_session(
     # TODO: handle case where token is provided (factory?)
     expires = expires_at or (datetime.now(timezone.utc) + expires_delta)
     session_id = session_id or uuid.uuid4()
-    token = create_token(user_id, exp=expires, jti=session_id)
-
     db.add(Session(id=session_id, user_id=user_id))
 
-    return OAuth2Token(
-        access_token=token,
-        refresh_token="",
-        token_type=TokenType.bearer,
-        expires_at=expires,
-    )
+    return create_token(user_id, exp=expires, jti=session_id)
 
 
 async def clear_all_sessions(db: DepDB, user: Annotated[User, Depends(active_user)]):
     db.delete(db.query(Session).filter(Session.user_id == user.id))
 
 
-def set_cookie_from_token(response: Response, token: OAuth2Token, cookie_name: str, session_cookie: bool = False):
-    max_age = int(token.expires_at.timestamp() - datetime.now(timezone.utc).timestamp())
+# TODO: generalize this to handle all cookies
+def set_cookie(response: Response, name: str, value: OAuth2Token, session_cookie: bool = False):
+    max_age = int(value.expires_at.timestamp() - datetime.now(timezone.utc).timestamp())
 
     response.set_cookie(
-        key=cookie_name,
-        value=token.access_token,
+        key=name,
+        value=value.access_token,
         httponly=True,
         secure=True,
         samesite="lax",
         max_age=max_age,
-        expires=token.expires_at if session_cookie else None,
+        expires=value.expires_at if session_cookie else None,
     )
+    return value

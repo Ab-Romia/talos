@@ -1,19 +1,18 @@
-import os
-
 from authlib.integrations.starlette_client import OAuth
 from fastapi import Request, HTTPException, status, Response, APIRouter
 
+from config import config
 from model.base import DepDB
 from model.identity import IdentityProvider, Issuer, User
-from .common import create_session, set_cookie_from_token
+from .common import create_session, set_cookie
 
 oauth = OAuth()
 router = APIRouter()
 
 oauth.register(
     name="google",
-    client_id=os.getenv("GOOGLE_CLIENT_ID"),
-    client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+    client_id=config().auth.google_client_id,
+    client_secret=config().auth.google_client_secret,
     server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
     client_kwargs={"scope": "openid email profile"},
 )
@@ -21,7 +20,7 @@ oauth.register(
 
 @router.get("/login")
 async def google_login(request: Request):
-    redirect_uri = request.url_for("google_callback")
+    redirect_uri = request.url_for("google_login_callback")
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
 
@@ -64,9 +63,9 @@ async def google_login_callback(request: Request, response: Response, db: DepDB)
     #     ))
     #
     #     db.commit()
-    set_cookie_from_token(response, token, cookie_name="access_token")
-
-    return create_session(user.id, db)
+    return set_cookie(response,
+                      name="access_token",
+                      value=create_session(user.id, db))
 
 # @google_auth.get("/signup/callback")
 # @set_auth_cookie(cookie_name="access_token")

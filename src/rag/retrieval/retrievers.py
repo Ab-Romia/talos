@@ -10,8 +10,8 @@ from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
 from langchain_core.vectorstores import VectorStore
 
-from model.config import RagConfig
-from model.config import global_rag_config
+from config import RagConfig
+from config import global_rag_config
 
 __all__ = ["get_retriever"]
 

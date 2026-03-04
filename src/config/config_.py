@@ -1,5 +1,3 @@
-from functools import lru_cache
-
 from pydantic_settings import BaseSettings, SettingsConfigDict, YamlConfigSettingsSource
 
 
@@ -10,16 +8,25 @@ class AuthConfig(BaseSettings):
     github_client_id: str = ""
     github_client_secret: str = ""
 
+    totp_valid_window: int = 1
+
+    jwt_secret_key: bytes = b""
+    jwt_algorithm: str = "HS256"
+
     yaml_file: str = "config/auth.yaml"
 
 
 class Config(BaseSettings):
+    app_name: str = "Talos"
+    app_host: str = "localhost"
+    app_port: int = 8000
+
+    auth: AuthConfig = AuthConfig()
+
     model_config = SettingsConfigDict(
         env_nested_delimiter="__",
         extra="ignore",  # TODO: change to "forbid" in prod
     )
-
-    auth_config: AuthConfig = AuthConfig()
 
     @classmethod
     def settings_customise_sources(cls, settings_cls, init_settings,
@@ -31,8 +38,3 @@ class Config(BaseSettings):
             YamlConfigSettingsSource(settings_cls),
             init_settings,
         )
-
-
-@lru_cache
-def get_config() -> Config:
-    return Config()

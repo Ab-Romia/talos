@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, status, Form, Response
 from pydantic import BaseModel
 
 from backend.auth.common import active_user, create_token, \
-    get_session, sudo_token, set_cookie_from_token
+    get_session, sudo_token, set_cookie
 from model.base import DepDB
-from model.identity import User, Session, OAuth2Token, TokenType
+from model.identity import User, Session
 
 auth_router = APIRouter()
 
@@ -55,6 +55,7 @@ class SudoRequest(BaseModel):
 
 @auth_router.post("/sudo")
 async def sudo(
+        response: Response,
         login_credentials: SudoRequest,
         user: Annotated[User, Depends(active_user)],
         session: Annotated[Session, Depends(get_session)],
@@ -62,7 +63,11 @@ async def sudo(
     # TODO: implement different sudo methods (password, otp, passkey)
 
     expires = datetime.now(timezone.utc) + timedelta(minutes=15)
-    return create_token(user.id, exp=expires, jti=session.id, requires_otp=True)
+    sudo_token = create_token(user.id, exp=expires, jti=session.id, requires_otp=True)
+    return set_cookie(response,
+                      name="sudo_token",
+                      value=sudo_token,
+                      session_cookie=True)
 
 
 # @auth_router.post("/logout_all")
@@ -77,20 +82,15 @@ async def revoke_token(session_id: Annotated[UUID, Form()],
 
 @auth_router.post("/refresh")
 async def refresh_token(
-        response: Response,
         user: Annotated[User, Depends(active_user)],
         session: Annotated[Session, Depends(get_session)],
-        db: DepDB):
+        db: DepDB,
+        response: Response
+):
     new_expiration = datetime.now(timezone.utc) + timedelta(days=30)
     db.get_one(Session, session.id).expires_at = new_expiration
     db.commit()
 
-    oauth = OAuth2Token(
-        access_token=create_token(user.id, exp=new_expiration, jti=session.id),
-        refresh_token="",
-        token_type=TokenType.bearer,
-        expires_at=new_expiration,
-    )
+    token = create_token(user.id, exp=new_expiration, jti=session.id)
 
-    set_cookie_from_token(response, oauth, cookie_name="access_token")
-    return oauth
+    return set_cookie(response, name="access_token", value=token)

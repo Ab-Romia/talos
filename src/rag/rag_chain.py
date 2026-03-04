@@ -8,8 +8,8 @@ from langchain_core.runnables import (
     RunnableLambda,
 )
 
-from model.config import RAG_PROMPT
-from model.config import global_rag_config as global_rag_config, RagConfig
+from config import RAG_PROMPT
+from config import global_rag_config as global_rag_config, RagConfig
 
 __all__ = ["RAGChain"]
 

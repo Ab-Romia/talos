@@ -7,8 +7,8 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from langchain_openai import ChatOpenAI
 
-from model.config import QUERY_REWRITE_PROMPT
-from model.config import global_rag_config
+from config import QUERY_REWRITE_PROMPT
+from config import global_rag_config
 from ..generation import get_llm
 from ..vector_store import get_embeddings
 

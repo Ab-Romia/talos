@@ -7,7 +7,7 @@ from langchain_milvus import Milvus
 from langchain_openai import OpenAIEmbeddings
 from pymilvus import connections, Collection, utility
 
-from model.config import global_rag_config
+from config import global_rag_config
 
 __all__ = [
     "get_embeddings",

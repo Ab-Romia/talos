@@ -6,8 +6,9 @@ from fastapi import Depends, HTTPException, status, APIRouter, Response
 from fastapi.security import OAuth2PasswordRequestForm
 
 from model.base import DepDB
-from model.identity import User, IdentityProvider, Issuer, OAuth2Token, TokenType
-from .common import create_session, sudo_token, clear_all_sessions, set_cookie_from_token, active_user, create_token
+from model.identity import User, IdentityProvider, Issuer
+from .common import create_session, sudo_token, clear_all_sessions, active_user, create_token, \
+    set_cookie
 
 router = APIRouter()
 
@@ -21,9 +22,7 @@ def hash_password(password: str) -> str:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a plaintext password against a hashed password."""
-    return bcrypt.checkpw(
-        plain_password.encode("utf-8"), hashed_password.encode("utf-8")
-    )
+    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
 
 
 @router.post("/")
@@ -42,7 +41,7 @@ def password_authenticate(response: Response, db: DepDB, form_data: OAuth2Passwo
     if (not res
             or res[0].email_verified is False
             or res[0].deleted_at is not None
-            or not verify_password(password, res[1].sub)):
+            or not verify_password(password, res[1].secret)):
         return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                              detail="Incorrect username or password.")
     user = res[0]
@@ -52,30 +51,22 @@ def password_authenticate(response: Response, db: DepDB, form_data: OAuth2Passwo
         .filter(IdentityProvider.issuer != Issuer.totp) \
         .all()
 
-    # TODO:
-    requires_otp = False
+    # TODO: generalize to multiple 2fa methods
+    requires_otp = db.query(IdentityProvider) \
+                       .filter(IdentityProvider.user_id == user.id, IdentityProvider.issuer == Issuer.totp) \
+                       .filter(IdentityProvider.verified_at is not None) \
+                       .count() > 0
 
     if requires_otp:
         exp = datetime.now(timezone.utc) + timedelta(minutes=5)
-        access_token = create_token(
+        return set_cookie(response, name="access_token", value=create_token(
             user_id=user.id,
             requires_otp=True,
             exp=exp,
             jti=None,
-        )
-
-        token = OAuth2Token(
-            access_token=access_token,
-            refresh_token="",
-            token_type=TokenType.bearer,
-            expires_at=exp,
-        )
-        set_cookie_from_token(response, token, cookie_name="access_token", session_cookie=True)
-        return token
+        ), session_cookie=True)
     else:
-        token = create_session(user.id, db=db)
-        set_cookie_from_token(response, token, cookie_name="access_token")
-        return token
+        return set_cookie(response, name="access_token", value=create_session(user.id, db=db))
 
 
 @router.put("/change", dependencies=[Depends(sudo_token)])
@@ -102,6 +93,6 @@ def change_password(
     clear_all_sessions(db, user)
 
     token = create_session(user_id=user.id, db=db)
-    set_cookie_from_token(response, token, cookie_name="access_token")
+    set_cookie(response, name="access_token", value=token)
 
     return token

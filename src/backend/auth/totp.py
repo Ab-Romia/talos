@@ -4,21 +4,20 @@ import pyotp
 from fastapi import APIRouter, Depends, HTTPException, Response, status, Form
 from sqlalchemy.sql.annotation import Annotated
 
+from config import config
 from model.base import DepDB
 from model.identity import User, Issuer, IdentityProvider
-from .common import JWTClaims, jwt_claims, _raw_user, create_session, set_cookie_from_token
+from .common import JWTClaims, jwt_claims, _raw_user, create_session, set_cookie
 
 router = APIRouter()
-
-APP_NAME = "Talos"
-TOTP_VALID_WINDOW = 1
 
 
 @router.post("/generate")
 def create_totp(user: Annotated[User, Depends(_raw_user)], db: DepDB):
     otp_base32 = pyotp.random_base32()
     uri = pyotp.totp.TOTP(otp_base32) \
-        .provisioning_uri(name=user.primary_email, issuer_name=APP_NAME)
+        .provisioning_uri(name=user.primary_email,
+                          issuer_name=config().app_name)
 
     db.add(IdentityProvider(
         user_id=user.id,
@@ -50,10 +49,11 @@ def complete_verification(
         .filter(IdentityProvider.user_id == jwt_claims.sub, IdentityProvider.issuer == Issuer.totp) \
         .one_or_none()
 
-    if not totp_provider or not getattr(totp_provider, "secret", None):
+    if not totp_provider or not totp_provider.secret:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="TOTP not set up for user")
 
-    is_valid = pyotp.TOTP(totp_provider.secret).verify(totp, None, TOTP_VALID_WINDOW)
+    is_valid = pyotp.TOTP(str(totp_provider.secret)) \
+        .verify(totp, valid_window=config().auth.totp_valid_window)
 
     if not is_valid:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid TOTP")
@@ -63,13 +63,8 @@ def complete_verification(
         totp_provider.verified_at = datetime.now()
         db.commit()
 
-    # mark JWT as no longer requiring OTP
     if jwt_claims.requires_otp:
-        # create_session signature is (user_id, db, ...)
-        token = create_session(jwt_claims.sub, db)
-        set_cookie_from_token(response, token, cookie_name="access_token")
-
-        return token
+        return set_cookie(response, name="access_token", value=create_session(jwt_claims.sub, db))
 
     return {"message": "TOTP verified"}
 

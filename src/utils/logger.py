@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, final
 
-from model.config import LoggingConfig
+from config import LoggingConfig
 
 __all__ = ["get_logger"]
 

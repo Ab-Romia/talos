@@ -7,7 +7,7 @@ from langchain_core.chat_history import (
 from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
 
-from model.config import global_rag_config
+from config import global_rag_config
 
 __all__ = ["get_llm", "get_memory"]
 
