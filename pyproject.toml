@@ -25,4 +25,5 @@ dependencies = [
     "sqlalchemy>=2.0.47",
     "starlette>=0.52.1",
     "uvicorn>=0.41.0",
+    "webauthn>=2.7.1",
 ]

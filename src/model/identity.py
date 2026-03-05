@@ -3,7 +3,7 @@ from datetime import datetime
 from enum import Enum as PyEnum
 from typing import Any
 
-from sqlalchemy import DateTime, UUID, Table, Column, ForeignKey, Enum
+from sqlalchemy import DateTime, UUID, Table, Column, ForeignKey, Enum, Uuid
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -18,7 +18,7 @@ users_platform_roles = Table(
 
 class User(Base):
     __tablename__ = "users"
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[Uuid] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     username: Mapped[str] = mapped_column(CITEXT(), unique=True, index=True)
     primary_email: Mapped[str] = mapped_column(CITEXT(), unique=True, index=True)
     email_verified: Mapped[bool] = mapped_column(default=False, index=True)
@@ -53,6 +53,7 @@ class Issuer(PyEnum):
     totp = "/api/auth/totp"
     google = "/api/auth/google"
     github = "/api/auth/github"
+    passkey = "/api/auth/passkey"
 
 
 class TokenType(PyEnum):
@@ -64,10 +65,8 @@ class IdentityProvider(Base):
     id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     issuer: Mapped[Issuer] = mapped_column(Enum(Issuer), index=True)
-    sub: Mapped[str | None] = mapped_column()
-    secret: Mapped[str | None] = mapped_column()
+    data: Mapped[dict[str, Any]] = mapped_column(default={})
     created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.now)
-    verified_at: Mapped[datetime | None] = mapped_column(DateTime(), default=None)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(), default=None)
 
 

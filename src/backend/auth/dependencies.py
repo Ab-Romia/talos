@@ -29,6 +29,11 @@ from model.identity import User, Session, TokenType
 #   - view active sessions
 #  ✅ - revoke sessions
 #  2FA (TOTP, WebAuthn, etc.)
+#  ✅* sudo mode (re-auth for sensitive actions)
+#  anonymous sessions
+#  remember me functionality
+#  device recognition (e.g. for risk-based authentication)
+#  exception handling
 
 
 oauth2_bearer = OAuth2()
@@ -125,7 +130,10 @@ async def auth_exception_handler(request: Request, exc: AuthException):
 
 
 def _raw_user(jwt_claims: Annotated[JWTClaims, Depends(jwt_claims)], db: DatabaseDep):
-    user = db.scalar(select(User).where(User.id == jwt_claims.sub))
+    user = db.scalar(select(User)
+                     .where(User.id == jwt_claims.sub)
+                     .where(User.deleted_at.is_(None))
+                     )
     if user is None:
         raise AuthException(detail="User not found", err_code=AuthErrorCode.USER_DELETED)
 
@@ -196,3 +204,4 @@ def sudo_token(jwt_claims: Annotated[JWTClaims, Depends(jwt_claims)], db: Databa
 
 SessionDep = Annotated[Session, Depends(get_session)]
 UserDep = Annotated[User, Depends(active_user)]
+JWTDep = Annotated[JWTClaims, Depends(jwt_claims)]

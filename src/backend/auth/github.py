@@ -64,7 +64,7 @@ async def github_callback(request: Request, response: Response, db: DatabaseDep)
     user = db.scalar(
         select(User)
         .join(IdentityProvider, IdentityProvider.user_id == User.id)
-        .where(IdentityProvider.issuer == Issuer.github, IdentityProvider.sub == github_id)
+        .where(IdentityProvider.issuer == Issuer.github, IdentityProvider.data["sub"].as_string() == github_id)
     )
 
     if not user:
@@ -82,7 +82,7 @@ async def github_callback(request: Request, response: Response, db: DatabaseDep)
         db.add(user)
         db.flush()
 
-        identity = IdentityProvider(user_id=user.id, issuer=Issuer.github, sub=github_id)
+        identity = IdentityProvider(user_id=user.id, issuer=Issuer.github, data={"sub": github_id})
         db.add(identity)
         db.commit()
 

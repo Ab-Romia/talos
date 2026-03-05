@@ -1,16 +1,13 @@
 import uuid
 from datetime import timedelta, datetime, timezone
-from typing import Annotated
 
-from fastapi import Depends
 from sqlalchemy import insert, delete
 from starlette.responses import Response
 
 from model.base import DatabaseDep
 from model.cookie import CookieOptions
-from model.identity import TokenType, Session, User
-from . import active_user
-from .common import JWTClaims, OAuth2Token
+from model.identity import TokenType, Session
+from .dependencies import JWTClaims, OAuth2Token, UserDep
 
 
 def create_and_save_token(
@@ -76,7 +73,7 @@ def save_session(
     return session_id
 
 
-async def clear_all_sessions(user: Annotated[User, Depends(active_user)], db: DatabaseDep):
+async def clear_all_sessions(user: UserDep, db: DatabaseDep):
     db.execute(
         delete(Session)
         .where(Session.user_id == user.id)

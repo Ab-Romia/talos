@@ -51,7 +51,7 @@ async def google_login_callback(request: Request, response: Response, db: Databa
     user = db.scalar(
         select(User)
         .where(User.primary_email == email)
-        .where(IdentityProvider.issuer == Issuer.google, IdentityProvider.sub == google_sub)
+        .where(IdentityProvider.issuer == Issuer.google, IdentityProvider.data["sub"].as_string() == google_sub)
         .where(IdentityProvider.user_id == User.id)
     )
     # TODO: handle user creation

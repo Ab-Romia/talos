@@ -22,33 +22,33 @@ class OAuthUserInfo:
 # A mapper turns raw token/userinfo dict into OAuthUserInfo
 UserInfoMapper = Callable[[dict[str, Any]], OAuthUserInfo | None]
 
+GOOGLE_MAPPER = {
+    "sub": ["userinfo", "sub"],
+    "email": ["userinfo", "email"],
+    "name": ["userinfo", "name"],
+    "avatar_url": ["userinfo", "picture"],
+}
 
-def _google_mapper(token: dict[str, Any]) -> OAuthUserInfo | None:
-    info = token.get("userinfo", {})
-    sub = info.get("sub")
-    email = info.get("email")
-    if not sub or not email:
-        return None
+GITHUB_MAPPER = {
+    "sub": ["userinfo", "id"],
+    "email": ["userinfo", "email"],
+    "name": ["userinfo", "name"],
+    "avatar_url": ["userinfo", "avatar_url"],
+}
+
+
+def oauth_from_mapping(token: dict[str, Any], mapping) -> OAuthUserInfo | None:
+    def get_nested(keys, default=None):
+        d = token
+        for key in keys:
+            d = d.get(key, default)
+        return d
+
     return OAuthUserInfo(
-        sub=sub,
-        email=email,
-        name=info.get("name"),
-        avatar_url=info.get("picture"),
-    )
-
-
-def _github_mapper(token: dict[str, Any]) -> OAuthUserInfo | None:
-    # GitHub returns user info in the token dict directly (after userinfo fetch)
-    info = token.get("userinfo", token)
-    sub = str(info.get("id", ""))
-    email = info.get("email")
-    if not sub or not email:
-        return None
-    return OAuthUserInfo(
-        sub=sub,
-        email=email,
-        name=info.get("name") or info.get("login"),
-        avatar_url=info.get("avatar_url"),
+        sub=get_nested(mapping["email"]),
+        email=get_nested(mapping["email"]),
+        name=get_nested(mapping.get("name", [])),
+        avatar_url=get_nested(mapping.get("avatar_url", [])),
     )
 
 
@@ -146,7 +146,7 @@ async def oauth_callback(provider: str, request: Request, response: Response, db
     identity: IdentityProvider | None = db.scalar(
         select(IdentityProvider).where(
             IdentityProvider.issuer == issuer,
-            IdentityProvider.sub == user_info.sub,
+            IdentityProvider.data["sub"].as_string() == user_info.sub,
         )
     )
 
@@ -165,7 +165,8 @@ async def oauth_callback(provider: str, request: Request, response: Response, db
             user = User(
                 primary_email=user_info.email,
                 name=user_info.name,
-                avatar_url=user_info.avatar_url,
+                data={"avatar_url": user_info.avatar_url} if user_info.avatar_url else {},
+                roles=[],
             )
             db.add(user)
             db.flush()  # populate user.id before linking
@@ -173,7 +174,7 @@ async def oauth_callback(provider: str, request: Request, response: Response, db
         new_identity = IdentityProvider(
             user_id=user.id,
             issuer=issuer,
-            sub=user_info.sub,
+            data={"sub": user_info.sub},
         )
         db.add(new_identity)
         db.commit()
