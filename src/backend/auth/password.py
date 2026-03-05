@@ -8,7 +8,8 @@ from sqlalchemy import select, or_, update
 
 from model.base import DatabaseDep
 from model.identity import User, IdentityProvider, Issuer
-from .common import sudo_token, clear_all_sessions, active_user, create_and_save_token
+from .common import sudo_token, active_user
+from .helpers import create_and_save_token, clear_all_sessions
 
 router = APIRouter()
 

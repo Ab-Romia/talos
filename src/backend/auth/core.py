@@ -4,14 +4,14 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, status, Form, Response
 from pydantic import BaseModel
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 
-from backend.auth.common import active_user, create_oauth2_token, \
-    get_session, sudo_token, set_token_cookie, JWTClaims
 from model.base import DatabaseDep
 from model.identity import User, Session
+from .dependencies import active_user, get_session, sudo_token, JWTClaims
+from .helpers import create_oauth2_token, set_token_cookie
 
-auth_router = APIRouter()
+router = APIRouter()
 
 
 class CreateUserRequest(BaseModel):
@@ -21,7 +21,7 @@ class CreateUserRequest(BaseModel):
     name: str
 
 
-@auth_router.post("/signup", status_code=status.HTTP_201_CREATED)
+@router.post("/signup", status_code=status.HTTP_201_CREATED)
 async def create_user(db: DatabaseDep, create_user: CreateUserRequest):
     create_user_model = User(
         username=create_user.username,
@@ -41,7 +41,7 @@ async def create_user(db: DatabaseDep, create_user: CreateUserRequest):
     db.commit()
 
 
-@auth_router.post("/logout")
+@router.post("/logout")
 async def logout(db: DatabaseDep, session: Annotated[Session, Depends(get_session)] = None):
     if session:
         db.execute(
@@ -56,7 +56,7 @@ class SudoRequest(BaseModel):
     otp: str = None
 
 
-@auth_router.post("/sudo")
+@router.post("/sudo")
 async def sudo(
         response: Response,
         login_credentials: SudoRequest,
@@ -76,7 +76,7 @@ async def sudo(
 # @auth_router.post("/logout_all")
 
 
-@auth_router.post("/revoke", dependencies=[Depends(sudo_token)])
+@router.post("/revoke", dependencies=[Depends(sudo_token)])
 async def revoke_token(session_id: Annotated[UUID, Form()],
                        db: DatabaseDep):
     db.execute(
@@ -85,21 +85,25 @@ async def revoke_token(session_id: Annotated[UUID, Form()],
     db.commit()
 
 
-@auth_router.post("/refresh")
+@router.post("/refresh")
 async def refresh_token(
         user: Annotated[User, Depends(active_user)],
         session: Annotated[Session, Depends(get_session)],
         db: DatabaseDep,
         response: Response
 ):
+    """Refresh the current session token by updating its expiration and returning a new token with the same session ID."""
     new_expiration = datetime.now(timezone.utc) + timedelta(days=30)
 
+    # TODO: modify create_and_save_token to handle refreshing tokens without creating a new session
     # the session is guaranteed to exist by the dependency
-    sess = db.get_one(Session, session.id)
-    sess.expires_at = new_expiration
+    db.execute(
+        update(Session)
+        .where(Session.id == session.id)
+        .values(expires_at=new_expiration)
+    )
     db.commit()
 
-    # create a new token reusing the existing session id (jti)
     claims = JWTClaims(sub=user.id, jti=session.id, exp=new_expiration)
     token = create_oauth2_token(claims)
 

@@ -3,7 +3,6 @@ from datetime import datetime
 from enum import Enum as PyEnum
 from typing import Any
 
-from pydantic import Field, BaseModel
 from sqlalchemy import DateTime, UUID, Table, Column, ForeignKey, Enum
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -107,12 +106,3 @@ class Permission(Base):
     id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(unique=True, index=True)
     description: Mapped[str | None] = mapped_column()
-
-
-class OAuth2Token(BaseModel):
-    # name: str = Field(..., max_length=40)
-    token_type: TokenType
-    access_token: str = Field(..., max_length=512)
-    refresh_token: str = Field(..., max_length=512)
-    requires_otp: bool = False
-    expires_at: datetime

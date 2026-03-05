@@ -1,37 +1,33 @@
 import uuid
-from datetime import timedelta, datetime, timezone
+from datetime import datetime, timezone
 from enum import Enum as PyEnum
 from typing import Annotated
-from uuid import UUID
 
-from fastapi import HTTPException, Depends, Request, status, Response
+from fastapi import HTTPException, Depends, Request, status
 from fastapi.exception_handlers import http_exception_handler as fastapi_http_exception_handler
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2
-from jose import jwt, JWTError, ExpiredSignatureError
 from pydantic import BaseModel, Field
-from sqlalchemy import insert, delete, select, update
-from sqlalchemy.orm import Mapped
+from sqlalchemy import select, update
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from config import config
 from model.base import DatabaseDep
-from model.cookie import CookieOptions
-from model.identity import User, OAuth2Token, TokenType, Session
+from model.identity import User, Session, TokenType
 
 # TODO:
 #  ✅ cookies,
 #  refresh tokens,
 #  ✅ sessions,
 #  ✅ identity providers other than password
-#  password reset,
+#  ✅ password reset,
 #  forgot password,
 #  email verification,
-#  logout,
+#  ✅ logout,
 #  multiple account support
 #  session management
 #   - view active sessions
-#   - revoke sessions
+#  ✅ - revoke sessions
 #  2FA (TOTP, WebAuthn, etc.)
 
 
@@ -70,15 +66,16 @@ class AuthException(HTTPException):
 
 
 class JWTClaims(BaseModel):
-    sub: UUID
-    jti: UUID = Field(default_factory=uuid.uuid4)
+    sub: uuid.UUID
+    jti: uuid.UUID = Field(default_factory=uuid.uuid4)
     exp: datetime
     requires_otp: bool = False
     sudo: bool = False
 
     @classmethod
     def from_jwt_string(cls, claims_str: str):
-        # TODO: use authlib.jwt, get algorithm from header
+        from jose import JWTError, ExpiredSignatureError, jwt
+        # TODO: get algorithm from header
         try:
             claims_dict = jwt.decode(
                 token=claims_str,
@@ -93,11 +90,21 @@ class JWTClaims(BaseModel):
             raise AuthException(detail="Invalid token", err_code=AuthErrorCode.BAD_TOKEN) from e
 
     def to_jwt_string(self):
+        from jose import jwt
         return jwt.encode(
             claims=self.model_dump(mode="json"),
             key=config().auth.jwt_secret_key,
             algorithm=config().auth.jwt_algorithm
         )
+
+
+class OAuth2Token(BaseModel):
+    # name: str = Field(..., max_length=40)
+    token_type: TokenType
+    access_token: str = Field(..., max_length=512)
+    refresh_token: str = Field(..., max_length=512)
+    requires_otp: bool = False
+    expires_at: datetime
 
 
 async def auth_exception_handler(request: Request, exc: AuthException):
@@ -189,97 +196,3 @@ def sudo_token(jwt_claims: Annotated[JWTClaims, Depends(jwt_claims)], db: Databa
 
 SessionDep = Annotated[Session, Depends(get_session)]
 UserDep = Annotated[User, Depends(active_user)]
-
-
-def create_and_save_token(
-        response: Response,
-        db: DatabaseDep,
-
-        user_id: UUID | Mapped[UUID],
-        duration=timedelta(days=30),
-        requires_otp=False,
-
-        cookie_key="access_token",
-        session_cookie=False,
-
-        save_to_db=True,
-        set_cookie=True,
-) -> OAuth2Token:
-    claims = JWTClaims(sub=user_id,
-                       exp=datetime.now(timezone.utc) + duration,
-                       requires_otp=requires_otp)
-
-    token = create_oauth2_token(claims)
-
-    if save_to_db:
-        save_session(user_id=user_id, db=db, session_id=claims.jti, expires_at=claims.exp)
-
-    if set_cookie:
-        set_token_cookie(response,
-                         key=cookie_key,
-                         value=token,
-                         session_cookie=session_cookie)
-
-    return token
-
-
-def create_oauth2_token(claims) -> OAuth2Token:
-    access_token = claims.to_jwt_string()
-
-    return OAuth2Token(
-        access_token=access_token,
-        refresh_token="",
-        token_type=TokenType.bearer,
-        expires_at=claims.exp,
-    )
-
-
-def save_session(
-        user_id: UUID | Mapped[UUID],
-        db: DatabaseDep,
-        session_id: UUID = None,
-        expires_delta=timedelta(days=30),
-        expires_at: datetime = None,
-) -> UUID:
-    exp = expires_at or (datetime.now(timezone.utc) + expires_delta)
-    session_id = session_id or uuid.uuid4()
-    db.execute(
-        insert(Session)
-        .values(id=session_id,
-                user_id=user_id,
-                expires_at=exp)
-    )
-    db.commit()
-
-    return session_id
-
-
-async def clear_all_sessions(user: Annotated[User, Depends(active_user)], db: DatabaseDep):
-    db.execute(
-        delete(Session)
-        .where(Session.user_id == user.id)
-    )
-
-
-def set_token_cookie(
-        response: Response,
-        key: str,
-        value: OAuth2Token,
-        session_cookie: bool = False,
-):
-    # TODO: move to config
-    options = CookieOptions(
-        path="/",
-        secure=True,
-        httponly=True,
-        samesite="lax",
-    )
-    max_age = value.expires_at - datetime.now(timezone.utc)
-
-    response.set_cookie(
-        key=key,
-        value=value.access_token,
-        max_age=max_age.seconds,
-        expires=value.expires_at if not session_cookie else None,
-        **options.model_dump()
-    )

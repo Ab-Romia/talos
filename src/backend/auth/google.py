@@ -5,7 +5,7 @@ from sqlalchemy import select
 from config import config
 from model.base import DatabaseDep
 from model.identity import IdentityProvider, Issuer, User
-from .common import create_and_save_token
+from .helpers import create_and_save_token
 
 oauth = OAuth()
 router = APIRouter()
