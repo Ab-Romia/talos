@@ -85,6 +85,7 @@ class Session(Base):
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.now)
     last_used_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(), index=True)
 
 
 class PlatformRole(Base):

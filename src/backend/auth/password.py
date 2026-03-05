@@ -1,4 +1,4 @@
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from typing import Annotated
 
 import bcrypt
@@ -6,10 +6,9 @@ from fastapi import Depends, HTTPException, status, APIRouter, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select, or_, update
 
-from model.base import DepDB
+from model.base import DatabaseDep
 from model.identity import User, IdentityProvider, Issuer
-from .common import create_session, sudo_token, clear_all_sessions, active_user, create_token, \
-    set_cookie
+from .common import sudo_token, clear_all_sessions, active_user, create_and_save_token
 
 router = APIRouter()
 
@@ -27,7 +26,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 @router.post("/")
-def password_authenticate(response: Response, db: DepDB, form_data: OAuth2PasswordRequestForm = Depends()):
+def password_authenticate(response: Response, db: DatabaseDep, form_data: OAuth2PasswordRequestForm = Depends()):
     HTTP_EXCEPTION = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                                    detail="Incorrect username or password.")
 
@@ -62,22 +61,20 @@ def password_authenticate(response: Response, db: DepDB, form_data: OAuth2Passwo
     )
 
     if requires_otp:
-        exp = datetime.now(timezone.utc) + timedelta(minutes=5)
-        return set_cookie(response, name="access_token", value=create_token(
-            user_id=user.id,
-            requires_otp=True,
-            exp=exp,
-            jti=None,
-        ), session_cookie=True)
+        # create a short-lived token requiring OTP (does not create DB session yet)
+        return create_and_save_token(response=response, db=db, user_id=user.id, duration=timedelta(minutes=5),
+                                     requires_otp=True, cookie_key="access_token", session_cookie=True,
+                                     save_to_db=False)
     else:
-        return set_cookie(response, name="access_token", value=create_session(user.id, db=db))
+        # create and save a normal session token and set cookie
+        return create_and_save_token(response=response, db=db, user_id=user.id)
 
 
 @router.put("/change", dependencies=[Depends(sudo_token)])
 def change_password(
         response: Response,
         user: Annotated[User, Depends(active_user)],
-        db: DepDB,
+        db: DatabaseDep,
         new_password: str,
 ):
     db.execute(
@@ -92,7 +89,5 @@ def change_password(
 
     clear_all_sessions(user, db)
 
-    token = create_session(user_id=user.id, db=db)
-    set_cookie(response, name="access_token", value=token)
-
-    return token
+    # set_token_cookie expects an OAuth2Token - use create_and_save_token to get the token and cookie
+    return create_and_save_token(response=response, db=db, user_id=user.id)

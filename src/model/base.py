@@ -27,4 +27,4 @@ def get_db():
         yield session
 
 
-DepDB = Annotated[Session, Depends(get_db)]
+DatabaseDep = Annotated[Session, Depends(get_db)]

@@ -3,9 +3,9 @@ from fastapi import Request, HTTPException, status, Response, APIRouter
 from sqlalchemy import select
 
 from config import config
-from model.base import DepDB
+from model.base import DatabaseDep
 from model.identity import IdentityProvider, Issuer, User
-from .common import create_session, set_cookie
+from .common import create_and_save_token
 
 oauth = OAuth()
 router = APIRouter()
@@ -32,7 +32,7 @@ async def google_login(request: Request):
 
 
 @router.get("/login/callback")
-async def google_login_callback(request: Request, response: Response, db: DepDB):
+async def google_login_callback(request: Request, response: Response, db: DatabaseDep):
     fail = HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Google authentication failed")
 
     # TODO: handle errors (csrf)
@@ -54,27 +54,9 @@ async def google_login_callback(request: Request, response: Response, db: DepDB)
         .where(IdentityProvider.issuer == Issuer.google, IdentityProvider.sub == google_sub)
         .where(IdentityProvider.user_id == User.id)
     )
+    # TODO: handle user creation
 
-    # if not user:
-    #     # TODO: get user confirmation to link accounts if email already exists with password login
-    #     user = db.query(User).filter(User.primary_email == email).first()
-    #
-    #     if not user:
-    #         raise fail
-    #
-    #     if not user.email_verified:
-    #         db.execute(update(User).where(User.id == user.id).values(email_verified=True))
-    #
-    #     db.add(IdentityProvider(
-    #         user_id=user.id,
-    #         issuer=Issuer.google,
-    #         sub=google_sub
-    #     ))
-    #
-    #     db.commit()
-    return set_cookie(response,
-                      name="access_token",
-                      value=create_session(user.id, db))
+    return create_and_save_token(response=response, db=db, user_id=user.id)
 
 # @google_auth.get("/signup/callback")
 # @set_auth_cookie(cookie_name="access_token")

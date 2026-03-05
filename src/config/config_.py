@@ -19,9 +19,10 @@ class AuthConfig(BaseModel):
 
     totp_valid_window: int = 1
 
-    # ensure is 64 bytes
     jwt_secret_key: bytes
     jwt_algorithm: str = "HS256"
+
+    jwt_options = None
 
 
 class Config(BaseSettings):

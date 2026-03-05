@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, status, Form, Response
 from pydantic import BaseModel
 from sqlalchemy import delete
 
-from backend.auth.common import active_user, create_token, \
-    get_session, sudo_token, set_cookie
-from model.base import DepDB
+from backend.auth.common import active_user, create_oauth2_token, \
+    get_session, sudo_token, set_token_cookie, JWTClaims
+from model.base import DatabaseDep
 from model.identity import User, Session
 
 auth_router = APIRouter()
@@ -22,7 +22,7 @@ class CreateUserRequest(BaseModel):
 
 
 @auth_router.post("/signup", status_code=status.HTTP_201_CREATED)
-async def create_user(db: DepDB, create_user: CreateUserRequest):
+async def create_user(db: DatabaseDep, create_user: CreateUserRequest):
     create_user_model = User(
         username=create_user.username,
         primary_email=create_user.primary_email,
@@ -42,7 +42,7 @@ async def create_user(db: DepDB, create_user: CreateUserRequest):
 
 
 @auth_router.post("/logout")
-async def logout(db: DepDB, session: Annotated[Session, Depends(get_session)] = None):
+async def logout(db: DatabaseDep, session: Annotated[Session, Depends(get_session)] = None):
     if session:
         db.execute(
             delete(Session).where(Session.id == session.id)
@@ -62,15 +62,15 @@ async def sudo(
         login_credentials: SudoRequest,
         user: Annotated[User, Depends(active_user)],
         session: Annotated[Session, Depends(get_session)],
-        db: DepDB):
+        db: DatabaseDep):
     # TODO: implement different sudo methods (password, otp, passkey)
 
+    # create a short-lived sudo token (does not create a new DB session)
     expires = datetime.now(timezone.utc) + timedelta(minutes=15)
-    sudo_token = create_token(user.id, exp=expires, jti=session.id, requires_otp=True)
-    return set_cookie(response,
-                      name="sudo_token",
-                      value=sudo_token,
-                      session_cookie=True)
+    claims = JWTClaims(sub=user.id, exp=expires, sudo=True)
+    sudo_token = create_oauth2_token(claims)
+    set_token_cookie(response, key="sudo_token", value=sudo_token, session_cookie=True)
+    return sudo_token
 
 
 # @auth_router.post("/logout_all")
@@ -78,7 +78,7 @@ async def sudo(
 
 @auth_router.post("/revoke", dependencies=[Depends(sudo_token)])
 async def revoke_token(session_id: Annotated[UUID, Form()],
-                       db: DepDB):
+                       db: DatabaseDep):
     db.execute(
         delete(Session).where(Session.id == session_id)
     )
@@ -89,7 +89,7 @@ async def revoke_token(session_id: Annotated[UUID, Form()],
 async def refresh_token(
         user: Annotated[User, Depends(active_user)],
         session: Annotated[Session, Depends(get_session)],
-        db: DepDB,
+        db: DatabaseDep,
         response: Response
 ):
     new_expiration = datetime.now(timezone.utc) + timedelta(days=30)
@@ -99,6 +99,9 @@ async def refresh_token(
     sess.expires_at = new_expiration
     db.commit()
 
-    token = create_token(user.id, exp=new_expiration, jti=session.id)
+    # create a new token reusing the existing session id (jti)
+    claims = JWTClaims(sub=user.id, jti=session.id, exp=new_expiration)
+    token = create_oauth2_token(claims)
 
-    return set_cookie(response, name="access_token", value=token)
+    set_token_cookie(response, key="access_token", value=token)
+    return token

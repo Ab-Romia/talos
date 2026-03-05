@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from .common import active_user, DepUser
+from .common import active_user, UserDep
 from .common_endpoints import auth_router as sub_router
 from .google import router as google_router
 from .password import router

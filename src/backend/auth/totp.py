@@ -2,19 +2,19 @@ from datetime import datetime
 
 import pyotp
 from fastapi import APIRouter, Depends, HTTPException, Response, status, Form
-from sqlalchemy import insert, delete, select
+from sqlalchemy import insert, delete, select, update
 from sqlalchemy.sql.annotation import Annotated
 
 from config import config
-from model.base import DepDB
+from model.base import DatabaseDep
 from model.identity import User, Issuer, IdentityProvider
-from .common import JWTClaims, jwt_claims, _raw_user, create_session, set_cookie
+from .common import JWTClaims, jwt_claims, _raw_user, create_and_save_token
 
 router = APIRouter()
 
 
 @router.post("/generate")
-def create_totp(user: Annotated[User, Depends(_raw_user)], db: DepDB):
+def create_totp(user: Annotated[User, Depends(_raw_user)], db: DatabaseDep):
     otp_base32 = pyotp.random_base32()
     uri = pyotp.totp.TOTP(otp_base32) \
         .provisioning_uri(name=user.primary_email,
@@ -39,7 +39,7 @@ def complete_verification(
         response: Response,
         totp: Annotated[str, Form()],
         jwt_claims: Annotated[JWTClaims, Depends(jwt_claims)],
-        db: DepDB,
+        db: DatabaseDep,
 ):
     """
     Completion endpoint: verifies the TOTP and marks it as verified if successful.
@@ -63,17 +63,20 @@ def complete_verification(
 
     # mark as verified if this is the first successful verification
     if not totp_provider.verified_at:
-        totp_provider.verified_at = datetime.now()
+        db.execute(update(IdentityProvider)
+                   .where(IdentityProvider.id == totp_provider.id)
+                   .values(verified_at=datetime.now())
+                   )
         db.commit()
 
     if jwt_claims.requires_otp:
-        return set_cookie(response, name="access_token", value=create_session(jwt_claims.sub, db))
+        return create_and_save_token(response=response, db=db, user_id=jwt_claims.sub)
 
     return {"message": "TOTP verified"}
 
 
 @router.post("/clear")
-def clear_totp(user: Annotated[User, Depends(_raw_user)], db: DepDB):
+def clear_totp(user: Annotated[User, Depends(_raw_user)], db: DatabaseDep):
     """Remove any TOTP identity providers for the current user."""
     db.execute(
         delete(IdentityProvider)
