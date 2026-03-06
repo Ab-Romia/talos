@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from src.backend.auth import google
+from .dependencies import active_user
 from .core import router as core_router
 from .google import router as google_router  # TODO: replace with oauth router
 # from .oauth import router as oauth_router

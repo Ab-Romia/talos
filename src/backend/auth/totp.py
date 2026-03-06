@@ -8,7 +8,7 @@ from sqlalchemy.sql.annotation import Annotated
 from config import config
 from model.base import DatabaseDep
 from model.identity import User, Issuer, IdentityProvider
-from .common import JWTClaims, jwt_claims, _raw_user
+from .dependencies import JWTClaims, jwt_claims, _raw_user
 from .helpers import create_and_save_token
 
 router = APIRouter()

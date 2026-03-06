@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+/* === Talos Design Tokens as Tailwind Theme === */
+@theme {
+  /* Colors */
+  --color-base: #F9F8F6;
+  --color-surface-1: #FFFFFF;
+  --color-surface-2: #F4F3F0;
+  --color-surface-3: #EEEDEA;
+  --color-inset: #F1F0ED;
+
+  --color-ink: #1C1B1A;
+  --color-ink-secondary: #6B6966;
+  --color-ink-tertiary: #9C9893;
+  --color-ink-muted: #C4C0BB;
+
+  --color-amber: #C4913A;
+  --color-amber-hover: #B3832F;
+  --color-amber-active: #A27628;
+  --color-amber-subtle: #FDF6EC;
+
+  --color-success: #3D8C5C;
+  --color-success-subtle: #EFF7F2;
+  --color-error: #C4462A;
+  --color-error-subtle: #FDF0ED;
+  --color-warning: #D4940A;
+  --color-warning-subtle: #FEF9EC;
+  --color-info: #2E8B8B;
+  --color-info-subtle: #EDF7F7;
+
+  /* Font families */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+/* === Base Styles === */
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+  background: var(--color-base);
+  line-height: 1.5;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(28, 27, 26, 0.15);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(28, 27, 26, 0.25);
+}

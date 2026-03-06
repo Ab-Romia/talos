@@ -22,7 +22,7 @@ class AuthConfig(BaseModel):
     jwt_secret_key: bytes
     jwt_algorithm: str = "HS256"
 
-    jwt_options = None
+    jwt_options: dict | None = None
 
 
 class Config(BaseSettings):

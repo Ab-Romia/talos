@@ -24,7 +24,7 @@ if config().auth.google_client is not None:
 @router.get("/login")
 async def google_login(request: Request):
     # TODO: generalize to multiple providers
-    if not oauth.google:
+    if config().auth.google_client is None:
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED,
                             detail="Google authentication not configured")
     redirect_uri = request.url_for("google_login_callback")

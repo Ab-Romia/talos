@@ -9,8 +9,7 @@ from starlette.responses import Response
 from model.base import DatabaseDep
 from model.cookie import CookieOptions
 from model.identity import TokenType, Session, User
-from . import active_user
-from .common import JWTClaims, OAuth2Token
+from .dependencies import active_user, JWTClaims, OAuth2Token
 
 
 def create_and_save_token(
@@ -89,19 +88,15 @@ def set_token_cookie(
         value: OAuth2Token,
         session_cookie: bool = False,
 ):
-    # TODO: move to config
-    options = CookieOptions(
-        path="/",
-        secure=True,
-        httponly=True,
-        samesite="lax",
-    )
     max_age = value.expires_at - datetime.now(timezone.utc)
 
     response.set_cookie(
         key=key,
         value=value.access_token,
-        max_age=max_age.seconds,
+        max_age=int(max_age.total_seconds()),
         expires=value.expires_at if not session_cookie else None,
-        **options.model_dump()
+        path="/",
+        secure=True,
+        httponly=True,
+        samesite="lax",
     )

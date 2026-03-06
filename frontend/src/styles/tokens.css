@@ -1,0 +1,106 @@
+:root {
+  --bg-base: #F9F8F6;
+  --bg-surface-1: #FFFFFF;
+  --bg-surface-2: #F4F3F0;
+  --bg-surface-3: #EEEDEA;
+  --bg-inset: #F1F0ED;
+  --bg-overlay: rgba(28, 27, 26, 0.5);
+
+  --text-primary: #1C1B1A;
+  --text-secondary: #6B6966;
+  --text-tertiary: #9C9893;
+  --text-muted: #C4C0BB;
+
+  --accent: #C4913A;
+  --accent-hover: #B3832F;
+  --accent-active: #A27628;
+  --accent-subtle: #FDF6EC;
+  --accent-text: #FFFFFF;
+
+  --success: #3D8C5C;
+  --success-subtle: #EFF7F2;
+  --success-text: #2D6944;
+  --error: #C4462A;
+  --error-subtle: #FDF0ED;
+  --error-text: #A33820;
+  --warning: #D4940A;
+  --warning-subtle: #FEF9EC;
+  --warning-text: #8C6307;
+  --info: #2E8B8B;
+  --info-subtle: #EDF7F7;
+  --info-text: #1F6B6B;
+
+  --border-default: rgba(28, 27, 26, 0.10);
+  --border-subtle: rgba(28, 27, 26, 0.06);
+  --border-strong: rgba(28, 27, 26, 0.16);
+  --border-stronger: rgba(28, 27, 26, 0.24);
+
+  --control-bg: #F1F0ED;
+  --control-focus: #C4913A;
+  --control-focus-ring: rgba(196, 145, 58, 0.25);
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  --space-0: 0px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-full: 9999px;
+
+  --shadow-xs: 0 1px 2px rgba(28, 27, 26, 0.04);
+  --shadow-sm: 0 1px 3px rgba(28, 27, 26, 0.06), 0 1px 2px rgba(28, 27, 26, 0.04);
+  --shadow-md: 0 4px 6px rgba(28, 27, 26, 0.05), 0 2px 4px rgba(28, 27, 26, 0.03);
+  --shadow-lg: 0 10px 15px rgba(28, 27, 26, 0.05), 0 4px 6px rgba(28, 27, 26, 0.03);
+  --shadow-xl: 0 20px 25px rgba(28, 27, 26, 0.06), 0 8px 10px rgba(28, 27, 26, 0.03);
+
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+  --duration-slow: 300ms;
+  --easing-default: cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+[data-theme="dark"] {
+  --bg-base: #1A1918;
+  --bg-surface-1: #222120;
+  --bg-surface-2: #2A2928;
+  --bg-surface-3: #333231;
+  --bg-inset: #151413;
+  --bg-overlay: rgba(0, 0, 0, 0.6);
+
+  --text-primary: #EDECE9;
+  --text-secondary: #A09C97;
+  --text-tertiary: #706C67;
+  --text-muted: #4A4744;
+
+  --accent-subtle: #2D2518;
+  --success-subtle: #1A2B20;
+  --error-subtle: #2B1A16;
+  --warning-subtle: #2B2410;
+  --info-subtle: #162828;
+
+  --border-default: rgba(237, 236, 233, 0.10);
+  --border-subtle: rgba(237, 236, 233, 0.06);
+  --border-strong: rgba(237, 236, 233, 0.16);
+  --border-stronger: rgba(237, 236, 233, 0.24);
+
+  --control-bg: #151413;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.2);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.25);
+  --shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.3);
+}

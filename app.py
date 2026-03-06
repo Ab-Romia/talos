@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend.auth import auth_router, active_user
-from backend.auth.common import SessionCookieToHeaderMiddleware
+from backend.auth.dependencies import SessionCookieToHeaderMiddleware
 from config import config
 from model.base import engine, Base
 

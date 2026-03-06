@@ -2,14 +2,15 @@ from datetime import datetime, timezone, timedelta
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status, Form, Response
+from fastapi import APIRouter, Depends, status, Form, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import delete, update
 
 from model.base import DatabaseDep
-from model.identity import User, Session
+from model.identity import User, Session, IdentityProvider, Issuer
 from .dependencies import active_user, get_session, sudo_token, JWTClaims
 from .helpers import create_oauth2_token, set_token_cookie
+from .password import hash_password
 
 router = APIRouter()
 
@@ -35,19 +36,30 @@ async def create_user(db: DatabaseDep, create_user: CreateUserRequest):
 
     db.flush()  # get the id before commit
 
+    password_provider = IdentityProvider(
+        user_id=create_user_model.id,
+        issuer=Issuer.password,
+        sub=str(create_user_model.id),
+        secret=hash_password(create_user.password),
+    )
+    db.add(password_provider)
+
     # TODO: handle exceptions for duplicate usernames/emails
-    # TODO: handle different identity providers
 
     db.commit()
 
 
 @router.post("/logout")
-async def logout(db: DatabaseDep, session: Annotated[Session, Depends(get_session)] = None):
-    if session:
-        db.execute(
-            delete(Session).where(Session.id == session.id)
-        )
-        db.commit()
+async def logout(request: Request, response: Response, db: DatabaseDep):
+    token = request.cookies.get("access_token")
+    if token:
+        try:
+            claims = JWTClaims.from_jwt_string(token)
+            db.execute(delete(Session).where(Session.id == claims.jti))
+            db.commit()
+        except Exception:
+            pass
+    response.delete_cookie(key="access_token", path="/", secure=True, httponly=True, samesite="lax")
 
 
 class SudoRequest(BaseModel):

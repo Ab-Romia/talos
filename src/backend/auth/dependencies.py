@@ -124,16 +124,16 @@ async def auth_exception_handler(request: Request, exc: AuthException):
             return RedirectResponse(url="/login")
 
 
+def jwt_claims(token: Annotated[str, Depends(oauth2_bearer)]):
+    return JWTClaims.from_jwt_string(token)
+
+
 def _raw_user(jwt_claims: Annotated[JWTClaims, Depends(jwt_claims)], db: DatabaseDep):
     user = db.scalar(select(User).where(User.id == jwt_claims.sub))
     if user is None:
         raise AuthException(detail="User not found", err_code=AuthErrorCode.USER_DELETED)
 
     return user
-
-
-def jwt_claims(token: Annotated[str, Depends(oauth2_bearer)]):
-    return JWTClaims.from_jwt_string(token)
 
 
 def active_user(user: Annotated[User, Depends(_raw_user)],

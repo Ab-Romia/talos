@@ -1,3 +1,6 @@
-export const HOME_URL = "/"
-export const CHAT_PAGE = "/chat"
-export const TEST_PAGE = "/test"
+export const HOME_URL = '/'
+export const LOGIN = '/login'
+export const SIGNUP = '/signup'
+export const CHAT_PAGE = '/chat'
+export const DOCUMENTS = '/documents'
+export const SETTINGS = '/settings'
