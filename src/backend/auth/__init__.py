@@ -6,6 +6,7 @@ from .google import router as google_router  # TODO: replace with oauth router
 # from .oauth import router as oauth_router
 from .password import router as pass_router
 from .webauthn import router as webauthn_router
+from .dependencies import active_user
 
 auth_router = APIRouter()
 
