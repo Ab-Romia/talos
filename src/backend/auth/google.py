@@ -11,7 +11,7 @@ oauth = OAuth()
 router = APIRouter()
 
 # TODO: generalize to multiple providers and dynamic registration
-if config().auth.google_client is not None:
+if config().auth is not None and config().auth.google_client is not None:
     oauth.register(
         name="google",
         client_id=config().auth.google_client.id,

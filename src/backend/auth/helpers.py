@@ -9,8 +9,7 @@ from starlette.responses import Response
 from model.base import DatabaseDep
 from model.cookie import CookieOptions
 from model.identity import TokenType, Session, User
-from . import active_user
-from .common import JWTClaims, OAuth2Token
+from .dependencies import active_user, JWTClaims, OAuth2Token
 
 
 def create_and_save_token(
