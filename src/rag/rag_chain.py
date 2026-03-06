@@ -16,11 +16,12 @@ __all__ = ["RAGChain"]
 
 @final
 class RAGChain:
-    def __init__(self, collection_name: str, config: RagConfig = global_rag_config):
+    def __init__(self, collection_name: str, config: RagConfig = global_rag_config, workspace_id: str | None = None):
         from src.rag import (
             get_query_rewriter,
             get_hyde_embeddings,
             get_vectorstore,
+            get_workspace_vectorstore,
             get_retriever,
             get_llm,
             get_memory,
@@ -28,18 +29,26 @@ class RAGChain:
         )
 
         self.collection_name = collection_name
+        self.workspace_id = workspace_id
         self.retrieved_docs: list[Document] = []
 
         self.last_query_info = {}
 
         self.query_rewriter = get_query_rewriter()
         self.hyde = get_hyde_embeddings()
-        self.vectorstore = get_vectorstore(collection_name, embeddings=self.hyde)
+
+        if workspace_id:
+            self.vectorstore = get_workspace_vectorstore(embeddings=self.hyde)
+            extra_search_kwargs = {"expr": f'workspace_id == "{workspace_id}"'}
+        else:
+            self.vectorstore = get_vectorstore(collection_name, embeddings=self.hyde)
+            extra_search_kwargs = None
 
         self.retriever = get_retriever(
             vectorstore=self.vectorstore,
             documents=[],
             config=config,
+            search_kwargs=extra_search_kwargs,
         )
 
         self.retriever = compression_retriever(

@@ -14,15 +14,28 @@ class OAuthClient(BaseModel):
 
 
 class AuthConfig(BaseModel):
-    google_client: OAuthClient = None
-    github_client: OAuthClient = None
+    google_client: OAuthClient | None = None
+    github_client: OAuthClient | None = None
 
     totp_valid_window: int = 1
 
     jwt_secret_key: bytes
     jwt_algorithm: str = "HS256"
 
-    jwt_options = None
+    jwt_options: dict | None = None
+
+
+class MinIOConfig(BaseModel):
+    internal_endpoint: str = "localhost:9000"
+    external_endpoint: str = "localhost:9000"
+    access_key: str = "minioadmin"
+    secret_key: str = "minioadmin"
+    secure: bool = False
+    bucket_name: str = "talos-uploads"
+
+
+class RedisConfig(BaseModel):
+    url: str = "redis://localhost:6379"
 
 
 class Config(BaseSettings):
@@ -32,7 +45,9 @@ class Config(BaseSettings):
 
     database_url: str = ""
 
-    auth: AuthConfig = None
+    auth: AuthConfig | None = None
+    minio: MinIOConfig = MinIOConfig()
+    redis: RedisConfig = RedisConfig()
 
     model_config = SettingsConfigDict(
         env_file='.env',

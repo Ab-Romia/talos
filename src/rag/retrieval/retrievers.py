@@ -22,9 +22,13 @@ def get_retriever(
         vectorstore: VectorStore,
         documents: Iterable[Document],
         config: RagConfig = global_rag_config,
+        search_kwargs: dict | None = None,
 ):
+    base_search_kwargs = {"k": config.retrieval_top_k}
+    if search_kwargs:
+        base_search_kwargs.update(search_kwargs)
     dense_retriever = vectorstore.as_retriever(
-        search_type="similarity", search_kwargs={"k": config.retrieval_top_k}
+        search_type="similarity", search_kwargs=base_search_kwargs
     )
 
     if config.use_hybrid_retrieval and documents:

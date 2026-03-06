@@ -6,14 +6,29 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from backend.auth import auth_router, active_user
-from backend.auth.common import SessionCookieToHeaderMiddleware
+from backend.auth import auth_router
+from backend.auth.dependencies import active_user, SessionCookieToHeaderMiddleware
 from config import config
+from files.models import FileAttachment, message_files  # noqa: F401 — register with Base.metadata
+from files.router import router as files_router
+from files.storage import MinIOStorage
 from model.base import engine, Base
 
 __all__ = []
 
 load_dotenv()
+
+
+def _get_minio_storage() -> MinIOStorage:
+    cfg = config().minio
+    return MinIOStorage(
+        internal_endpoint=cfg.internal_endpoint,
+        external_endpoint=cfg.external_endpoint,
+        access_key=cfg.access_key,
+        secret_key=cfg.secret_key,
+        secure=cfg.secure,
+        bucket_name=cfg.bucket_name,
+    )
 
 
 @asynccontextmanager
@@ -23,11 +38,29 @@ async def lifespan(_: FastAPI):
         session.commit()
 
     Base.metadata.create_all(engine)
+
+    storage = _get_minio_storage()
+    await storage.ensure_bucket()
+    app.state.minio_storage = storage
+
+    # Initialize ARQ Redis pool for background task enqueueing
+    from arq import create_pool
+    from processing.worker import get_redis_settings
+    try:
+        app.state.arq_pool = await create_pool(get_redis_settings())
+    except Exception:
+        app.state.arq_pool = None  # Graceful degradation if Redis unavailable
+
     yield
+
+    # Cleanup
+    if app.state.arq_pool:
+        await app.state.arq_pool.aclose()
 
 
 app = FastAPI(title='Temp', lifespan=lifespan)
 app.include_router(auth_router, prefix="/auth")
+app.include_router(files_router, prefix="/api")
 app.add_middleware(SessionCookieToHeaderMiddleware)
 
 

@@ -11,7 +11,7 @@ from langchain_unstructured import UnstructuredLoader
 
 from config import global_rag_config
 
-__all__ = ["load_documents", "document_splitter", "format_citations"]
+__all__ = ["load_documents", "document_splitter", "format_citations", "ingest_file_chunks"]
 
 
 async def load_documents(file_paths: str | Path | list[str] | list[Path]):
@@ -92,6 +92,22 @@ def document_splitter_(strategy: str | None = None):
 #    page_content='1 2 0 2')
 
 
+def ingest_file_chunks(
+    chunks: list[Document],
+    workspace_id: str,
+    file_id: str,
+):
+    """Insert document chunks into the workspace-scoped Milvus collection."""
+    from rag.vector_store import get_workspace_vectorstore
+
+    for chunk in chunks:
+        chunk.metadata.setdefault("workspace_id", workspace_id)
+        chunk.metadata.setdefault("file_id", file_id)
+
+    vectorstore = get_workspace_vectorstore()
+    vectorstore.add_documents(chunks)
+
+
 # TODO: use templates for formatting
 def format_citations(documents: Iterable[Document]) -> Iterable[str]:
     """
@@ -105,8 +121,19 @@ def format_citations(documents: Iterable[Document]) -> Iterable[str]:
 
     # TODO: create polymorphic citation formatters
     for i, doc in enumerate(documents, 1):
-        citation = cast(
-            str, doc.metadata.get("source", "unknown"))  # pyright: ignore[reportUnknownMemberType]; fmt: skip
+        # For workspace files, use filename; for CLI docs, use source
+        filename = doc.metadata.get("filename")
+        file_id = doc.metadata.get("file_id")
+        if filename:
+            page = doc.metadata.get("page_number", "")
+            page_str = f", p.{page}" if page else ""
+            citation = f"{filename}{page_str}"
+            if file_id:
+                citation += f" (file:{file_id})"
+        else:
+            citation = cast(
+                str, doc.metadata.get("source", "unknown"))  # pyright: ignore[reportUnknownMemberType]; fmt: skip
+
         if citation not in citations:
             citations.add(citation)
             yield f"[{i}] {citation}"

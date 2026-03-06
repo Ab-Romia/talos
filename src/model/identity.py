@@ -32,6 +32,7 @@ class User(Base):
     roles: Mapped[list["PlatformRole"]] = relationship("PlatformRole",
                                                        secondary="users_platform_roles",
                                                        back_populates="users")
+    uploaded_files: Mapped[list["FileAttachment"]] = relationship("FileAttachment", back_populates="uploader")
 
 
 class OTP(Base):

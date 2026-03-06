@@ -18,6 +18,7 @@ class Workspace(Base):
     deleted_at: Mapped[Optional[datetime]] = mapped_column()
 
     chatrooms: Mapped[list["Chatroom"]] = relationship("Chatroom", back_populates="workspace")
+    files: Mapped[list["FileAttachment"]] = relationship("FileAttachment", back_populates="workspace")
 
 
 class Chatroom(Base):
@@ -29,8 +30,9 @@ class Chatroom(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.now)
     deleted_at: Mapped[Optional[datetime]] = mapped_column()
 
-    messages: Mapped[list["Message"]] = relationship("Message", back_populates="chatrooms")
+    messages: Mapped[list["Message"]] = relationship("Message", back_populates="chatroom")
     workspace: Mapped["Workspace"] = relationship("Workspace", back_populates="chatrooms")
+    files: Mapped[list["FileAttachment"]] = relationship("FileAttachment", back_populates="chatroom")
 
 
 class Message(Base):
@@ -44,3 +46,6 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.now)
 
     chatroom: Mapped["Chatroom"] = relationship("Chatroom", back_populates="messages")
+    files: Mapped[list["FileAttachment"]] = relationship(
+        "FileAttachment", secondary="message_files", back_populates="messages"
+    )
