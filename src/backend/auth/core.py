@@ -6,10 +6,11 @@ from fastapi import APIRouter, Depends, status, Form, Response
 from pydantic import BaseModel
 from sqlalchemy import delete, update
 
-from model.base import DatabaseDep
+from model import DatabaseDep
 from model.identity import User, Session
-from .dependencies import active_user, get_session, sudo_token, JWTClaims
-from .helpers import create_oauth2_token, set_token_cookie
+from .dependencies import active_user, session, sudo_token, JWTClaims, SessionDep
+from .helpers import create_oauth2_token, set_token_cookie, create_and_save_token
+from .password import create_password_identity
 
 router = APIRouter()
 
@@ -21,9 +22,19 @@ class CreateUserRequest(BaseModel):
     name: str
 
 
+# TODO: exception handling: auto rollback on error
 @router.post("/signup", status_code=status.HTTP_201_CREATED)
-async def create_user(db: DatabaseDep, create_user: CreateUserRequest):
-    create_user_model = User(
+async def create_user(
+        response: Response,
+        create_user: Annotated[CreateUserRequest, Form()],
+        db: DatabaseDep):
+    # TODO:
+    #  spam prevention:
+    #  - only commit to database on email verify
+    #  - ratelimit
+    #  - captcha
+
+    user = User(
         username=create_user.username,
         primary_email=create_user.primary_email,
         email_verified=True,  # TODO: add email verification flow
@@ -31,23 +42,33 @@ async def create_user(db: DatabaseDep, create_user: CreateUserRequest):
         data={},
         roles=[],
     )
-    db.add(create_user_model)
+    db.add(user)
 
     db.flush()  # get the id before commit
 
     # TODO: handle exceptions for duplicate usernames/emails
     # TODO: handle different identity providers
 
+    create_password_identity(user_id=user.id, password=create_user.password, db=db)
+
     db.commit()
+
+    return create_and_save_token(response, db, user_id=user.id, cookie_key="access_token")
 
 
 @router.post("/logout")
-async def logout(db: DatabaseDep, session: Annotated[Session, Depends(get_session)] = None):
+async def logout(response: Response, db: DatabaseDep, session: SessionDep = None):
     if session:
         db.execute(
             delete(Session).where(Session.id == session.id)
         )
         db.commit()
+
+        response.delete_cookie("access_token")
+        response.delete_cookie("sudo_token")
+
+        return {"success": True, "message": "Logged out successfully"}
+    return {"success": False, "message": "No active session"}
 
 
 class SudoRequest(BaseModel):
@@ -61,7 +82,7 @@ async def sudo(
         response: Response,
         login_credentials: SudoRequest,
         user: Annotated[User, Depends(active_user)],
-        session: Annotated[Session, Depends(get_session)],
+        session: Annotated[Session, Depends(session)],
         db: DatabaseDep):
     # TODO: implement different sudo methods (password, otp, passkey)
 
@@ -88,7 +109,7 @@ async def revoke_token(session_id: Annotated[UUID, Form()],
 @router.post("/refresh")
 async def refresh_token(
         user: Annotated[User, Depends(active_user)],
-        session: Annotated[Session, Depends(get_session)],
+        session: Annotated[Session, Depends(session)],
         db: DatabaseDep,
         response: Response
 ):

@@ -4,7 +4,7 @@ from authlib.integrations.starlette_client import OAuth
 from fastapi import Request, HTTPException, status, Response, APIRouter
 from sqlalchemy import select
 
-from model.base import DatabaseDep
+from model import DatabaseDep
 from model.identity import IdentityProvider, Issuer, User
 from .helpers import create_and_save_token
 

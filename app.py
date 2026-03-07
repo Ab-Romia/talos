@@ -5,13 +5,13 @@ from fastapi import FastAPI, Depends
 from fastapi.responses import HTMLResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from starlette.middleware.sessions import SessionMiddleware
 
 from backend.auth import auth_router, active_user
 from backend.auth.dependencies import SessionCookieToHeaderMiddleware
-from config import config
-from model.base import engine, Base
-
-__all__ = []
+from config import cfg
+from model import engine
+from model import Base
 
 load_dotenv()
 
@@ -27,11 +27,13 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title='Temp', lifespan=lifespan)
-app.include_router(auth_router, prefix="/auth")
+app.include_router(auth_router, prefix="/api/auth")
 app.add_middleware(SessionCookieToHeaderMiddleware)
+app.add_middleware(SessionMiddleware,
+                   secret_key=cfg().auth.jwt_secret_key)
 
 
-@app.get('/')
+@app.get('/', response_class=HTMLResponse)
 async def root():
     with open('frontend/templates/pages/home.html', 'r') as f:
         return f.read()
@@ -39,7 +41,7 @@ async def root():
 
 @app.get('/config')
 async def config_page():
-    return config()
+    return cfg()
 
 
 @app.get('/smily')
@@ -56,6 +58,6 @@ if __name__ == '__main__':
     import uvicorn
 
     uvicorn.run(app,
-                host=config().app_host,
-                port=config().app_port,
+                host=cfg().app_host,
+                port=cfg().app_port,
                 )

@@ -1,4 +1,7 @@
 import uuid
+
+import fastapi.security
+import jwt
 from datetime import datetime, timezone
 from enum import Enum as PyEnum
 from typing import Annotated
@@ -6,13 +9,12 @@ from typing import Annotated
 from fastapi import HTTPException, Depends, Request, status
 from fastapi.exception_handlers import http_exception_handler as fastapi_http_exception_handler
 from fastapi.responses import RedirectResponse
-from fastapi.security import OAuth2
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from config import config
-from model.base import DatabaseDep
+from config import cfg
+from model import DatabaseDep
 from model.identity import User, Session, TokenType
 
 # TODO:
@@ -36,7 +38,12 @@ from model.identity import User, Session, TokenType
 #  exception handling
 
 
-oauth2_bearer = OAuth2()
+# TODO: ????
+oauth2_bearer = fastapi.security.OAuth2AuthorizationCodeBearer(
+    authorizationUrl="/api/auth/oauth/authorize",
+    tokenUrl="/api/auth/oauth/token",
+    scopes={}
+)
 
 
 class SessionCookieToHeaderMiddleware(BaseHTTPMiddleware):
@@ -79,27 +86,28 @@ class JWTClaims(BaseModel):
 
     @classmethod
     def from_jwt_string(cls, claims_str: str):
-        from jose import JWTError, ExpiredSignatureError, jwt
         # TODO: get algorithm from header
         try:
             claims_dict = jwt.decode(
-                token=claims_str,
-                key=config().auth.jwt_secret_key,
-                algorithms=config().auth.jwt_algorithm,
-                options=config().auth.jwt_options or None
+                jwt=claims_str,
+                key=cfg().auth.jwt_secret_key,
+                algorithms=[cfg().auth.jwt_algorithm],
+                options=cfg().auth.jwt_options or None
             )
             return cls.model_validate(claims_dict)
-        except ExpiredSignatureError as e:
+
+        except jwt.ExpiredSignatureError as e:
             raise AuthException(detail="Token expired", err_code=AuthErrorCode.EXPIRED_TOKEN) from e
-        except JWTError as e:
+        except jwt.PyJWTError as e:
             raise AuthException(detail="Invalid token", err_code=AuthErrorCode.BAD_TOKEN) from e
 
-    def to_jwt_string(self):
-        from jose import jwt
+    def to_jwt_string(self) -> str:
+        payload = self.model_dump(mode="json")
+        payload["exp"] = self.exp.timestamp()
         return jwt.encode(
-            claims=self.model_dump(mode="json"),
-            key=config().auth.jwt_secret_key,
-            algorithm=config().auth.jwt_algorithm
+            payload,
+            key=cfg().auth.jwt_secret_key,
+            algorithm=cfg().auth.jwt_algorithm
         )
 
 
@@ -149,7 +157,8 @@ def active_user(user: Annotated[User, Depends(_raw_user)],
                 db: DatabaseDep):
     session = db.scalar(
         select(Session)
-        .where(Session.id == jwt_claims.jti, Session.user_id == user.id)
+        .where(Session.id == jwt_claims.jti,
+               Session.user_id == user.id)
     )
 
     if jwt_claims.requires_otp:
@@ -167,7 +176,7 @@ def active_user(user: Annotated[User, Depends(_raw_user)],
     db.execute(
         update(Session)
         .where(Session.id == session.id)
-        .values(last_active_at=datetime.now(timezone.utc))
+        .values(last_used_at=datetime.now())
     )
 
     db.commit()
@@ -175,7 +184,8 @@ def active_user(user: Annotated[User, Depends(_raw_user)],
     return user
 
 
-def get_session(jwt_claims: Annotated[JWTClaims, Depends(jwt_claims)], db: DatabaseDep):
+# TODO: use starlette middleware session
+def session(jwt_claims: Annotated[JWTClaims, Depends(jwt_claims)], db: DatabaseDep):
     session = db.scalar(
         select(Session)
         .where(Session.id == jwt_claims.jti, Session.user_id == jwt_claims.sub)
@@ -202,6 +212,6 @@ def sudo_token(jwt_claims: Annotated[JWTClaims, Depends(jwt_claims)], db: Databa
     return jwt_claims
 
 
-SessionDep = Annotated[Session, Depends(get_session)]
+SessionDep = Annotated[Session, Depends(session)]
 UserDep = Annotated[User, Depends(active_user)]
 JWTDep = Annotated[JWTClaims, Depends(jwt_claims)]

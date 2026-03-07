@@ -2,8 +2,8 @@ from authlib.integrations.starlette_client import OAuth
 from fastapi import Request, HTTPException, status, Response, APIRouter
 from sqlalchemy import select
 
-from config import config
-from model.base import DatabaseDep
+from config import cfg
+from model import DatabaseDep
 from model.identity import IdentityProvider, Issuer, User
 from .helpers import create_and_save_token
 
@@ -11,11 +11,11 @@ oauth = OAuth()
 router = APIRouter()
 
 # TODO: generalize to multiple providers and dynamic registration
-if config().auth.google_client is not None:
+if cfg().auth.google_client is not None:
     oauth.register(
         name="google",
-        client_id=config().auth.google_client.id,
-        client_secret=config().auth.google_client.secret,
+        client_id=cfg().auth.google_client.id,
+        client_secret=cfg().auth.google_client.secret,
         server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
         client_kwargs={"scope": "openid email profile"},
     )

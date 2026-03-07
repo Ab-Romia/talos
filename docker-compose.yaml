@@ -8,7 +8,7 @@ services:
       - .env
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-talos_app}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-talos}
     ports:
       - "5432:5432"

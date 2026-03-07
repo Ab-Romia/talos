@@ -1,3 +1,4 @@
+import jwt.types
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict, PydanticBaseSettingsSource, YamlConfigSettingsSource
 
@@ -22,7 +23,7 @@ class AuthConfig(BaseModel):
     jwt_secret_key: bytes
     jwt_algorithm: str = "HS256"
 
-    jwt_options = None
+    jwt_options: jwt.types.Options = None
 
 
 class Config(BaseSettings):

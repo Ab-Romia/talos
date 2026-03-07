@@ -1,14 +1,14 @@
+import uuid
 from datetime import datetime, timedelta
-from typing import Annotated
 
 import bcrypt
 from fastapi import Depends, HTTPException, status, APIRouter, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select, or_, update
 
-from model.base import DatabaseDep
+from model import DatabaseDep
 from model.identity import User, IdentityProvider, Issuer
-from .dependencies import sudo_token, active_user
+from .dependencies import sudo_token, UserDep
 from .helpers import create_and_save_token, clear_all_sessions
 
 router = APIRouter()
@@ -73,23 +73,29 @@ def password_authenticate(response: Response, db: DatabaseDep, form_data: OAuth2
 
 
 @router.put("/change", dependencies=[Depends(sudo_token)])
-def change_password(
-        response: Response,
-        user: Annotated[User, Depends(active_user)],
-        db: DatabaseDep,
-        new_password: str,
-):
+def change_password(new_password: str, response: Response, user: UserDep, db: DatabaseDep):
     db.execute(
         update(IdentityProvider)
         .where(IdentityProvider.user_id == user.id,
                IdentityProvider.issuer == Issuer.password)
-        .values(data={"hash": hash_password(new_password)},
-                verified_at=datetime.now())
+        .values(data={"hash": hash_password(new_password)})
     )
 
     db.commit()
 
     clear_all_sessions(user, db)
 
-    # set_token_cookie expects an OAuth2Token - use create_and_save_token to get the token and cookie
     return create_and_save_token(response=response, db=db, user_id=user.id)
+
+
+def create_password_identity(user_id: uuid.UUID, password: str, db: DatabaseDep):
+    identity = IdentityProvider(
+        user_id=user_id,
+        issuer=Issuer.password,
+        data={"hash": hash_password(password)},
+    )
+
+    db.add(identity)
+    db.flush()
+
+    return identity

@@ -1,23 +1,23 @@
 from datetime import datetime, timedelta
 
+import jwt
 import webauthn
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from jose import jwt, JWTError
 from sqlalchemy import insert, select, update
 from webauthn.helpers import bytes_to_base64url, base64url_to_bytes
 from webauthn.helpers.exceptions import InvalidRegistrationResponse, InvalidAuthenticationResponse
 
 from backend.auth.dependencies import UserDep, sudo_token
 from backend.auth.helpers import create_and_save_token
-from config import config
-from model.base import DatabaseDep
+from config import cfg
+from model import DatabaseDep
 from model.identity import Issuer, IdentityProvider
 
 router = APIRouter()
 
 
 def _rp_id() -> str:
-    return config().app_host
+    return cfg().app_host
 
 
 def _origin() -> str:
@@ -39,7 +39,7 @@ async def generate_passkey(user: UserDep = None):
         # For registration (authenticated user): generate registration options
         options = webauthn.generate_registration_options(
             rp_id=_rp_id(),
-            rp_name=config().app_name,
+            rp_name=cfg().app_name,
             user_name=user.username,
             user_id=str(user.id).encode(),
             user_display_name=user.name or user.primary_email,
@@ -59,9 +59,9 @@ async def generate_passkey(user: UserDep = None):
         }
 
     jwt_challenge = jwt.encode(
-        jwt_claims,
-        key=config().auth.jwt_secret_key,
-        algorithm=config().auth.jwt_algorithm,
+        payload=jwt_claims,
+        key=cfg().auth.jwt_secret_key,
+        algorithm=cfg().auth.jwt_algorithm,
     )
     return {
         "options": webauthn.options_to_json(options),
@@ -79,13 +79,15 @@ async def register_passkey(jwt_challenge: str,
     # TODO: ensure single use challenge
     try:
         claims = jwt.decode(
-            token=jwt_challenge,
-            key=config().auth.jwt_secret_key,
-            algorithms=[config().auth.jwt_algorithm],
+            jwt=jwt_challenge,
+            key=cfg().auth.jwt_secret_key,
+            algorithms=[cfg().auth.jwt_algorithm],
             subject=str(user.id),
         )
+        if claims.get("sub") != str(user.id):
+            raise jwt.InvalidTokenError("Subject mismatch")
         challenge = base64url_to_bytes(claims["challenge"])
-    except JWTError, KeyError:
+    except (jwt.PyJWTError, KeyError):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid challenge token")
 
     try:
@@ -126,19 +128,19 @@ async def verify_passkey(response: Response, jwt_challenge: str, credential: str
 
     try:
         decoded = jwt.decode(
-            token=jwt_challenge,
-            key=config().auth.jwt_secret_key,
-            algorithms=[config().auth.jwt_algorithm],
+            jwt=jwt_challenge,
+            key=cfg().auth.jwt_secret_key,
+            algorithms=[cfg().auth.jwt_algorithm],
         )
         challenge = base64url_to_bytes(decoded["challenge"])
-    except JWTError, KeyError:
+    except (jwt.PyJWTError, KeyError):
         raise EXCEPTION
 
     # Parse the credential ID from the JSON to find the matching stored credential
     import json
     try:
         raw_id = json.loads(credential).get("rawId") or json.loads(credential).get("id")
-    except json.JSONDecodeError, AttributeError:
+    except (json.JSONDecodeError, AttributeError):
         raise EXCEPTION
 
     identity = db.scalar(

@@ -4,7 +4,7 @@ from datetime import timedelta, datetime, timezone
 from sqlalchemy import insert, delete
 from starlette.responses import Response
 
-from model.base import DatabaseDep
+from model import DatabaseDep
 from model.cookie import CookieOptions
 from model.identity import TokenType, Session
 from .dependencies import JWTClaims, OAuth2Token, UserDep
@@ -42,7 +42,7 @@ def create_and_save_token(
     return token
 
 
-def create_oauth2_token(claims) -> OAuth2Token:
+def create_oauth2_token(claims: JWTClaims) -> OAuth2Token:
     access_token = claims.to_jwt_string()
 
     return OAuth2Token(
@@ -89,16 +89,20 @@ def set_token_cookie(
     # TODO: move to config
     options = CookieOptions(
         path="/",
-        secure=True,
+        secure=False,
         httponly=True,
         samesite="lax",
     )
     max_age = value.expires_at - datetime.now(timezone.utc)
+    options = options.model_copy(
+        update={
+            "max_age": int(max_age.total_seconds()),
+            "expires": None if session_cookie else value.expires_at,
+        }
+    )
 
     response.set_cookie(
         key=key,
         value=value.access_token,
-        max_age=max_age.seconds,
-        expires=value.expires_at if not session_cookie else None,
         **options.model_dump()
     )

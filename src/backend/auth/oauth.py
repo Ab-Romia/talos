@@ -1,63 +1,37 @@
-from dataclasses import dataclass
-from typing import Callable, Any
+from typing import Annotated
 
-from authlib.integrations.starlette_client import OAuth
+from authlib.integrations.base_client import MismatchingStateError
+from authlib.integrations.starlette_client import OAuth, StarletteOAuth2App
 from fastapi import Request, HTTPException, status, Response, APIRouter
+from pydantic import AfterValidator, BaseModel, PydanticUserError
 from sqlalchemy import select
+from starlette.responses import RedirectResponse
 
-from config import config
-from model.base import DatabaseDep
-from model.identity import IdentityProvider, Issuer, User
+from config import cfg
+from model import DatabaseDep
+from model.identity import IdentityProvider, User, Issuer
 from .helpers import create_and_save_token
 
 
-@dataclass
-class OAuthUserInfo:
+class OAuthUserInfo(BaseModel):
     sub: str
     email: str
+    email_verified: bool
+    iss: str
     name: str | None = None
-    avatar_url: str | None = None
+    picture: str | None = None
 
 
-# A mapper turns raw token/userinfo dict into OAuthUserInfo
-UserInfoMapper = Callable[[dict[str, Any]], OAuthUserInfo | None]
-
-GOOGLE_MAPPER = {
-    "sub": ["userinfo", "sub"],
-    "email": ["userinfo", "email"],
-    "name": ["userinfo", "name"],
-    "avatar_url": ["userinfo", "picture"],
-}
-
-GITHUB_MAPPER = {
-    "sub": ["userinfo", "id"],
-    "email": ["userinfo", "email"],
-    "name": ["userinfo", "name"],
-    "avatar_url": ["userinfo", "avatar_url"],
-}
-
-
-def oauth_from_mapping(token: dict[str, Any], mapping) -> OAuthUserInfo | None:
-    def get_nested(keys, default=None):
-        d = token
-        for key in keys:
-            d = d.get(key, default)
-        return d
-
-    return OAuthUserInfo(
-        sub=get_nested(mapping["email"]),
-        email=get_nested(mapping["email"]),
-        name=get_nested(mapping.get("name", [])),
-        avatar_url=get_nested(mapping.get("avatar_url", [])),
-    )
-
-
-_PROVIDER_DEFAULTS: dict[str, dict] = {
+_PROVIDERS: dict[str, dict] = {
     "google": dict(
+        client_id=cfg().auth.google_client.id,
+        client_secret=cfg().auth.google_client.secret,
         server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
         client_kwargs={"scope": "openid email profile"},
     ),
     "github": dict(
+        client_id=cfg().auth.github_client.id,
+        client_secret=cfg().auth.github_client.secret,
         api_base_url="https://api.github.com/",
         access_token_url="https://github.com/login/oauth/access_token",
         authorize_url="https://github.com/login/oauth/authorize",
@@ -65,42 +39,11 @@ _PROVIDER_DEFAULTS: dict[str, dict] = {
     ),
 }
 
-_ISSUER_MAP: dict[str, Issuer] = {
-    "google": Issuer.google,
-    # "github": Issuer.github,  # add when Issuer enum has github
-}
-
-_MAPPER_MAP: dict[str, UserInfoMapper] = {
-    "google": _google_mapper,
-    "github": _github_mapper,
-}
-
-oauth = OAuth()
-cfg = config().auth
-
-# Collect enabled providers from config
-provider_clients: dict[str, Any] = {}
-
-if cfg.google_client is not None:
-    oauth.register(
-        name="google",
-        client_id=cfg.google_client.id,
-        client_secret=cfg.google_client.secret,
-        **_PROVIDER_DEFAULTS["google"],
-    )
-    provider_clients["google"] = oauth.google
-
-# Example: add github when config supports it
-# if cfg.github_client is not None:
-#     oauth.register(
-#         name="github",
-#         client_id=cfg.github_client.id,
-#         client_secret=cfg.github_client.secret,
-#         **_PROVIDER_DEFAULTS["github"],
-#     )
-#     provider_clients["github"] = oauth.github
-
 router = APIRouter()
+oauth = OAuth()
+
+for name, opts in _PROVIDERS.items():
+    oauth.register(name=name, **opts)
 
 
 def invalid_provider_exception(provider):
@@ -108,76 +51,85 @@ def invalid_provider_exception(provider):
                          detail=f"Provider '{provider}' is not configured", )
 
 
-@router.get("/{provider}")
-async def oauth_login(provider: str, request: Request):
-    client = provider_clients.get(provider)
-    if client is None:
+def check_provider(provider: str):
+    if provider not in _PROVIDERS.keys():
         raise invalid_provider_exception(provider)
+    return provider
+
+
+ProviderParam = Annotated[str, AfterValidator(check_provider)]
+
+
+@router.get("/{provider}")
+async def oauth_login(provider: ProviderParam, request: Request):
+    client: StarletteOAuth2App = oauth.create_client(provider)
+
     redirect_uri = request.url_for("oauth_callback", provider=provider)
     return await client.authorize_redirect(request, redirect_uri)
 
 
 @router.get("/{provider}/callback", name="oauth_callback")
-async def oauth_callback(provider: str, request: Request, response: Response, db: DatabaseDep, ):
-    client = provider_clients.get(provider)
-    if client is None:
-        raise invalid_provider_exception(provider)
-
-    mapper = _MAPPER_MAP.get(provider)
-    issuer = _ISSUER_MAP.get(provider)
-    if mapper is None or issuer is None:
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail=f"Provider '{provider}' has no user-info mapper",
-        )
+async def oauth_callback(provider: ProviderParam, request: Request, response: Response, db: DatabaseDep, ):
+    client = oauth.create_client(provider)
 
     fail = HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail=f"{provider.capitalize()} authentication failed",
     )
 
-    token = await client.authorize_access_token(request)
-    user_info = mapper(token)
+    # TODO: handle all errors,
+    #  is this correct handling?
+    try:
+        token = await client.authorize_access_token(request)
+    except MismatchingStateError:
+        return RedirectResponse(url=request.url_for("oauth_login", provider=provider),
+                                status_code=status.HTTP_302_FOUND)
 
-    if user_info is None:
+    try:
+        user_info = OAuthUserInfo.model_validate(
+            token["userinfo"],
+            extra="ignore"
+        )
+    except PydanticUserError:
         raise fail
 
     # Try to find an existing identity link
     identity: IdentityProvider | None = db.scalar(
         select(IdentityProvider).where(
-            IdentityProvider.issuer == issuer,
+            IdentityProvider.issuer == Issuer.oauth,
             IdentityProvider.data["sub"].as_string() == user_info.sub,
         )
     )
 
     if identity is not None:
-        # Existing user — optionally verify email still matches
-        user_id = identity.user_id
-    else:
-        # New user — create User + IdentityProvider in one transaction
-        existing_user: User | None = db.scalar(
-            select(User).where(User.primary_email == user_info.email)
-        )
-        if existing_user is not None:
-            # Email already registered via different provider → link identity
-            user = existing_user
-        else:
-            user = User(
-                primary_email=user_info.email,
-                name=user_info.name,
-                data={"avatar_url": user_info.avatar_url} if user_info.avatar_url else {},
-                roles=[],
-            )
-            db.add(user)
-            db.flush()  # populate user.id before linking
+        # Existing user
+        return create_and_save_token(response=response, db=db, user_id=identity.user_id)
 
-        new_identity = IdentityProvider(
-            user_id=user.id,
-            issuer=issuer,
-            data={"sub": user_info.sub},
-        )
-        db.add(new_identity)
-        db.commit()
-        user_id = user.id
+    # New Identity or new user
 
-    return create_and_save_token(response=response, db=db, user_id=user_id)
+    user = db.scalar(
+        select(User).where(User.primary_email == user_info.email)
+    )
+    if user is None:
+        # New user
+        # TODO: handle account creation -> redirect to first time profile customizations
+        user = User(
+            primary_email=user_info.email,
+            name=user_info.name,
+            username=user_info.name.replace(" ", "-").lower(),
+            data={"avatar_url": user_info.picture} if user_info.picture else {},
+            roles=[],
+        )
+        db.add(user)
+        db.flush()  # populate user.id
+
+    new_identity = IdentityProvider(
+        user_id=user.id,
+        issuer=Issuer.oauth,
+        data={"sub": user_info.sub,
+              "iss": user_info.iss, },
+    )
+    db.add(new_identity)
+    db.commit()
+
+    return create_and_save_token(response=response, db=db, user_id=user.id)
