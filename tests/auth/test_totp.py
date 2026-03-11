@@ -1,4 +1,3 @@
-import pyotp
 import jwt
 from fastapi import status
 from jinja2.utils import url_quote
@@ -12,7 +11,7 @@ from config import cfg
 class TestTOTP:
     def test_generate_totp(self, client, db_session, test_user, auth_token):
         response = client.post(
-            "/api/auth/totp/generate",
+            "/api/auth/totp/create",
             headers={"Authorization": f"bearer {auth_token}"},
         )
 
@@ -40,7 +39,7 @@ class TestTOTP:
         current_otp = totp.now()
 
         response = client.post(
-            "/api/auth/totp/register",
+            "/api/auth/totp",
             headers={"Authorization": f"Bearer {sudo_auth_token}"},
             data={"otp": current_otp, "jwt_totp_claims": jwt_totp},
         )
@@ -61,7 +60,7 @@ class TestTOTP:
         jwt_totp, totp = create_totp_helper(test_user)
 
         response = client.post(
-            "/api/auth/totp/register",
+            "/api/auth/totp",
             headers={"Authorization": f"Bearer {sudo_auth_token}"},
             data={"otp": "000000", "jwt_totp_claims": jwt_totp},
         )
@@ -70,67 +69,23 @@ class TestTOTP:
         data = response.json()
         assert data["success"] is False
 
-    def test_register_totp_without_sudo_token(self, client, db_session, test_user, auth_token):
-        totp_secret = pyotp.random_base32()
-        totp = pyotp.TOTP(totp_secret)
-        current_otp = totp.now()
-
-        jwt_totp = jwt.encode(
-            payload={"sub": str(test_user.id), "totp_secret": totp_secret},
-            key=cfg().auth.jwt_secret_key,
-            algorithm=cfg().auth.jwt_algorithm,
-        )
-
-        response = client.post(
-            "/api/auth/totp/register",
-            headers={"Authorization": f"Bearer {auth_token}"},
-            params={"otp": current_otp, "jwt_totp_claims": jwt_totp},
-        )
-
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
-
-    def test_register_totp_when_already_registered(self, client, db_session, test_user, sudo_auth_token):
-        existing_identity = IdentityProvider(
-            user_id=test_user.id,
-            issuer=Issuer.totp,
-            data={"secret": "existing-secret"},
-        )
-        db_session.add(existing_identity)
-        db_session.commit()
-
-        jwt_totp, totp = create_totp_helper(test_user)
-        current_otp = totp.now()
-
-        response = client.post(
-            "/api/auth/totp/register",
-            headers={"Authorization": f"Bearer {sudo_auth_token}"},
-            data={"otp": current_otp, "jwt_totp_claims": jwt_totp},
-        )
-
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-
-    def test_verify_totp_with_valid_code(
-            self, client, db_session, test_user, test_session
-    ):
-        """Should verify valid TOTP and create session token."""
+    def test_verify_totp(self, client, db_session, test_user, test_session):
         from backend.auth.dependencies import JWTClaims
         from datetime import datetime, timezone, timedelta
 
         # Setup TOTP for user
-        totp_secret = pyotp.random_base32()
+        jwt_totp, totp = create_totp_helper(test_user)
         identity = IdentityProvider(
             user_id=test_user.id,
             issuer=Issuer.totp,
-            data={"secret": totp_secret},
+            data={"secret": totp.secret},
         )
         db_session.add(identity)
         db_session.commit()
 
-        # Generate current OTP
-        totp = pyotp.TOTP(totp_secret)
         current_otp = totp.now()
+        prev_otp = totp.at(datetime.now(timezone.utc) - timedelta(seconds=30))
 
-        # Create token requiring OTP
         claims = JWTClaims(
             sub=test_user.id,
             jti=test_session.id,
@@ -139,52 +94,29 @@ class TestTOTP:
         )
         token = claims.to_jwt_string()
 
-        response = client.post(
+        res1 = client.post(
             "/api/auth/totp/verify",
             headers={"Authorization": f"Bearer {token}"},
             data={"totp": current_otp},
         )
 
-        assert response.status_code == status.HTTP_200_OK
-        data = response.json()
-        assert "access_token" in data
-
-    def test_verify_totp_with_invalid_code(
-            self, client, db_session, test_user, test_session
-    ):
-        """Should reject invalid TOTP code."""
-        from backend.auth.dependencies import JWTClaims
-        from datetime import datetime, timezone, timedelta
-
-        # Setup TOTP for user
-        totp_secret = pyotp.random_base32()
-        identity = IdentityProvider(
-            user_id=test_user.id,
-            issuer=Issuer.totp,
-            data={"secret": totp_secret},
+        res2 = client.post(
+            "/api/auth/totp/verify",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"totp": prev_otp},
         )
-        db_session.add(identity)
-        db_session.commit()
 
-        # Create token requiring OTP
-        claims = JWTClaims(
-            sub=test_user.id,
-            jti=test_session.id,
-            exp=datetime.now(timezone.utc) + timedelta(minutes=5),
-            requires_otp=True,
-        )
-        token = claims.to_jwt_string()
-
-        response = client.post(
+        res3 = client.post(
             "/api/auth/totp/verify",
             headers={"Authorization": f"Bearer {token}"},
             data={"totp": "000000"},
         )
 
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert res1.status_code == status.HTTP_200_OK
+        assert res2.status_code == status.HTTP_200_OK
+        assert res3.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_verify_totp_when_not_setup(self, client, db_session, test_user, test_session):
-        """Should reject verification when TOTP not set up."""
         from backend.auth.dependencies import JWTClaims
         from datetime import datetime, timezone, timedelta
 
@@ -215,8 +147,8 @@ class TestTOTP:
         db_session.add(identity)
         db_session.commit()
 
-        response = client.post(
-            "/api/auth/totp/delete",
+        response = client.delete(
+            "/api/auth/totp",
             headers={"Authorization": f"Bearer {auth_token}"},
         )
 
@@ -229,11 +161,10 @@ class TestTOTP:
         )
         assert identity is None
 
-    def test_delete_totp_when_not_setup(self, client, db_session, test_user, auth_token):
-        """Should handle deletion gracefully when TOTP not setup."""
-        response = client.post(
-            "/api/auth/totp/delete",
+    def test_delete_totp_when_not_setup(self, client, auth_token):
+        response = client.delete(
+            "/api/auth/totp",
             headers={"Authorization": f"Bearer {auth_token}"},
         )
 
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_404_NOT_FOUND

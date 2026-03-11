@@ -1,9 +1,11 @@
 from typing import Annotated
 
+import httpx
 from authlib.integrations.base_client import MismatchingStateError
 from authlib.integrations.starlette_client import OAuth, StarletteOAuth2App
 from fastapi import Request, HTTPException, status, Response, APIRouter
-from pydantic import AfterValidator, BaseModel, PydanticUserError
+from pydantic import AfterValidator, AliasChoices, BaseModel, Field, PydanticUserError
+from pydantic.functional_validators import BeforeValidator
 from sqlalchemy import select
 from starlette.responses import RedirectResponse
 
@@ -14,12 +16,15 @@ from .helpers import create_and_save_token
 
 
 class OAuthUserInfo(BaseModel):
-    sub: str
+    # `sub` is OIDC; GitHub uses integer `id` instead
+    sub: Annotated[str, BeforeValidator(str)] = Field(validation_alias=AliasChoices("sub", "id"))
     email: str
-    email_verified: bool
-    iss: str
+    # GitHub doesn't supply these; defaults handle non-OIDC providers
+    email_verified: bool = False
+    iss: str = "https://github.com"
     name: str | None = None
-    picture: str | None = None
+    # `picture` is OIDC; GitHub uses `avatar_url`
+    picture: str | None = Field(default=None, validation_alias=AliasChoices("picture", "avatar_url"))
 
 
 _PROVIDERS: dict[str, dict] = {
@@ -47,8 +52,7 @@ for name, opts in _PROVIDERS.items():
 
 
 def invalid_provider_exception(provider):
-    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                         detail=f"Provider '{provider}' is not configured", )
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND)
 
 
 def check_provider(provider: str):
@@ -86,14 +90,21 @@ async def oauth_callback(provider: ProviderParam, request: Request, response: Re
                                 status_code=status.HTTP_302_FOUND)
 
     try:
-        user_info = OAuthUserInfo.model_validate(
-            token["userinfo"],
-            extra="ignore"
-        )
+        match provider:
+            case "google":
+                user_info = OAuthUserInfo.model_validate(
+                    token["userinfo"],
+                    extra="ignore"
+                )
+            case "github":
+                res = httpx.get('https://api.github.com/user',
+                                headers={"Authorization": f"Bearer {token['access_token']}"})
+                user_info = OAuthUserInfo.model_validate(res.json())
+            case _:
+                raise invalid_provider_exception(provider)
     except PydanticUserError:
         raise fail
 
-    # Try to find an existing identity link
     identity: IdentityProvider | None = db.scalar(
         select(IdentityProvider).where(
             IdentityProvider.issuer == Issuer.oauth,
@@ -132,4 +143,8 @@ async def oauth_callback(provider: ProviderParam, request: Request, response: Re
     db.add(new_identity)
     db.commit()
 
-    return create_and_save_token(response=response, db=db, user_id=user.id)
+    # TODO: return redirect
+    token = create_and_save_token(response=response, db=db, user_id=user.id)
+    # return RedirectResponse(url=request.url_for("profile"),
+    #                         status_code=status.HTTP_302_FOUND)
+    return token

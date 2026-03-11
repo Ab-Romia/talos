@@ -4,6 +4,7 @@ import jwt
 import pyotp
 from fastapi import APIRouter, Depends, HTTPException, Response, status, Form
 from sqlalchemy import delete, select, insert
+from starlette.responses import JSONResponse
 
 from config import cfg
 from model import DatabaseDep
@@ -14,7 +15,7 @@ from .helpers import create_and_save_token
 router = APIRouter()
 
 
-@router.post("/generate")
+@router.post("/create")
 def generate_totp(user: Annotated[User, Depends(_raw_user)]):
     jwt_claims, totp = create_totp_helper(user)
     uri = totp.provisioning_uri(
@@ -32,7 +33,7 @@ def generate_totp(user: Annotated[User, Depends(_raw_user)]):
     }
 
 
-@router.post("/register", dependencies=[Depends(sudo_token)])
+@router.post("", dependencies=[Depends(sudo_token)])
 def register_totp(
         otp: Annotated[str, Form()],
         jwt_totp_claims: Annotated[str, Form()],
@@ -111,14 +112,18 @@ def verify_totp(
     return {"success": True, "message": "TOTP verified"}
 
 
-@router.post("/delete")
+@router.delete("")
 def delete_totp(user: Annotated[User, Depends(_raw_user)], db: DatabaseDep):
-    """Remove any TOTP identity providers for the current user."""
-    db.execute(
+    result = db.execute(
         delete(IdentityProvider)
         .where(IdentityProvider.user_id == user.id,
                IdentityProvider.issuer == Issuer.totp)
     )
+
+    if result.rowcount == 0:
+        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND,
+                            content={"message": "TOTP not set up for user"})
+
     db.commit()
     return {"message": "TOTP cleared"}
 
