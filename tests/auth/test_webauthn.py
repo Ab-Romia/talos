@@ -9,12 +9,7 @@ from model.identity import IdentityProvider, Issuer
 
 
 class TestGeneratePasskey:
-    """Test passkey generation endpoint."""
-
-    def test_generate_passkey_for_registration(
-            self, client, db_session, test_user, auth_token, test_config
-    ):
-        """Should generate registration options when user is authenticated."""
+    def test_generate_passkey_for_registration( self, client, db_session, test_user, auth_token, test_config ):
         response = client.post(
             "/api/auth/passkey/generate",
             headers={"Authorization": f"Bearer {auth_token}"},

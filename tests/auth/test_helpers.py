@@ -1,10 +1,11 @@
 """Tests for auth helper functions."""
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 
 import pytest
 from starlette.responses import Response
 
+from backend.auth.dependencies import JWTClaims
 from backend.auth.helpers import (
     create_and_save_token,
     create_oauth2_token,
@@ -12,7 +13,6 @@ from backend.auth.helpers import (
     clear_all_sessions,
     set_token_cookie,
 )
-from backend.auth.dependencies import JWTClaims
 from model.identity import Session, TokenType
 
 
@@ -21,7 +21,7 @@ class TestCreateOAuth2Token:
 
     def test_creates_token_with_correct_fields(self):
         """Should create OAuth2Token with access token and metadata."""
-        exp = datetime.now(timezone.utc) + timedelta(hours=1)
+        exp = datetime.now() + timedelta(hours=1)
         claims = JWTClaims(sub=uuid.uuid4(), exp=exp)
 
         token = create_oauth2_token(claims)
@@ -34,7 +34,7 @@ class TestCreateOAuth2Token:
     def test_token_can_be_decoded(self):
         """Should create a token that can be decoded back to claims."""
         user_id = uuid.uuid4()
-        exp = datetime.now(timezone.utc) + timedelta(hours=1)
+        exp = datetime.now() + timedelta(hours=1)
         claims = JWTClaims(sub=user_id, exp=exp)
 
         token = create_oauth2_token(claims)
@@ -110,7 +110,7 @@ class TestSetTokenCookie:
     def test_sets_cookie_with_correct_attributes(self):
         """Should set cookie with proper security attributes."""
         response = Response()
-        exp = datetime.now(timezone.utc) + timedelta(hours=1)
+        exp = datetime.now() + timedelta(hours=1)
         claims = JWTClaims(sub=uuid.uuid4(), exp=exp)
         token = create_oauth2_token(claims)
 
@@ -122,7 +122,7 @@ class TestSetTokenCookie:
     def test_sets_session_cookie_when_requested(self):
         """Should create session cookie without expiration."""
         response = Response()
-        exp = datetime.now(timezone.utc) + timedelta(hours=1)
+        exp = datetime.now() + timedelta(hours=1)
         claims = JWTClaims(sub=uuid.uuid4(), exp=exp)
         token = create_oauth2_token(claims)
 
@@ -201,7 +201,7 @@ class TestCreateAndSaveToken:
         )
 
         decoded = JWTClaims.from_jwt_string(token.access_token)
-        time_diff = (decoded.exp - datetime.now(timezone.utc)).total_seconds()
+        time_diff = (decoded.exp - datetime.now()).total_seconds()
         expected_diff = custom_duration.total_seconds()
 
         # Allow 1 second tolerance

@@ -1,0 +1,32 @@
+#
+#_PROVIDERS: dict[str, dict] = {
+#  "google": dict(
+#    client_id=cfg().auth.google_client.id,
+#    client_secret=cfg().auth.google_client.secret,
+#    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+#    client_kwargs={"scope": "openid email profile"},
+#  ),
+#  "github": dict(
+#    client_id=cfg().auth.github_client.id,
+#    client_secret=cfg().auth.github_client.secret,
+#    api_base_url="https://api.github.com/",
+#    access_token_url="https://github.com/login/oauth/access_token",
+#    authorize_url="https://github.com/login/oauth/authorize",
+#    client_kwargs={"scope": "read:user user:email"},
+#  ),
+#}
+
+
+auth:
+  oauth_clients:
+    google:
+      api_base_url: https://www.googleapis.com/oauth2/v2/
+      access_token_url: https://oauth2.googleapis.com/token
+      authorize_url: https://accounts.google.com/o/oauth2/v2/auth
+      server_metadata_url: https://accounts.google.com/.well-known/openid-configuration
+      client_kwargs: {"scope": "openid email profile"}
+    github:
+      api_base_url: https://api.github.com/
+      access_token_url: https://github.com/login/oauth/access_token
+      authorize_url: https://github.com/login/oauth/authorize
+      client_kwargs: {"scope": "read:user user:email"}

@@ -30,7 +30,7 @@ async def generate_passkey(user: UserDep = None):
     """
     Generate WebAuthn options for either registration or authentication.
 
-    For registration: Requires authenticated user (the challenge must be bound to the user).
+    For registration: Requires an authenticated user (the challenge must be bound to the user).
     For authentication: Unauthenticated, provide user_id to get their credentials.
     """
 
@@ -41,7 +41,7 @@ async def generate_passkey(user: UserDep = None):
             rp_id=_rp_id(),
             rp_name=cfg().app_name,
             user_name=user.username,
-            user_id=str(user.id).encode(),
+            # user_id=user.id.bytes[:32],  # user.id must be at most 64 bytes according to spec
             user_display_name=user.name or user.primary_email,
         )
 
@@ -64,7 +64,7 @@ async def generate_passkey(user: UserDep = None):
         algorithm=cfg().auth.jwt_algorithm,
     )
     return {
-        "options": webauthn.options_to_json(options),
+        "options": webauthn.helpers.options_to_json_dict(options),
         "jwt_challenge": jwt_challenge,
     }
 

@@ -1,19 +1,19 @@
 from contextlib import asynccontextmanager
 
-from dotenv import load_dotenv
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Request, Depends
 from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
-from backend.auth import auth_router, active_user
-from backend.auth.dependencies import SessionCookieToHeaderMiddleware
+from backend.auth import auth_router
+from backend.auth.dependencies import SessionCookieToHeaderMiddleware, UserDep, active_user
 from config import cfg
-from model import engine
 from model import Base
+from model import engine
 
-load_dotenv()
+templates = Jinja2Templates(directory="frontend/templates")
 
 
 @asynccontextmanager
@@ -44,6 +44,11 @@ async def config_page():
     return cfg()
 
 
+@app.get('/passkey-test', response_class=HTMLResponse)
+async def passkey_test_page(request: Request, user: UserDep):
+    return templates.TemplateResponse(request, "pages/passkey_test.html", {"username": user.username})
+
+
 @app.get('/smily')
 async def smily():
     return HTMLResponse('<p style="font-size:24em";>🙂</p>')
@@ -57,7 +62,4 @@ async def smily():
 if __name__ == '__main__':
     import uvicorn
 
-    uvicorn.run(app,
-                host=cfg().app_host,
-                port=cfg().app_port,
-                )
+    uvicorn.run(app, host=cfg().app_host, port=cfg().app_port)

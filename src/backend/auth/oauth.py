@@ -4,51 +4,40 @@ import httpx
 from authlib.integrations.base_client import MismatchingStateError
 from authlib.integrations.starlette_client import OAuth, StarletteOAuth2App
 from fastapi import Request, HTTPException, status, Response, APIRouter
-from pydantic import AfterValidator, AliasChoices, BaseModel, Field, PydanticUserError
-from pydantic.functional_validators import BeforeValidator
+from pydantic import AfterValidator, BaseModel, PydanticUserError
 from sqlalchemy import select
 from starlette.responses import RedirectResponse
 
-from config import cfg
+from src.config import cfg
 from model import DatabaseDep
 from model.identity import IdentityProvider, User, Issuer
 from .helpers import create_and_save_token
 
 
-class OAuthUserInfo(BaseModel):
-    # `sub` is OIDC; GitHub uses integer `id` instead
-    sub: Annotated[str, BeforeValidator(str)] = Field(validation_alias=AliasChoices("sub", "id"))
+class OIDC(BaseModel):
+    sub: str
     email: str
-    # GitHub doesn't supply these; defaults handle non-OIDC providers
     email_verified: bool = False
-    iss: str = "https://github.com"
-    name: str | None = None
-    # `picture` is OIDC; GitHub uses `avatar_url`
-    picture: str | None = Field(default=None, validation_alias=AliasChoices("picture", "avatar_url"))
+    iss: str
+    name: str
+    picture: str | None
 
+    @staticmethod
+    def from_github(github_user: dict):
+        return OIDC(
+            sub=str(github_user["id"]),
+            email=github_user["email"],
+            name=github_user["name"],
+            picture=github_user["avatar_url"],
+            iss="github.com"
+        )
 
-_PROVIDERS: dict[str, dict] = {
-    "google": dict(
-        client_id=cfg().auth.google_client.id,
-        client_secret=cfg().auth.google_client.secret,
-        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-        client_kwargs={"scope": "openid email profile"},
-    ),
-    "github": dict(
-        client_id=cfg().auth.github_client.id,
-        client_secret=cfg().auth.github_client.secret,
-        api_base_url="https://api.github.com/",
-        access_token_url="https://github.com/login/oauth/access_token",
-        authorize_url="https://github.com/login/oauth/authorize",
-        client_kwargs={"scope": "read:user user:email"},
-    ),
-}
 
 router = APIRouter()
 oauth = OAuth()
 
-for name, opts in _PROVIDERS.items():
-    oauth.register(name=name, **opts)
+for name, client in cfg().auth.oauth_clients.items():
+    oauth.register(name=name, **client.model_dump())
 
 
 def invalid_provider_exception(provider):
@@ -56,7 +45,7 @@ def invalid_provider_exception(provider):
 
 
 def check_provider(provider: str):
-    if provider not in _PROVIDERS.keys():
+    if provider not in cfg().auth.oauth_clients.keys():
         raise invalid_provider_exception(provider)
     return provider
 
@@ -69,7 +58,13 @@ async def oauth_login(provider: ProviderParam, request: Request):
     client: StarletteOAuth2App = oauth.create_client(provider)
 
     redirect_uri = request.url_for("oauth_callback", provider=provider)
-    return await client.authorize_redirect(request, redirect_uri)
+    try:
+        return await client.authorize_redirect(request, redirect_uri)
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Could not connect to {provider} OAuth server"
+        )
 
 
 @router.get("/{provider}/callback", name="oauth_callback")
@@ -92,14 +87,14 @@ async def oauth_callback(provider: ProviderParam, request: Request, response: Re
     try:
         match provider:
             case "google":
-                user_info = OAuthUserInfo.model_validate(
+                user_info = OIDC.model_validate(
                     token["userinfo"],
                     extra="ignore"
                 )
             case "github":
                 res = httpx.get('https://api.github.com/user',
                                 headers={"Authorization": f"Bearer {token['access_token']}"})
-                user_info = OAuthUserInfo.model_validate(res.json())
+                user_info = OIDC.from_github(res.json())
             case _:
                 raise invalid_provider_exception(provider)
     except PydanticUserError:
@@ -137,8 +132,7 @@ async def oauth_callback(provider: ProviderParam, request: Request, response: Re
     new_identity = IdentityProvider(
         user_id=user.id,
         issuer=Issuer.oauth,
-        data={"sub": user_info.sub,
-              "iss": user_info.iss, },
+        data=user_info.model_dump(),
     )
     db.add(new_identity)
     db.commit()

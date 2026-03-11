@@ -1,6 +1,6 @@
 """Tests for auth dependencies and middleware."""
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -21,7 +21,7 @@ class TestJWTClaims:
     def test_to_jwt_string_creates_valid_token(self):
         """Should encode claims to JWT string."""
         user_id = uuid.uuid4()
-        exp = datetime.now(timezone.utc) + timedelta(hours=1)
+        exp = datetime.now() + timedelta(hours=1)
         claims = JWTClaims(sub=user_id, exp=exp)
 
         jwt_string = claims.to_jwt_string()
@@ -32,7 +32,7 @@ class TestJWTClaims:
     def test_from_jwt_string_decodes_valid_token(self):
         """Should decode JWT string to claims."""
         user_id = uuid.uuid4()
-        exp = datetime.now(timezone.utc) + timedelta(hours=1)
+        exp = datetime.now() + timedelta(hours=1)
         original_claims = JWTClaims(sub=user_id, exp=exp)
         jwt_string = original_claims.to_jwt_string()
 
@@ -43,7 +43,7 @@ class TestJWTClaims:
     def test_from_jwt_string_raises_on_expired_token(self):
         """Should raise AuthException for expired tokens."""
         user_id = uuid.uuid4()
-        exp = datetime.now(timezone.utc) - timedelta(hours=1)
+        exp = datetime.now() - timedelta(hours=1)
         claims = JWTClaims(sub=user_id, exp=exp)
         jwt_string = claims.to_jwt_string()
 
@@ -62,7 +62,7 @@ class TestJWTClaims:
     def test_default_values(self):
         """Should set default values correctly."""
         user_id = uuid.uuid4()
-        exp = datetime.now(timezone.utc) + timedelta(hours=1)
+        exp = datetime.now() + timedelta(hours=1)
         claims = JWTClaims(sub=user_id, exp=exp)
 
         assert claims.requires_otp is False
@@ -76,7 +76,7 @@ class TestJwtClaimsDependency:
     def test_returns_claims_for_valid_token(self):
         """Should extract and return JWT claims from token."""
         user_id = uuid.uuid4()
-        exp = datetime.now(timezone.utc) + timedelta(hours=1)
+        exp = datetime.now() + timedelta(hours=1)
         claims = JWTClaims(sub=user_id, exp=exp)
         token = claims.to_jwt_string()
 
@@ -121,7 +121,7 @@ class TestActiveUserDependency:
 
     def test_raises_when_user_deleted(self, db_session, test_user, test_session):
         """Should raise exception when user is deleted."""
-        test_user.deleted_at = datetime.now(timezone.utc)
+        test_user.deleted_at = datetime.now()
         db_session.commit()
 
         claims = JWTClaims(
@@ -156,7 +156,7 @@ class TestActiveUserDependency:
         claims = JWTClaims(
             sub=test_user.id,
             jti=uuid.uuid4(),  # Non-existent session
-            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+            exp=datetime.now() + timedelta(hours=1),
         )
 
         with pytest.raises(AuthException) as exc_info:
@@ -199,7 +199,7 @@ class TestGetSessionDependency:
         claims = JWTClaims(
             sub=test_user.id,
             jti=uuid.uuid4(),
-            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+            exp=datetime.now() + timedelta(hours=1),
         )
 
         with pytest.raises(AuthException) as exc_info:
@@ -216,7 +216,7 @@ class TestSudoTokenDependency:
         claims = JWTClaims(
             sub=test_user.id,
             jti=test_session.id,
-            exp=datetime.now(timezone.utc) + timedelta(minutes=15),
+            exp=datetime.now() + timedelta(minutes=15),
             sudo=True,
         )
 
@@ -229,7 +229,7 @@ class TestSudoTokenDependency:
         claims = JWTClaims(
             sub=test_user.id,
             jti=test_session.id,
-            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+            exp=datetime.now() + timedelta(hours=1),
             sudo=False,
         )
 
@@ -243,7 +243,7 @@ class TestSudoTokenDependency:
         claims = JWTClaims(
             sub=test_user.id,
             jti=uuid.uuid4(),
-            exp=datetime.now(timezone.utc) + timedelta(minutes=15),
+            exp=datetime.now() + timedelta(minutes=15),
             sudo=True,
         )
 

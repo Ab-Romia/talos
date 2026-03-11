@@ -4,8 +4,8 @@ from jinja2.utils import url_quote
 from sqlalchemy import select
 
 from backend.auth.totp import create_totp_helper
-from model.identity import IdentityProvider, Issuer
 from config import cfg
+from model.identity import IdentityProvider, Issuer
 
 
 class TestTOTP:
@@ -71,7 +71,7 @@ class TestTOTP:
 
     def test_verify_totp(self, client, db_session, test_user, test_session):
         from backend.auth.dependencies import JWTClaims
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
 
         # Setup TOTP for user
         jwt_totp, totp = create_totp_helper(test_user)
@@ -84,12 +84,12 @@ class TestTOTP:
         db_session.commit()
 
         current_otp = totp.now()
-        prev_otp = totp.at(datetime.now(timezone.utc) - timedelta(seconds=30))
+        prev_otp = totp.at(datetime.now() - timedelta(seconds=30))
 
         claims = JWTClaims(
             sub=test_user.id,
             jti=test_session.id,
-            exp=datetime.now(timezone.utc) + timedelta(minutes=5),
+            exp=datetime.now() + timedelta(minutes=5),
             requires_otp=True,
         )
         token = claims.to_jwt_string()
@@ -118,12 +118,12 @@ class TestTOTP:
 
     def test_verify_totp_when_not_setup(self, client, db_session, test_user, test_session):
         from backend.auth.dependencies import JWTClaims
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
 
         claims = JWTClaims(
             sub=test_user.id,
             jti=test_session.id,
-            exp=datetime.now(timezone.utc) + timedelta(minutes=5),
+            exp=datetime.now() + timedelta(minutes=5),
             requires_otp=True,
         )
         token = claims.to_jwt_string()

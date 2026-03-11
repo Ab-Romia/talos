@@ -1,11 +1,10 @@
 import uuid
-
-import fastapi.security
-import jwt
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum as PyEnum
 from typing import Annotated
 
+import fastapi.security
+import jwt
 from fastapi import HTTPException, Depends, Request, status
 from fastapi.exception_handlers import http_exception_handler as fastapi_http_exception_handler
 from fastapi.responses import RedirectResponse
@@ -36,6 +35,7 @@ from model.identity import User, Session, TokenType
 #  remember me functionality
 #  device recognition (e.g. for risk-based authentication)
 #  exception handling
+#  timezone
 
 
 # TODO: ????
@@ -171,6 +171,7 @@ def active_user(user: Annotated[User, Depends(_raw_user)],
         raise AuthException(detail="Email not verified", err_code=AuthErrorCode.EMAIL_NOT_VERIFIED)
 
     if session is None:
+        print(jwt_claims.jti)
         raise AuthException(detail="Session expired", err_code=AuthErrorCode.EXPIRED_TOKEN)
 
     db.execute(

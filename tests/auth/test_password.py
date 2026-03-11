@@ -1,5 +1,4 @@
 """Tests for password authentication."""
-import pytest
 from fastapi import status
 
 from backend.auth.password import hash_password, verify_password
@@ -106,10 +105,10 @@ class TestPasswordAuthentication:
 
     def test_login_with_deleted_user(self, client, db_session, test_user_with_password):
         """Should reject login for deleted user."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         user, password = test_user_with_password
-        user.deleted_at = datetime.now(timezone.utc)
+        user.deleted_at = datetime.now()
         db_session.commit()
 
         response = client.post(

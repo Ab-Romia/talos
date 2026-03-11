@@ -3,20 +3,18 @@ from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict, PydanticBaseSettingsSource, YamlConfigSettingsSource
 
 
-# name="google",
-# client_id=config().auth.google_client.id,
-# client_secret=config().auth.google_client.secret,
-# server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-# client_kwargs={"scope": "openid email profile"},
-
 class OAuthClient(BaseModel):
-    id: str
-    secret: str
+    client_id: str
+    client_secret: str
+    api_base_url: str
+    access_token_url: str
+    authorize_url: str
+    server_metadata_url: str = None
+    client_kwargs: dict
 
 
 class AuthConfig(BaseModel):
-    google_client: OAuthClient = None
-    github_client: OAuthClient = None
+    oauth_clients: dict[str, OAuthClient]
 
     totp_valid_window: int = 1
 
@@ -38,7 +36,7 @@ class Config(BaseSettings):
     model_config = SettingsConfigDict(
         env_file='.env',
         env_nested_delimiter="__",
-        extra="ignore",  # TODO: change to "forbid" in prod
+        extra="ignore",
         yaml_file="config/config.yaml"
     )
 

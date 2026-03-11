@@ -1,5 +1,5 @@
 import uuid
-from datetime import timedelta, datetime, timezone
+from datetime import timedelta, datetime
 
 from sqlalchemy import insert, delete
 from starlette.responses import Response
@@ -24,14 +24,19 @@ def create_and_save_token(
         save_to_db=True,
         set_cookie=True,
 ) -> OAuth2Token:
-    claims = JWTClaims(sub=user_id,
-                       exp=datetime.now(timezone.utc) + duration,
-                       requires_otp=requires_otp)
+    claims = JWTClaims(
+        sub=user_id,
+        exp=datetime.now() + duration,
+        requires_otp=requires_otp
+    )
 
     token = create_oauth2_token(claims)
 
     if save_to_db:
-        save_session(user_id=user_id, db=db, session_id=claims.jti, expires_at=claims.exp)
+        save_session(user_id=user_id,
+                     db=db,
+                     session_id=claims.jti,
+                     expires_at=claims.exp)
 
     if set_cookie:
         set_token_cookie(response,
@@ -60,7 +65,7 @@ def save_session(
         expires_delta=timedelta(days=30),
         expires_at: datetime = None,
 ) -> uuid.UUID:
-    exp = expires_at or (datetime.now(timezone.utc) + expires_delta)
+    exp = expires_at or (datetime.now() + expires_delta)
     session_id = session_id or uuid.uuid4()
     db.execute(
         insert(Session)
@@ -93,7 +98,7 @@ def set_token_cookie(
         httponly=True,
         samesite="lax",
     )
-    max_age = value.expires_at - datetime.now(timezone.utc)
+    max_age = value.expires_at - datetime.now()
     options = options.model_copy(
         update={
             "max_age": int(max_age.total_seconds()),

@@ -1,6 +1,6 @@
 """Tests for core authentication endpoints."""
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 
 import jwt
 from fastapi import status
@@ -58,7 +58,7 @@ class TestLogout:
                                 algorithms=[cfg().auth.jwt_algorithm], )
         assert jwt_claims["sub"] == str(test_user.id)
         assert jwt_claims["jti"] == str(session_id)
-        assert jwt_claims["exp"] > datetime.now(timezone.utc).timestamp()
+        assert jwt_claims["exp"] > datetime.now().timestamp()
 
         response = client.post(
             "/api/auth/logout",
@@ -102,7 +102,7 @@ class TestSudo:
         assert claims.sudo is True
 
         # Verify short expiration
-        exp_delta = claims.exp - datetime.now(timezone.utc)
+        exp_delta = claims.exp - datetime.now()
         assert exp_delta < timedelta(minutes=20)  # Should be ~15 minutes
 
     def test_sudo_without_authentication(self, client, db_session):
@@ -208,9 +208,9 @@ class TestRefreshToken:
         assert response.status_code == status.HTTP_200_OK
 
         db_session.refresh(test_session)
-        expected_expiration = datetime.now(timezone.utc) + timedelta(days=30)
+        expected_expiration = datetime.now() + timedelta(days=30)
         # TODO: apply tzinfo in actual code
-        expires_at = test_session.expires_at.replace(tzinfo=timezone.utc)
+        expires_at = test_session.expires_at.replace()
         time_diff = abs((expires_at - expected_expiration).total_seconds())
 
         # Allow 5 second tolerance for test execution time

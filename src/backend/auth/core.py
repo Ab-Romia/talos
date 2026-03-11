@@ -1,4 +1,4 @@
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from typing import Annotated
 from uuid import UUID
 
@@ -80,14 +80,14 @@ class SudoRequest(BaseModel):
 @router.post("/sudo")
 async def sudo(
         response: Response,
-        login_credentials: SudoRequest,
+        # login_credentials: SudoRequest,
         user: Annotated[User, Depends(active_user)],
         session: Annotated[Session, Depends(session)],
         db: DatabaseDep):
     # TODO: implement different sudo methods (password, otp, passkey)
 
     # create a short-lived sudo token (does not create a new DB session)
-    expires = datetime.now(timezone.utc) + timedelta(minutes=15)
+    expires = datetime.now() + timedelta(minutes=15)
     claims = JWTClaims(sub=user.id, exp=expires, sudo=True)
     sudo_token = create_oauth2_token(claims)
     set_token_cookie(response, key="sudo_token", value=sudo_token, session_cookie=True)
@@ -114,7 +114,7 @@ async def refresh_token(
         response: Response
 ):
     """Refresh the current session token by updating its expiration and returning a new token with the same session ID."""
-    new_expiration = datetime.now(timezone.utc) + timedelta(days=30)
+    new_expiration = datetime.now() + timedelta(days=30)
 
     # TODO: modify create_and_save_token to handle refreshing tokens without creating a new session
     # the session is guaranteed to exist by the dependency

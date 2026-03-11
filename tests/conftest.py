@@ -1,5 +1,4 @@
-"""Shared fixtures for auth subsystem tests."""
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 import pytest
 import sqlalchemy
 import sqlalchemy.exc
@@ -152,6 +151,6 @@ def expired_token(test_user: User, test_session: UserSession) -> str:
     claims = JWTClaims(
         sub=test_user.id,
         jti=test_session.id,
-        exp=datetime.now(timezone.utc) - timedelta(hours=1),
+        exp=datetime.now() - timedelta(hours=1),
     )
     return claims.to_jwt_string()
