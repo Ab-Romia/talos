@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated, Any
 
 import jwt
@@ -9,15 +10,14 @@ from starlette.responses import JSONResponse
 from config import cfg
 from model import DatabaseDep
 from model.identity import User, Issuer, IdentityProvider
-from .dependencies import JWTClaims, jwt_claims, _raw_user, UserDep, sudo_token
-from .helpers import create_and_save_token
+from .helpers import create_and_save_token, JWTClaims, jwt_claims, _raw_user, sudo_token, UserDep
 
 router = APIRouter()
 
 
 @router.post("/create")
-def generate_totp(user: Annotated[User, Depends(_raw_user)]):
-    jwt_claims, totp = create_totp_helper(user)
+def generate_totp(user: UserDep):
+    jwt_claims, totp = create_totp_helper(user.id)
     uri = totp.provisioning_uri(
         name=user.primary_email,
         issuer_name=cfg().app_name
@@ -40,9 +40,6 @@ def register_totp(
         user: UserDep,
         db: DatabaseDep,
 ):
-    """
-    Endpoint to verify the TOTP for the first.
-    """
     totp_secret = decode_jwt_totp_helper(jwt_totp_claims, user)
 
     exists = db.scalar(
@@ -59,7 +56,8 @@ def register_totp(
         .verify(otp, valid_window=cfg().auth.totp_valid_window)
 
     if not is_valid:
-        return {"success": False, "message": "Invalid TOTP"}
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Invalid TOTP")
 
     # Create or update the TOTP identity provider for the user
     db.execute(
@@ -73,7 +71,7 @@ def register_totp(
 
     db.commit()
 
-    return {"success": True, "message": "TOTP registered successfully"}
+    return {"message": "TOTP registered successfully"}
 
 
 @router.post("/verify")
@@ -134,7 +132,7 @@ def decode_jwt_totp_helper(jwt_totp_claims: str, user: User) -> Any:
             jwt=jwt_totp_claims,
             key=cfg().auth.jwt_secret_key,
             algorithms=[cfg().auth.jwt_algorithm],
-            subject=str(user.id),
+            subject=user.id.hex,
         )
         totp_secret = claims["totp_secret"]
     except (jwt.PyJWTError, KeyError):
@@ -142,12 +140,12 @@ def decode_jwt_totp_helper(jwt_totp_claims: str, user: User) -> Any:
     return totp_secret
 
 
-def create_totp_helper(user: User):
+def create_totp_helper(sub: uuid.UUID):
     otp_base32 = pyotp.random_base32()
     totp = pyotp.totp.TOTP(otp_base32)
 
     jwt_claims = jwt.encode(
-        payload={"sub": str(user.id), "totp_secret": otp_base32},
+        payload={"sub": sub.hex, "totp_secret": otp_base32},
         key=cfg().auth.jwt_secret_key,
         algorithm=cfg().auth.jwt_algorithm,
     )

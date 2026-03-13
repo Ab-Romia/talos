@@ -3,17 +3,17 @@ from unittest.mock import Mock, AsyncMock, patch
 from fastapi import status
 from sqlalchemy import select
 
-from backend.auth.oauth import OAuthUserInfo
+from backend.auth.oauth import OIDC
 from model.identity import IdentityProvider, Issuer, User
 
 
-class TestOAuthUserInfo:
-    def test_google_mapping(self):
+class TestOIDC:
+    def test_google(self):
         userinfo = {
             "iss": "https://accounts.google.com",
             "azp": "996521833228-otv2206g3oig2ng54duta8scphs5mrvs.apps.googleusercontent.com",
             "aud": "996521833228-otv2206g3oig2ng54duta8scphs5mrvs.apps.googleusercontent.com",
-            "sub": 12345678,
+            "sub": "12345678",
             "email": "kyrollosyoussef02@gmail.com",
             "email_verified": True,
             "at_hash": "VKPOAvZA6vPQGPfTZYaTZg",
@@ -26,7 +26,7 @@ class TestOAuthUserInfo:
             "exp": 1772903095
         }
 
-        info = OAuthUserInfo.model_validate(userinfo)
+        info = OIDC.model_validate(userinfo)
 
         assert info.sub == "12345678"
         assert info.email == "kyrollosyoussef02@gmail.com"
@@ -35,7 +35,7 @@ class TestOAuthUserInfo:
         assert info.name == "Kyrollos Youssef"
         assert info.picture == "https://lh3.googleusercontent.com/a/ACg8ocJOvJZ1sN3ol8s7o_qeZsIhnojbrDtyCo_w88vs4wONYfrwDZU=s96-c"
 
-    def test_github_mapping(self):
+    def test_github(self):
         # GitHub /user API response — non-OIDC, uses `id`, no email_verified or iss
         userinfo = {
             "login": "k1rowashere",
@@ -86,7 +86,7 @@ class TestOAuthUserInfo:
             }
         }
 
-        info = OAuthUserInfo.model_validate(userinfo)
+        info = OIDC.from_github(userinfo)
 
         assert info.sub == "29287159"
         assert info.email == "kyrollosyoussef02@gmail.com"
@@ -97,8 +97,8 @@ class TestOAuthUserInfo:
 
 
 class TestOAuthLogin:
-    def test_oauth_login_google(self, client):
-        response = client.get("/api/auth/oauth/google", follow_redirects=False)
+    def test_google(self, client, path):
+        response = client.get(path("oauth_login", provider="google"), follow_redirects=False)
 
         assert response.status_code == status.HTTP_302_FOUND
         location = response.headers["location"]
@@ -108,8 +108,8 @@ class TestOAuthLogin:
         assert "redirect_uri=" in location
         assert "state=" in location
 
-    def test_oauth_login_github(self, client):
-        response = client.get("/api/auth/oauth/github", follow_redirects=False)
+    def test_github(self, client, path):
+        response = client.get(path("oauth_login", provider="github"), follow_redirects=False)
 
         assert response.status_code == status.HTTP_302_FOUND
         location = response.headers["location"]
@@ -119,8 +119,8 @@ class TestOAuthLogin:
         assert "redirect_uri=" in location
         assert "state=" in location
 
-    def test_oauth_login_with_invalid_provider(self, client, db_session):
-        response = client.get("/api/auth/oauth/invalid-provider")
+    def test_with_invalid_provider(self, client, path, db_session):
+        response = client.get(path("oauth_login", provider="invalid-provider"))
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -149,7 +149,7 @@ def get_oauth_identity(db_session, user_id):
 
 class TestOAuthCallback:
     @patch("backend.auth.oauth.oauth")
-    def test_oauth_callback_creates_new_user(self, mock_oauth, client, db_session):
+    def test_creates_new_user(self, mock_oauth, client, path, db_session):
         userinfo = make_userinfo(
             sub="google-sub-creates-new-user",
             email="brand-new-oauth-user@example.com",
@@ -158,7 +158,7 @@ class TestOAuthCallback:
         )
         setup_mock_oauth(mock_oauth, userinfo)
 
-        response = client.get("/api/auth/oauth/google/callback")
+        response = client.get(path("oauth_callback", provider="google"))
 
         assert response.status_code == status.HTTP_200_OK
         assert "access_token" in response.json()
@@ -172,7 +172,7 @@ class TestOAuthCallback:
         assert identity.data["sub"] == userinfo["sub"]
 
     @patch("backend.auth.oauth.oauth")
-    def test_oauth_callback_links_existing_user(self, mock_oauth, client, db_session, test_user):
+    def test_links_existing_user(self, mock_oauth, client, path, db_session, test_user):
         userinfo = make_userinfo(
             sub="google-sub-links-existing",
             email=test_user.primary_email,
@@ -180,7 +180,7 @@ class TestOAuthCallback:
         )
         setup_mock_oauth(mock_oauth, userinfo)
 
-        response = client.get("/api/auth/oauth/google/callback")
+        response = client.get(path("oauth_callback", provider="google"))
 
         assert response.status_code == status.HTTP_200_OK
         assert "access_token" in response.json()
@@ -190,7 +190,7 @@ class TestOAuthCallback:
         assert identity.data["sub"] == userinfo["sub"]
 
     @patch("backend.auth.oauth.oauth")
-    def test_oauth_callback_returns_existing_identity(self, mock_oauth, client, db_session, test_user):
+    def test_returns_existing_identity(self, mock_oauth, client, path, db_session, test_user):
         existing_sub = "google-sub-existing-identity"
         db_session.add(IdentityProvider(
             user_id=test_user.id,
@@ -206,7 +206,7 @@ class TestOAuthCallback:
         )
         setup_mock_oauth(mock_oauth, userinfo)
 
-        response = client.get("/api/auth/oauth/google/callback")
+        response = client.get(path("oauth_callback", provider="google"))
 
         assert response.status_code == status.HTTP_200_OK
         assert "access_token" in response.json()

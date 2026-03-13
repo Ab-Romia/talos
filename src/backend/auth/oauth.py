@@ -20,7 +20,7 @@ class OIDC(BaseModel):
     email_verified: bool = False
     iss: str
     name: str
-    picture: str | None
+    picture: str = None
 
     @staticmethod
     def from_github(github_user: dict):
@@ -29,7 +29,7 @@ class OIDC(BaseModel):
             email=github_user["email"],
             name=github_user["name"],
             picture=github_user["avatar_url"],
-            iss="github.com"
+            iss="https://github.com"
         )
 
 

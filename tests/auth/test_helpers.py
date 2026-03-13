@@ -1,27 +1,24 @@
-"""Tests for auth helper functions."""
 import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
+from sqlalchemy import select
 from starlette.responses import Response
 
-from backend.auth.dependencies import JWTClaims
 from backend.auth.helpers import (
     create_and_save_token,
     create_oauth2_token,
-    save_session,
+    create_or_update_session,
     clear_all_sessions,
-    set_token_cookie,
+    set_token_cookie, JWTClaims,
 )
 from model.identity import Session, TokenType
+from utils.datetime import utcnow
 
 
 class TestCreateOAuth2Token:
-    """Test create_oauth2_token function."""
-
-    def test_creates_token_with_correct_fields(self):
-        """Should create OAuth2Token with access token and metadata."""
-        exp = datetime.now() + timedelta(hours=1)
+    def test_fields(self):
+        exp = utcnow() + timedelta(hours=1)
         claims = JWTClaims(sub=uuid.uuid4(), exp=exp)
 
         token = create_oauth2_token(claims)
@@ -31,10 +28,9 @@ class TestCreateOAuth2Token:
         assert token.expires_at == exp
         assert token.refresh_token == ""
 
-    def test_token_can_be_decoded(self):
-        """Should create a token that can be decoded back to claims."""
+    def test_decodable(self):
         user_id = uuid.uuid4()
-        exp = datetime.now() + timedelta(hours=1)
+        exp = utcnow() + timedelta(hours=1)
         claims = JWTClaims(sub=user_id, exp=exp)
 
         token = create_oauth2_token(claims)
@@ -45,58 +41,69 @@ class TestCreateOAuth2Token:
 
 
 class TestSaveSession:
-    """Test save_session function."""
-
-    def test_saves_session_to_database(self, db_session, test_user):
-        """Should save a new session to the database."""
+    def test_saves(self, db_session, test_user):
         user_id = test_user.id
 
-        session_id = save_session(user_id=user_id, db=db_session)
+        session_id = create_or_update_session(db=db_session, user_id=user_id)
 
-        saved_session = db_session.query(Session).filter(Session.id == session_id).first()
-        assert saved_session is not None
+        saved_session = db_session.get_one(Session, session_id)
         assert saved_session.user_id == user_id
-        assert saved_session.expires_at > datetime.now()
+        assert saved_session.expires_at > utcnow()
 
-    def test_uses_custom_session_id_if_provided(self, db_session, test_user):
-        """Should use provided session ID instead of generating new one."""
-        custom_id = uuid.uuid4()
-
-        session_id = save_session(user_id=test_user.id, db=db_session, session_id=custom_id)
-
-        assert session_id == custom_id
-
-    def test_uses_custom_expiration(self, db_session, test_user):
-        """Should use custom expiration date if provided."""
-        custom_exp = datetime.now() + timedelta(days=7)
-
-        session_id = save_session(
-            user_id=test_user.id, db=db_session, expires_at=custom_exp
-        )
+    def test_custom_expiration(self, db_session, test_user):
+        session_id = create_or_update_session(db=db_session, user_id=test_user.id, expires_delta=timedelta(days=7))
 
         saved_session = db_session.query(Session) \
             .filter(Session.id == session_id).first()
-        # Compare with some tolerance for execution time
-        time_diff = abs((saved_session.expires_at - custom_exp).total_seconds())
+
+        time_diff = abs((
+                                saved_session.expires_at
+                                - (utcnow() + timedelta(days=7))
+                        ).total_seconds())
         assert time_diff < 1
+
+    def test_updates_existing(self, db_session, test_user):
+        delta = timedelta(days=30)
+        session_id = create_or_update_session(db_session,
+                                              user_id=test_user.id,
+                                              expires_delta=timedelta(days=1))
+
+        create_or_update_session(db_session,
+                                 user_id=test_user.id,
+                                 session_id=session_id,
+                                 expires_delta=delta)
+        session = db_session.scalar(select(Session).where(Session.user_id == test_user.id))
+
+        assert session is not None
+        assert session.id == session_id
+        assert session.expires_at - utcnow() - delta < timedelta(seconds=1)
+        assert session.last_used_at - utcnow() < timedelta(seconds=1)
+
+    def test_updates_last_used_on_upsert(self, db_session, test_user):
+        session_id = create_or_update_session(db=db_session, user_id=test_user.id)
+        db_session.expire_all()
+        first_used = db_session.query(Session).filter(Session.id == session_id).first().last_used_at
+
+        create_or_update_session(db=db_session, user_id=test_user.id, session_id=session_id)
+        db_session.expire_all()
+        second_used = db_session.query(Session).filter(Session.id == session_id).first().last_used_at
+
+        assert second_used >= first_used
 
 
 class TestClearAllSessions:
-    """Test clear_all_sessions function."""
-
     @pytest.mark.asyncio
-    async def test_deletes_all_user_sessions(self, db_session, test_user):
-        """Should delete all sessions for a user."""
+    async def test_deletes_all(self, db_session, test_user):
         # Create multiple sessions
         for _ in range(3):
-            save_session(user_id=test_user.id, db=db_session)
+            create_or_update_session(db=db_session, user_id=test_user.id)
 
         initial_count = db_session.query(Session).filter(
             Session.user_id == test_user.id
         ).count()
         assert initial_count == 3
 
-        await clear_all_sessions(user=test_user, db=db_session)
+        clear_all_sessions(user=test_user, db=db_session)
 
         final_count = db_session.query(Session).filter(
             Session.user_id == test_user.id
@@ -105,12 +112,9 @@ class TestClearAllSessions:
 
 
 class TestSetTokenCookie:
-    """Test set_token_cookie function."""
-
-    def test_sets_cookie_with_correct_attributes(self):
-        """Should set cookie with proper security attributes."""
+    def test_attributes(self):
         response = Response()
-        exp = datetime.now() + timedelta(hours=1)
+        exp = utcnow() + timedelta(hours=1)
         claims = JWTClaims(sub=uuid.uuid4(), exp=exp)
         token = create_oauth2_token(claims)
 
@@ -119,10 +123,9 @@ class TestSetTokenCookie:
         # Check cookie was set (this is implementation-dependent)
         assert "access_token" in response.headers.get("set-cookie", "")
 
-    def test_sets_session_cookie_when_requested(self):
-        """Should create session cookie without expiration."""
+    def test_session_cookie(self):
         response = Response()
-        exp = datetime.now() + timedelta(hours=1)
+        exp = utcnow() + timedelta(hours=1)
         claims = JWTClaims(sub=uuid.uuid4(), exp=exp)
         token = create_oauth2_token(claims)
 
@@ -133,10 +136,7 @@ class TestSetTokenCookie:
 
 
 class TestCreateAndSaveToken:
-    """Test create_and_save_token function."""
-
     def test_creates_token_and_session(self, db_session, test_user):
-        """Should create token and save session to database."""
         response = Response()
 
         token = create_and_save_token(
@@ -148,16 +148,12 @@ class TestCreateAndSaveToken:
         assert token.access_token is not None
         assert token.token_type == TokenType.bearer
 
-        # Verify session was saved
         decoded = JWTClaims.from_jwt_string(token.access_token)
-        saved_session = db_session.query(Session).filter(
-            Session.id == decoded.jti
-        ).first()
-        assert saved_session is not None
+        saved_session = db_session.get_one(Session, decoded.jti)
+
         assert saved_session.user_id == test_user.id
 
-    def test_creates_otp_required_token(self, db_session, test_user):
-        """Should create token with OTP requirement."""
+    def test_otp_required_token(self, db_session, test_user):
         response = Response()
 
         token = create_and_save_token(
@@ -171,8 +167,7 @@ class TestCreateAndSaveToken:
         decoded = JWTClaims.from_jwt_string(token.access_token)
         assert decoded.requires_otp is True
 
-    def test_respects_save_to_db_flag(self, db_session, test_user):
-        """Should not save session when save_to_db is False."""
+    def test_save_to_db_flag(self, db_session, test_user):
         response = Response()
 
         token = create_and_save_token(
@@ -188,8 +183,7 @@ class TestCreateAndSaveToken:
         ).first()
         assert saved_session is None
 
-    def test_uses_custom_duration(self, db_session, test_user):
-        """Should respect custom token duration."""
+    def test_custom_duration(self, db_session, test_user):
         response = Response()
         custom_duration = timedelta(days=7)
 
@@ -201,7 +195,7 @@ class TestCreateAndSaveToken:
         )
 
         decoded = JWTClaims.from_jwt_string(token.access_token)
-        time_diff = (decoded.exp - datetime.now()).total_seconds()
+        time_diff = (decoded.exp - utcnow()).total_seconds()
         expected_diff = custom_duration.total_seconds()
 
         # Allow 1 second tolerance

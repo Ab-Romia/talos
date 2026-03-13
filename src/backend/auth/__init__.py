@@ -1,10 +1,10 @@
 from fastapi import APIRouter
 
+from .helpers import active_user
 from .core import router as core_router
 from .oauth import router as oauth_router
 from .password import router as pass_router
 from .webauthn import router as webauthn_router
-from .dependencies import active_user
 from .totp import router as totp_router
 
 auth_router = APIRouter()

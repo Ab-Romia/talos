@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
+
 import pytest
 import sqlalchemy
 import sqlalchemy.exc
@@ -8,9 +9,10 @@ from sqlalchemy import select, text, delete
 from sqlalchemy.orm import Session
 
 from app import app
-from backend.auth.dependencies import JWTClaims
+from backend.auth.helpers import JWTClaims
 from backend.auth.password import hash_password
 from model.identity import User, Session as UserSession, IdentityProvider, Issuer
+from utils.datetime import utcnow
 
 
 @pytest.fixture(scope="session")
@@ -59,6 +61,14 @@ def db_session(engine):
 @pytest.fixture(scope="function")
 def client() -> TestClient:
     return TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def path(client: TestClient):
+    def build_path(route_name: str, **path_params):
+        return client.app.url_path_for(route_name, **path_params)
+
+    return build_path
 
 
 @pytest.fixture
@@ -117,7 +127,7 @@ def test_user_with_password(db_session: Session, test_user: User):
 def test_session(db_session, test_user: User) -> UserSession:
     session = UserSession(
         user_id=test_user.id,
-        expires_at=datetime.now() + timedelta(days=30),
+        expires_at=utcnow() + timedelta(days=30),
     )
     db_session.add(session)
     db_session.commit()
@@ -140,7 +150,7 @@ def sudo_auth_token(test_user: User, test_session: UserSession) -> str:
     claims = JWTClaims(
         sub=test_user.id,
         jti=test_session.id,
-        exp=datetime.now() + timedelta(minutes=15),
+        exp=utcnow() + timedelta(minutes=15),
         sudo=True,
     )
     return claims.to_jwt_string()
@@ -151,6 +161,6 @@ def expired_token(test_user: User, test_session: UserSession) -> str:
     claims = JWTClaims(
         sub=test_user.id,
         jti=test_session.id,
-        exp=datetime.now() - timedelta(hours=1),
+        exp=utcnow() - timedelta(hours=1),
     )
     return claims.to_jwt_string()

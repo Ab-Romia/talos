@@ -37,3 +37,9 @@ dev = [
     "pytest-mock>=3.14.0",
     "faker>=40.8.0",
 ]
+
+[tool.pyright]
+extraPaths = [
+    "src",
+    "."
+]

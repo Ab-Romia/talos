@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import jwt
 import webauthn
@@ -7,8 +7,8 @@ from sqlalchemy import insert, select, update
 from webauthn.helpers import bytes_to_base64url, base64url_to_bytes
 from webauthn.helpers.exceptions import InvalidRegistrationResponse, InvalidAuthenticationResponse
 
-from backend.auth.dependencies import UserDep, sudo_token
-from backend.auth.helpers import create_and_save_token
+from backend.auth.helpers import create_and_save_token, sudo_token, UserDep, OptionalUserDep
+from utils.datetime import utcnow
 from config import cfg
 from model import DatabaseDep
 from model.identity import Issuer, IdentityProvider
@@ -26,7 +26,7 @@ def _origin() -> str:
 
 
 @router.post("/generate")
-async def generate_passkey(user: UserDep = None):
+async def generate_passkey(user: OptionalUserDep = None):
     """
     Generate WebAuthn options for either registration or authentication.
 
@@ -34,8 +34,15 @@ async def generate_passkey(user: UserDep = None):
     For authentication: Unauthenticated, provide user_id to get their credentials.
     """
 
-    # Determine the user ID to use
-    if user is not None:
+    if user is None:
+        # For authentication (unauthenticated): generate authentication options
+        options = webauthn.generate_authentication_options(rp_id=_rp_id())
+
+        jwt_claims = {
+            "exp": utcnow() + timedelta(minutes=1),
+            "challenge": bytes_to_base64url(options.challenge)
+        }
+    else:
         # For registration (authenticated user): generate registration options
         options = webauthn.generate_registration_options(
             rp_id=_rp_id(),
@@ -46,17 +53,9 @@ async def generate_passkey(user: UserDep = None):
         )
 
         jwt_claims = {
-            "sub": str(user.id),
-            "exp": datetime.now() + timedelta(minutes=1),
+            "sub": user.id.hex,
+            "exp": utcnow() + timedelta(minutes=1),
             "challenge": bytes_to_base64url(options.challenge)}
-    else:
-        # For authentication (unauthenticated): generate authentication options
-        options = webauthn.generate_authentication_options(rp_id=_rp_id())
-
-        jwt_claims = {
-            "exp": datetime.now() + timedelta(minutes=1),
-            "challenge": bytes_to_base64url(options.challenge)
-        }
 
     jwt_challenge = jwt.encode(
         payload=jwt_claims,
@@ -82,9 +81,9 @@ async def register_passkey(jwt_challenge: str,
             jwt=jwt_challenge,
             key=cfg().auth.jwt_secret_key,
             algorithms=[cfg().auth.jwt_algorithm],
-            subject=str(user.id),
+            subject=user.id.hex,
         )
-        if claims.get("sub") != str(user.id):
+        if claims.get("sub") != user.id.hex:
             raise jwt.InvalidTokenError("Subject mismatch")
         challenge = base64url_to_bytes(claims["challenge"])
     except (jwt.PyJWTError, KeyError):

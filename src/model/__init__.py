@@ -5,7 +5,6 @@ from sqlalchemy import create_engine
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base, Session, sessionmaker
 
-
 from config import cfg
 
 Base = declarative_base()

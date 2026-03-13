@@ -8,8 +8,7 @@ from sqlalchemy import select, or_, update
 
 from model import DatabaseDep
 from model.identity import User, IdentityProvider, Issuer
-from .dependencies import sudo_token, UserDep
-from .helpers import create_and_save_token, clear_all_sessions
+from .helpers import create_and_save_token, clear_all_sessions, sudo_token, UserDep
 
 router = APIRouter()
 
@@ -64,8 +63,13 @@ def password_authenticate(response: Response, db: DatabaseDep, form_data: OAuth2
 
     if requires_otp:
         # create a short-lived token requiring OTP (does not create DB session yet)
-        return create_and_save_token(response=response, db=db, user_id=user.id, duration=timedelta(minutes=5),
-                                     requires_otp=True, cookie_key="access_token", session_cookie=True,
+        # TODO: use starlette session
+        return create_and_save_token(response=response,
+                                     db=db, user_id=user.id,
+                                     duration=timedelta(minutes=5),
+                                     requires_otp=True,
+                                     cookie_key="access_token",
+                                     session_cookie=True,
                                      save_to_db=False)
     else:
         # create and save a normal session token and set cookie
