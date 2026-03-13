@@ -26,8 +26,8 @@ class AuthConfig(BaseModel):
 
 class Config(BaseSettings):
     app_name: str = "Talos"
-    app_host: str = "localhost"
-    app_port: int = 8000
+    app_host: str
+    app_port: int
 
     database_url: str = ""
 

@@ -1,4 +1,3 @@
-import json
 from datetime import timedelta
 from typing import Annotated
 
@@ -8,13 +7,14 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Response, status
 from sqlalchemy import insert, select, update
 from webauthn.helpers import bytes_to_base64url, base64url_to_bytes
 from webauthn.helpers.exceptions import InvalidRegistrationResponse, InvalidAuthenticationResponse
-from webauthn.helpers.structs import PublicKeyCredentialDescriptor, UserVerificationRequirement
+from webauthn.helpers.structs import PublicKeyCredentialDescriptor, AuthenticatorSelectionCriteria, \
+    ResidentKeyRequirement
 
 from backend.auth.helpers import create_and_save_token, sudo_token, UserDep
-from utils.datetime import utcnow
 from config import cfg
 from model import DatabaseDep
 from model.identity import Issuer, IdentityProvider
+from utils.datetime import utcnow
 
 router = APIRouter()
 
@@ -53,9 +53,12 @@ async def generate_passkey_new(user: UserDep, db: DatabaseDep):
         rp_id=_rp_id(),
         rp_name=cfg().app_name,
         user_name=user.username,
-        # user_id=user.id.bytes[:32],  # user.id must be at most 64 bytes, according to spec
+        user_id=user.id.bytes[:32],  # user.id must be at most 64 bytes, according to spec
         user_display_name=user.name or user.primary_email,
         exclude_credentials=credentials,
+        authenticator_selection=AuthenticatorSelectionCriteria(
+            resident_key=ResidentKeyRequirement.REQUIRED,  # Allows key to be discoverable
+        )
     )
 
     jwt_claims = {
