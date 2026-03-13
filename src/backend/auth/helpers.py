@@ -95,7 +95,7 @@ def create_and_save_token(
 class JWTClaims(BaseModel):
     sub: uuid.UUID
     jti: uuid.UUID = Field(default_factory=uuid.uuid4)
-    exp: datetime
+    exp: datetime | timedelta
     requires_otp: bool = False
     sudo: bool = False
 
@@ -290,6 +290,7 @@ def active_user(raw_user: Annotated[User, Depends(optional_dep(_raw_user))],
         raise AuthException(detail="Email not verified", err_code=AuthErrorCode.EMAIL_NOT_VERIFIED)
 
     if session is None:
+        print("here")
         raise AuthException(detail="Session expired", err_code=AuthErrorCode.EXPIRED_TOKEN)
 
     create_or_update_session(db=db, user_id=raw_user.id, session_id=session.id, expires_delta=timedelta(days=30))

@@ -1,13 +1,16 @@
+import json
 from datetime import timedelta
+from typing import Annotated
 
 import jwt
 import webauthn
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Response, status
 from sqlalchemy import insert, select, update
 from webauthn.helpers import bytes_to_base64url, base64url_to_bytes
 from webauthn.helpers.exceptions import InvalidRegistrationResponse, InvalidAuthenticationResponse
+from webauthn.helpers.structs import PublicKeyCredentialDescriptor, UserVerificationRequirement
 
-from backend.auth.helpers import create_and_save_token, sudo_token, UserDep, OptionalUserDep
+from backend.auth.helpers import create_and_save_token, sudo_token, UserDep
 from utils.datetime import utcnow
 from config import cfg
 from model import DatabaseDep
@@ -17,7 +20,7 @@ router = APIRouter()
 
 
 def _rp_id() -> str:
-    return cfg().app_host
+    return "localhost"
 
 
 def _origin() -> str:
@@ -25,55 +28,61 @@ def _origin() -> str:
     return "http://localhost:8000"  # TODO: make this configurable and support https in production
 
 
-@router.post("/generate")
-async def generate_passkey(user: OptionalUserDep = None):
+@router.post("/register/challenge", dependencies=[Depends(sudo_token)])
+async def generate_passkey_new(user: UserDep, db: DatabaseDep):
     """
-    Generate WebAuthn options for either registration or authentication.
+    Generate WebAuthn options for registration.
 
     For registration: Requires an authenticated user (the challenge must be bound to the user).
-    For authentication: Unauthenticated, provide user_id to get their credentials.
     """
 
-    if user is None:
-        # For authentication (unauthenticated): generate authentication options
-        options = webauthn.generate_authentication_options(rp_id=_rp_id())
+    # For registration (authenticated user): generate registration options
+    # TODO: exclude credentials
+    credentials = db.scalars(
+        select(IdentityProvider.data["credential_id"])
+        .where(IdentityProvider.issuer == Issuer.passkey)
+        .where(IdentityProvider.user_id == user.id)
+    ).all()
 
-        jwt_claims = {
-            "exp": utcnow() + timedelta(minutes=1),
-            "challenge": bytes_to_base64url(options.challenge)
-        }
-    else:
-        # For registration (authenticated user): generate registration options
-        options = webauthn.generate_registration_options(
-            rp_id=_rp_id(),
-            rp_name=cfg().app_name,
-            user_name=user.username,
-            # user_id=user.id.bytes[:32],  # user.id must be at most 64 bytes according to spec
-            user_display_name=user.name or user.primary_email,
-        )
+    credentials = [
+        PublicKeyCredentialDescriptor(base64url_to_bytes(c))
+        for c in credentials
+    ]
 
-        jwt_claims = {
-            "sub": user.id.hex,
-            "exp": utcnow() + timedelta(minutes=1),
-            "challenge": bytes_to_base64url(options.challenge)}
+    options = webauthn.generate_registration_options(
+        rp_id=_rp_id(),
+        rp_name=cfg().app_name,
+        user_name=user.username,
+        # user_id=user.id.bytes[:32],  # user.id must be at most 64 bytes, according to spec
+        user_display_name=user.name or user.primary_email,
+        exclude_credentials=credentials,
+    )
+
+    jwt_claims = {
+        "sub": user.id.hex,
+        "exp": utcnow() + timedelta(minutes=1),
+        "challenge": bytes_to_base64url(options.challenge)}
 
     jwt_challenge = jwt.encode(
         payload=jwt_claims,
         key=cfg().auth.jwt_secret_key,
         algorithm=cfg().auth.jwt_algorithm,
     )
+
     return {
         "options": webauthn.helpers.options_to_json_dict(options),
         "jwt_challenge": jwt_challenge,
     }
 
 
-@router.post("/register", dependencies=[Depends(sudo_token)])
-async def register_passkey(jwt_challenge: str,
-                           credential: str,
-                           name: str,
-                           user: UserDep,
-                           db: DatabaseDep):
+@router.post("/register")
+async def register_passkey(
+        jwt_challenge: Annotated[str, Form()],
+        credential: Annotated[str, Form()],
+        name: Annotated[str, Form()],
+        user: UserDep,
+        db: DatabaseDep,
+):
     """Verify the authenticator's registration response and persist the credential."""
     # TODO: ensure single use challenge
     try:
@@ -83,8 +92,6 @@ async def register_passkey(jwt_challenge: str,
             algorithms=[cfg().auth.jwt_algorithm],
             subject=user.id.hex,
         )
-        if claims.get("sub") != user.id.hex:
-            raise jwt.InvalidTokenError("Subject mismatch")
         challenge = base64url_to_bytes(claims["challenge"])
     except (jwt.PyJWTError, KeyError):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid challenge token")
@@ -120,8 +127,40 @@ async def register_passkey(jwt_challenge: str,
             "credential": verified.credential_id.hex()}
 
 
+@router.post("/challenge")
+async def generate_passkey_for_auth():
+    """
+    Generate WebAuthn options for authentication.
+
+    For authentication: Unauthenticated, provide user_id to get their credentials.
+    """
+
+    # For authentication (unauthenticated): generate authentication options
+    options = webauthn.generate_authentication_options(rp_id=_rp_id())
+
+    jwt_claims = {
+        "exp": utcnow() + timedelta(minutes=1),
+        "challenge": bytes_to_base64url(options.challenge)
+    }
+
+    jwt_challenge = jwt.encode(
+        payload=jwt_claims,
+        key=cfg().auth.jwt_secret_key,
+        algorithm=cfg().auth.jwt_algorithm,
+    )
+    return {
+        "options": webauthn.helpers.options_to_json_dict(options),
+        "jwt_challenge": jwt_challenge,
+    }
+
+
 @router.post("/verify")
-async def verify_passkey(response: Response, jwt_challenge: str, credential: str, db: DatabaseDep):
+async def verify_passkey(
+        response: Response,
+        jwt_challenge: Annotated[str, Form()],
+        credential: Annotated[str, Form()],
+        db: DatabaseDep,
+):
     """Verify the authenticator's authentication response and issue a session token."""
     EXCEPTION = HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid passkey or challenge")
 
@@ -138,7 +177,8 @@ async def verify_passkey(response: Response, jwt_challenge: str, credential: str
     # Parse the credential ID from the JSON to find the matching stored credential
     import json
     try:
-        raw_id = json.loads(credential).get("rawId") or json.loads(credential).get("id")
+        raw_id = (json.loads(credential).get("rawId")
+                  or json.loads(credential).get("id"))
     except (json.JSONDecodeError, AttributeError):
         raise EXCEPTION
 

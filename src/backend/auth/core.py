@@ -87,7 +87,12 @@ async def sudo(
     # TODO: implement different sudo methods (password, otp, passkey)
 
     # create a short-lived sudo token (does not create a new DB session)
-    claims = JWTClaims(sub=user.id, exp=timedelta(minutes=15), sudo=True)
+    claims = JWTClaims(
+        sub=user.id,
+        jti=session.id,
+        exp=timedelta(minutes=15),
+        sudo=True,
+    )
     sudo_token = create_oauth2_token(claims)
     set_token_cookie(response, key="sudo_token", value=sudo_token, session_cookie=True)
     return sudo_token

@@ -51,6 +51,7 @@
 
 <div class="section">
     <h3>Register Passkey <small>(requires login + sudo token)</small></h3>
+    <label for="passkey-name">Passkey name</label>
     <input id="passkey-name" placeholder="Passkey name (e.g. My YubiKey)"/>
     <br>
     <button onclick="registerPasskey()">Register Passkey</button>
@@ -79,18 +80,6 @@
       .replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
 
   // Recursively decode base64url strings in WebAuthn options objects into ArrayBuffers
-  function decodeOptions(obj) {
-    if (typeof obj === "string") return b64urlToBuffer(obj);
-    if (Array.isArray(obj)) return obj.map(decodeOptions);
-    if (obj && typeof obj === "object") {
-      return Object.fromEntries(Object.entries(obj).map(([k, v]) => {
-        const bufferFields = ["challenge", "id", "userId"];
-        return [k, bufferFields.includes(k) ? b64urlToBuffer(v) : decodeOptions(v)];
-      }));
-    }
-    return obj;
-  }
-
   // Encode a PublicKeyCredential into a JSON-serialisable object
   function encodeCredential(cred) {
     const obj = {id: cred.id, rawId: bufferToB64url(cred.rawId), type: cred.type};
@@ -115,7 +104,7 @@
     const name = document.getElementById("passkey-name").value.trim() || "My Passkey";
     log("→ Generating registration options...");
     try {
-      const genRes = await fetch("/api/auth/passkey/generate", {method: "POST", credentials: "include"});
+      const genRes = await fetch("/api/auth/passkey/register/challenge", {method: "POST", credentials: "include"});
       if (!genRes.ok) {
         log("✗ Generate failed:", await genRes.text());
         return;
@@ -124,16 +113,21 @@
       log("✓ Options received");
 
       options.user.id = b64urlToBuffer(options.user.id);
+      options.challenge = b64urlToBuffer(options.challenge);
+      options.excludeCredentials = options.excludeCredentials.map(({id, type}) => ({
+        "id": b64urlToBuffer(id),
+        "type": type
+      }))
+      console.log(options);
 
       const credential = await navigator.credentials.create({publicKey: options});
       log("✓ Authenticator responded");
+      const form = new FormData();
+      form.append('jwt_challenge', jwt_challenge);
+      form.append('credential', JSON.stringify(credential));
+      form.append('name', name);
 
-      const params = new URLSearchParams({
-        jwt_challenge,
-        credential: JSON.stringify(encodeCredential(credential)),
-        name,
-      });
-      const regRes = await fetch("/api/auth/passkey/register?" + params, {method: "POST", credentials: "include"});
+      const regRes = await fetch("/api/auth/passkey/register", {method: "POST", credentials: "include", body: form});
       const data = await regRes.json();
       if (regRes.ok) log("✓ Registered:", data);
       else log("✗ Registration failed:", data);
@@ -146,7 +140,7 @@
   async function loginWithPasskey() {
     log("→ Generating authentication options...");
     try {
-      const genRes = await fetch("/api/auth/passkey/generate", {method: "POST", credentials: "include"});
+      const genRes = await fetch("/api/auth/passkey/challenge", {method: "POST", credentials: "include"});
       if (!genRes.ok) {
         log("✗ Generate failed:", await genRes.text());
         return;
@@ -154,15 +148,15 @@
       const {options, jwt_challenge} = await genRes.json();
       log("✓ Options received");
 
-      const parsedOptions = decodeOptions(JSON.parse(options));
-      const credential = await navigator.credentials.get({publicKey: parsedOptions});
+      options.challenge = b64urlToBuffer(options.challenge);
+
+      const credential = await navigator.credentials.get({publicKey: options});
       log("✓ Authenticator responded");
 
-      const params = new URLSearchParams({
-        jwt_challenge,
-        credential: JSON.stringify(encodeCredential(credential)),
-      });
-      const verRes = await fetch("/api/auth/passkey/verify?" + params, {method: "POST", credentials: "include"});
+      const form = new FormData();
+      form.append('jwt_challenge', jwt_challenge);
+      form.append('credential', JSON.stringify(encodeCredential(credential)));
+      const verRes = await fetch("/api/auth/passkey/verify", {method: "POST", credentials: "include", body: form});
       const data = await verRes.json();
       if (verRes.ok) log("✓ Logged in:", data);
       else log("✗ Login failed:", data);

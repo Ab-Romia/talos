@@ -11,7 +11,7 @@ from model.identity import IdentityProvider, Issuer
 class TestGeneratePasskey:
     def test_for_registration(self, client, path, db_session, test_user, auth_token):
         response = client.post(
-            path("generate_passkey"),
+            path("generate_passkey_new"),
             headers={"Authorization": f"Bearer {auth_token}"},
         )
 
@@ -31,7 +31,7 @@ class TestGeneratePasskey:
         assert test_user.id.hex == claims["sub"]
 
     def test_for_authentication(self, client, path, db_session):
-        response = client.post(path("generate_passkey"))
+        response = client.post(path("generate_passkey_for_auth"))
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
@@ -77,7 +77,7 @@ class TestRegisterPasskey:
         response = client.post(
             path("register_passkey"),
             headers={"Authorization": f"Bearer {sudo_auth_token}"},
-            params={
+            data={
                 "jwt_challenge": jwt_challenge,
                 "credential": credential,
                 "name": "My Passkey",
@@ -106,7 +106,7 @@ class TestRegisterPasskey:
         response = client.post(
             path("register_passkey"),
             headers={"Authorization": f"Bearer {auth_token}"},
-            params={
+            data={
                 "jwt_challenge": jwt_challenge,
                 "credential": "{}",
                 "name": "Test",
@@ -119,7 +119,7 @@ class TestRegisterPasskey:
         response = client.post(
             path("register_passkey"),
             headers={"Authorization": f"Bearer {sudo_auth_token}"},
-            params={
+            data={
                 "jwt_challenge": "invalid-jwt",
                 "credential": "{}",
                 "name": "Test",
@@ -151,7 +151,7 @@ class TestRegisterPasskey:
         response = client.post(
             path("register_passkey"),
             headers={"Authorization": f"Bearer {sudo_auth_token}"},
-            params={
+            data={
                 "jwt_challenge": jwt_challenge,
                 "credential": credential,
                 "name": "Test",
@@ -202,7 +202,7 @@ class TestVerifyPasskey:
 
         response = client.post(
             path("verify_passkey"),
-            params={
+            data={
                 "jwt_challenge": jwt_challenge,
                 "credential": credential,
             },
@@ -217,7 +217,7 @@ class TestVerifyPasskey:
     ):
         response = client.post(
             path("verify_passkey"),
-            params={
+            data={
                 "jwt_challenge": "invalid-jwt",
                 "credential": "{}",
             },
@@ -242,7 +242,7 @@ class TestVerifyPasskey:
 
         response = client.post(
             path("verify_passkey"),
-            params={
+            data={
                 "jwt_challenge": jwt_challenge,
                 "credential": credential,
             },
@@ -290,7 +290,7 @@ class TestVerifyPasskey:
 
         response = client.post(
             path("verify_passkey"),
-            params={
+            data={
                 "jwt_challenge": jwt_challenge,
                 "credential": credential,
             },
