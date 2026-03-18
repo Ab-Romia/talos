@@ -168,7 +168,7 @@ def create_or_update_session(db: DatabaseDep, user_id: uuid.UUID, session_id: uu
     return session.id
 
 
-def clear_all_sessions(user: UserDep, db: DatabaseDep):
+def clear_all_sessions(user: User, db: DatabaseDep):
     db.execute(
         delete(Session)
         .where(Session.user_id == user.id)

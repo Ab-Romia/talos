@@ -8,7 +8,7 @@ class TestRedisSettings:
         mock_cfg = MagicMock()
         mock_cfg.redis.url = "redis://myhost:1234/2"
 
-        with patch("processing.worker.config", return_value=mock_cfg):
+        with patch("processing.worker.cfg", return_value=mock_cfg):
             from processing.worker import get_redis_settings
             settings = get_redis_settings()
 
@@ -20,7 +20,7 @@ class TestRedisSettings:
         mock_cfg = MagicMock()
         mock_cfg.redis.url = "redis://localhost:6379"
 
-        with patch("processing.worker.config", return_value=mock_cfg):
+        with patch("processing.worker.cfg", return_value=mock_cfg):
             from processing.worker import get_redis_settings
             settings = get_redis_settings()
 
@@ -30,7 +30,7 @@ class TestRedisSettings:
         mock_cfg = MagicMock()
         mock_cfg.redis.url = "redis://localhost"
 
-        with patch("processing.worker.config", return_value=mock_cfg):
+        with patch("processing.worker.cfg", return_value=mock_cfg):
             from processing.worker import get_redis_settings
             settings = get_redis_settings()
 
@@ -40,7 +40,7 @@ class TestRedisSettings:
         mock_cfg = MagicMock()
         mock_cfg.redis = None
 
-        with patch("processing.worker.config", return_value=mock_cfg):
+        with patch("processing.worker.cfg", return_value=mock_cfg):
             from processing.worker import get_redis_settings
             settings = get_redis_settings()
 
