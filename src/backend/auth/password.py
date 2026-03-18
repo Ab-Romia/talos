@@ -1,15 +1,14 @@
+import uuid
 from datetime import datetime, timedelta
-from typing import Annotated
 
 import bcrypt
 from fastapi import Depends, HTTPException, status, APIRouter, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select, or_, update
 
-from model.base import DatabaseDep
+from model import DatabaseDep
 from model.identity import User, IdentityProvider, Issuer
-from .dependencies import sudo_token, active_user
-from .helpers import create_and_save_token, clear_all_sessions
+from .helpers import create_and_save_token, clear_all_sessions, sudo_token, UserDep
 
 router = APIRouter()
 
@@ -37,7 +36,7 @@ def password_authenticate(response: Response, db: DatabaseDep, form_data: OAuth2
 
     # TODO: make sure there is no chance that username can be same as email of another user
     row = db.execute(
-        select(User, IdentityProvider.secret)
+        select(User, IdentityProvider.data)
         .where(or_(User.username == username, User.primary_email == email))
         .where(IdentityProvider.user_id == User.id,
                IdentityProvider.issuer == Issuer.password)
@@ -45,13 +44,14 @@ def password_authenticate(response: Response, db: DatabaseDep, form_data: OAuth2
     if row is None:
         raise HTTP_EXCEPTION
 
-    user, secret = row
+    user, data = row
 
-    assert secret is not None, "Password identity provider should always have a secret"
+    assert data is not None and "hash" in data, "Password identity provider should always have a data field"
+    pass_hash = data["hash"]
 
     if (user.email_verified is False
             or user.deleted_at is not None
-            or not verify_password(password, secret)):
+            or not verify_password(password, pass_hash)):
         raise HTTP_EXCEPTION
 
     # TODO: generalize to multiple 2fa methods
@@ -63,8 +63,13 @@ def password_authenticate(response: Response, db: DatabaseDep, form_data: OAuth2
 
     if requires_otp:
         # create a short-lived token requiring OTP (does not create DB session yet)
-        return create_and_save_token(response=response, db=db, user_id=user.id, duration=timedelta(minutes=5),
-                                     requires_otp=True, cookie_key="access_token", session_cookie=True,
+        # TODO: use starlette session
+        return create_and_save_token(response=response,
+                                     db=db, user_id=user.id,
+                                     duration=timedelta(minutes=5),
+                                     requires_otp=True,
+                                     cookie_key="access_token",
+                                     session_cookie=True,
                                      save_to_db=False)
     else:
         # create and save a normal session token and set cookie
@@ -72,23 +77,29 @@ def password_authenticate(response: Response, db: DatabaseDep, form_data: OAuth2
 
 
 @router.put("/change", dependencies=[Depends(sudo_token)])
-def change_password(
-        response: Response,
-        user: Annotated[User, Depends(active_user)],
-        db: DatabaseDep,
-        new_password: str,
-):
+def change_password(new_password: str, response: Response, user: UserDep, db: DatabaseDep):
     db.execute(
         update(IdentityProvider)
         .where(IdentityProvider.user_id == user.id,
                IdentityProvider.issuer == Issuer.password)
-        .values(secret=hash_password(new_password),
-                verified_at=datetime.now())
+        .values(data={"hash": hash_password(new_password)})
     )
 
     db.commit()
 
     clear_all_sessions(user, db)
 
-    # set_token_cookie expects an OAuth2Token - use create_and_save_token to get the token and cookie
     return create_and_save_token(response=response, db=db, user_id=user.id)
+
+
+def create_password_identity(user_id: uuid.UUID, password: str, db: DatabaseDep):
+    identity = IdentityProvider(
+        user_id=user_id,
+        issuer=Issuer.password,
+        data={"hash": hash_password(password)},
+    )
+
+    db.add(identity)
+    db.flush()
+
+    return identity

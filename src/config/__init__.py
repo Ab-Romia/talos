@@ -5,5 +5,5 @@ from .config_ import Config
 
 
 @lru_cache
-def config() -> Config:
+def cfg() -> Config:
     return Config()

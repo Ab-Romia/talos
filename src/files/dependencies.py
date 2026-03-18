@@ -3,9 +3,9 @@ import uuid
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
 
-from backend.auth.dependencies import active_user
+from backend.auth.helpers import active_user
 from files.storage import MinIOStorage
-from model.base import DatabaseDep
+from model import DatabaseDep
 from model.identity import User
 from model.messaging import Workspace
 

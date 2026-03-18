@@ -1,28 +1,27 @@
+import jwt.types
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict, PydanticBaseSettingsSource, YamlConfigSettingsSource
 
 
-# name="google",
-# client_id=config().auth.google_client.id,
-# client_secret=config().auth.google_client.secret,
-# server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-# client_kwargs={"scope": "openid email profile"},
-
 class OAuthClient(BaseModel):
-    id: str
-    secret: str
+    client_id: str
+    client_secret: str
+    api_base_url: str
+    access_token_url: str
+    authorize_url: str
+    server_metadata_url: str = None
+    client_kwargs: dict
 
 
 class AuthConfig(BaseModel):
-    google_client: OAuthClient | None = None
-    github_client: OAuthClient | None = None
+    oauth_clients: dict[str, OAuthClient]
 
     totp_valid_window: int = 1
 
     jwt_secret_key: bytes
     jwt_algorithm: str = "HS256"
 
-    jwt_options: dict | None = None
+    jwt_options: jwt.types.Options = None
 
 
 class MinIOConfig(BaseModel):
@@ -40,19 +39,19 @@ class RedisConfig(BaseModel):
 
 class Config(BaseSettings):
     app_name: str = "Talos"
-    app_host: str = "localhost"
-    app_port: int = 8000
+    app_host: str
+    app_port: int
 
     database_url: str = ""
 
-    auth: AuthConfig | None = None
+    auth: AuthConfig = None
     minio: MinIOConfig = MinIOConfig()
     redis: RedisConfig = RedisConfig()
 
     model_config = SettingsConfigDict(
         env_file='.env',
         env_nested_delimiter="__",
-        extra="ignore",  # TODO: change to "forbid" in prod
+        extra="ignore",
         yaml_file="config/config.yaml"
     )
 

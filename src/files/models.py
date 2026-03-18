@@ -10,7 +10,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from model.base import Base
+from model import Base
 
 
 class ProcessingStatus(str, enum.Enum):

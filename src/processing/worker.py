@@ -3,13 +3,13 @@
 from arq import func
 from arq.connections import RedisSettings
 
-from config import config
+from config import cfg
 
 
 def get_redis_settings() -> RedisSettings:
     """Parse redis URL into ARQ RedisSettings."""
-    cfg = config()
-    redis_url = cfg.redis.url if cfg.redis else "redis://localhost:6379"
+    app_cfg = cfg()
+    redis_url = app_cfg.redis.url if app_cfg.redis else "redis://localhost:6379"
 
     # Parse redis://host:port/db format
     from urllib.parse import urlparse
@@ -23,11 +23,11 @@ def get_redis_settings() -> RedisSettings:
 
 async def on_startup(ctx):
     """Initialize DB session factory and MinIO storage for the worker."""
-    from model.base import SessionLocal
+    from model import SessionLocal
     from files.storage import MinIOStorage
 
-    cfg = config()
-    minio_cfg = cfg.minio
+    app_cfg = cfg()
+    minio_cfg = app_cfg.minio
 
     ctx["db_session_factory"] = SessionLocal
     ctx["minio_storage"] = MinIOStorage(

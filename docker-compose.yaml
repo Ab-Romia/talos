@@ -9,7 +9,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-talos_app}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-talos}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-talos_app}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-talos}
       MILVUS_HOST: milvus-standalone
       MINIO__INTERNAL_ENDPOINT: minio:9000
       MINIO__EXTERNAL_ENDPOINT: ${MINIO_EXTERNAL_ENDPOINT:-localhost:9000}
@@ -35,7 +35,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-talos_app}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-talos}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-talos_app}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-talos}
       MILVUS_HOST: milvus-standalone
       MINIO__INTERNAL_ENDPOINT: minio:9000
       MINIO__EXTERNAL_ENDPOINT: ${MINIO_EXTERNAL_ENDPOINT:-localhost:9000}
@@ -61,7 +61,7 @@ services:
       - .env
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-talos_app}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-talos}
     ports:
       - "5432:5432"

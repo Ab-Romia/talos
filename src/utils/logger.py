@@ -7,11 +7,11 @@ different output formats and log levels.
 
 import logging
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Any, final
 
 from config import LoggingConfig
+from utils.datetime import utcnow
 
 __all__ = ["get_logger"]
 
@@ -106,7 +106,7 @@ class Logger:
         if not self.config.enable_metrics:
             return
 
-        timestamp = datetime.now().isoformat()
+        timestamp = utcnow().isoformat()
         metric_key = f"{metric_name}_{timestamp}"
         self._metrics[metric_key] = {
             "value": value,

@@ -4,14 +4,14 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 
-from backend.auth.dependencies import active_user
+from backend.auth.helpers import active_user
 from files.constants import MAX_FILE_SIZE
 from files.dependencies import get_storage, get_workspace_member
 from files.exceptions import FileTooLarge, UnsupportedFileType
 from files.schemas import FileDownloadResponse, FileListResponse, FileMetadata, FileUploadResponse
 from files.service import FileService
 from files.storage import MinIOStorage
-from model.base import DatabaseDep
+from model import DatabaseDep
 from model.identity import User
 from model.messaging import Workspace
 

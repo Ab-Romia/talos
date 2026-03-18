@@ -1,33 +1,32 @@
 from contextlib import asynccontextmanager
 
-from dotenv import load_dotenv
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Request, Depends
 from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from starlette.middleware.sessions import SessionMiddleware
 
-from backend.auth import auth_router
-from backend.auth.dependencies import active_user, SessionCookieToHeaderMiddleware
-from config import config
+from backend.auth import auth_router, active_user
+from backend.auth.helpers import UserDep
+from config import cfg
 from files.models import FileAttachment, message_files  # noqa: F401 — register with Base.metadata
 from files.router import router as files_router
 from files.storage import MinIOStorage
-from model.base import engine, Base
+from model import Base, engine
 
-__all__ = []
-
-load_dotenv()
+templates = Jinja2Templates(directory="frontend/templates")
 
 
 def _get_minio_storage() -> MinIOStorage:
-    cfg = config().minio
+    minio_cfg = cfg().minio
     return MinIOStorage(
-        internal_endpoint=cfg.internal_endpoint,
-        external_endpoint=cfg.external_endpoint,
-        access_key=cfg.access_key,
-        secret_key=cfg.secret_key,
-        secure=cfg.secure,
-        bucket_name=cfg.bucket_name,
+        internal_endpoint=minio_cfg.internal_endpoint,
+        external_endpoint=minio_cfg.external_endpoint,
+        access_key=minio_cfg.access_key,
+        secret_key=minio_cfg.secret_key,
+        secure=minio_cfg.secure,
+        bucket_name=minio_cfg.bucket_name,
     )
 
 
@@ -59,12 +58,12 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title='Temp', lifespan=lifespan)
-app.include_router(auth_router, prefix="/auth")
+app.include_router(auth_router, prefix="/api/auth")
 app.include_router(files_router, prefix="/api")
-app.add_middleware(SessionCookieToHeaderMiddleware)
+app.add_middleware(SessionMiddleware, secret_key=cfg().auth.jwt_secret_key)
 
 
-@app.get('/')
+@app.get('/', response_class=HTMLResponse)
 async def root():
     with open('frontend/templates/pages/home.html', 'r') as f:
         return f.read()
@@ -72,7 +71,12 @@ async def root():
 
 @app.get('/config')
 async def config_page():
-    return config()
+    return cfg()
+
+
+@app.get('/passkey-test', response_class=HTMLResponse)
+async def passkey_test_page(request: Request, user: UserDep):
+    return templates.TemplateResponse(request, "pages/passkey_test.html", {"username": user.username})
 
 
 @app.get('/smily')
@@ -81,14 +85,11 @@ async def smily():
 
 
 @app.get('/smily-protected', dependencies=[Depends(active_user)])
-async def smily():
+async def smily_protected():
     return HTMLResponse('<p style="font-size:24em";>🙃</p>')
 
 
 if __name__ == '__main__':
     import uvicorn
 
-    uvicorn.run(app,
-                host=config().app_host,
-                port=config().app_port,
-                )
+    uvicorn.run(app, host=cfg().app_host, port=cfg().app_port)
