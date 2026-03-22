@@ -3,41 +3,28 @@ from typing import Annotated
 
 from fastapi import Depends
 from fastapi.exception_handlers import http_exception_handler as fastapi_http_exception_handler
-from pydantic import BaseModel, Field
 from sqlalchemy import select
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
 
+from backend.auth.utils import errors
+from backend.auth.utils.session import SessionDep, auth_token, unverified_session, verified_session
 from model import DatabaseDep
-from model.identity import TokenType, User
-from . import errors
-from .session import SessionDep, session, auth_token, get_current_session
+from model.identity import User
 
 
 # TODO:
-#  ✅ sessions,
 #  forgot password,
+#  backup codes for totp
 #  email verification,
-#  ✅ logout,
 #  multiple account support
-#  session management
-#   - view active sessions
-#  ✅ - revoke sessions
-#  ✅* sudo mode (re-auth for sensitive actions)
+#  sudo mode (re-auth for sensitive actions)
 #  anonymous sessions
 #  remember me functionality
 #  device recognition (e.g. for risk-based authentication)
 #  exception handling
 #  use starlette middleware session
 #  prevent re-signin, and invalidate prev session on resignin
-
-
-class OAuth2Token(BaseModel):
-    # name: str = Field(..., max_length=40)
-    token_type: TokenType
-    access_token: str = Field(..., max_length=512)
-    refresh_token: str = Field(..., max_length=512)
-    expires_at: datetime
 
 
 async def auth_exception_handler(request: Request, exc: errors.AuthException):
@@ -83,8 +70,9 @@ def optional_active_user(request: Request, db: DatabaseDep):
             authorization=request.headers.get("Authorization"),
             user_session=request.cookies.get("user_session"),
         )
-        sess = get_current_session(db, token)
-        raw_user = _raw_user(sess, db)
+        unverified_sess = unverified_session(request, token)
+        sess = verified_session(next(unverified_sess), db)
+        raw_user = _raw_user(next(sess), db)
 
         return active_user(raw_user, sess)
     except errors.AuthException:

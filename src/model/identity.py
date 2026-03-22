@@ -3,6 +3,7 @@ from datetime import datetime
 from enum import Enum as PyEnum
 from typing import Any
 
+from pydantic import BaseModel, Field
 from sqlalchemy import DateTime, Table, Column, ForeignKey, Enum, Uuid, func
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -82,6 +83,7 @@ class Session(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
     last_used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
+    user_agent: Mapped[str | None] = mapped_column()
 
 
 class PlatformRole(Base):
@@ -103,3 +105,10 @@ class Permission(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(unique=True, index=True)
     description: Mapped[str | None] = mapped_column()
+
+
+class OAuth2Token(BaseModel):
+    token_type: TokenType
+    access_token: str = Field(..., max_length=512)
+    refresh_token: str = Field(..., max_length=512)
+    expires_at: datetime

@@ -9,9 +9,10 @@ from webauthn.helpers.exceptions import InvalidRegistrationResponse, InvalidAuth
 from webauthn.helpers.structs import PublicKeyCredentialDescriptor, AuthenticatorSelectionCriteria, \
     ResidentKeyRequirement
 
-from backend.auth.helpers import sudo, UserDep
-from backend.auth.jwt import create_token, verify_token, BaseJWTClaims
-from backend.auth.session import NewSessionDep
+from backend.auth.utils import errors
+from backend.auth.utils.helpers import sudo, UserDep
+from backend.auth.utils.jwt import create_token, verify_token, BaseJWTClaims
+from backend.auth.utils.session import UnverifiedSessionDep
 from config import cfg
 from model import DatabaseDep
 from model.identity import Issuer, IdentityProvider
@@ -92,8 +93,8 @@ async def register_passkey(
     try:
         claims: WebAuthnChallengeClaims = verify_token(jwt_challenge, sub=user.id, return_model=WebAuthnChallengeClaims)
         challenge = base64url_to_bytes(claims.challenge)
-    except Exception:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid challenge token")
+    except Exception as e:
+        raise errors.InvalidToken() from e
 
     try:
         verified = webauthn.verify_registration_response(
@@ -103,7 +104,7 @@ async def register_passkey(
             expected_origin=_origin(),
         )
     except InvalidRegistrationResponse as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"Registration failed: {e}")
+        raise errors.InvalidToken() from e
 
     db.execute(
         insert(IdentityProvider).values(
@@ -155,7 +156,7 @@ async def verify_passkey(
         jwt_challenge: Annotated[str, Form()],
         credential: Annotated[str, Form()],
         db: DatabaseDep,
-        session: NewSessionDep
+        session: UnverifiedSessionDep
 ):
     """Verify the authenticator's authentication response and issue a session token."""
     EXCEPTION = HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid passkey or challenge")
@@ -205,5 +206,5 @@ async def verify_passkey(
     )
     db.commit()
 
-    session.sub(identity.user_id)
+    session.sub = identity.user_id
     return {"message": "Authenticated"}

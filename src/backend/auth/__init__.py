@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from .helpers import active_user
+from backend.auth.utils.helpers import active_user
 from .core import router as core_router
 from .oauth import router as oauth_router
 from .password import router as pass_router

@@ -2,15 +2,16 @@ from typing import Annotated
 
 import httpx
 from authlib.integrations.base_client import OAuthError
-from authlib.integrations.starlette_client import OAuth, StarletteOAuth2App
+from authlib.integrations.starlette_client import OAuth
 from fastapi import Request, HTTPException, status, APIRouter
 from pydantic import AfterValidator, BaseModel, PydanticUserError
 from sqlalchemy import select
+from starlette.responses import RedirectResponse
 
 from model import DatabaseDep
 from model.identity import IdentityProvider, User, Issuer
 from src.config import cfg
-from .session import NewSessionDep
+from backend.auth.utils.session import UnverifiedSessionDep
 
 
 class OIDC(BaseModel):
@@ -40,7 +41,8 @@ for name, client in cfg().auth.oauth_clients.items():
 
 
 def invalid_provider_exception(provider):
-    return HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                         detail=f"Invalid OAuth provider: {provider}")
 
 
 def check_provider(provider: str):
@@ -53,12 +55,16 @@ ProviderParam = Annotated[str, AfterValidator(check_provider)]
 
 
 @router.get("/{provider}")
-async def oauth_login(provider: ProviderParam, request: Request):
-    client: StarletteOAuth2App = oauth.create_client(provider)
+async def oauth_login(provider: ProviderParam, request: Request, session: UnverifiedSessionDep):
+    client = oauth.create_client(provider)
 
     redirect_uri = request.url_for("oauth_callback", provider=provider)
     try:
-        return await client.authorize_redirect(request, redirect_uri)
+        request.scope["session"] = {}  # authlib expects a session dict in the scope
+        res = await client.authorize_redirect(request, redirect_uri)
+        session.model_extra.update(request.session or {})
+
+        return res
     except httpx.ConnectError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -66,9 +72,9 @@ async def oauth_login(provider: ProviderParam, request: Request):
         )
 
 
-@router.get("/{provider}/callback", name="oauth_callback")
+@router.get("/{provider}/callback")
 async def oauth_callback(provider: ProviderParam,
-                         session: NewSessionDep,
+                         session: UnverifiedSessionDep,
                          request: Request,
                          db: DatabaseDep):
     client = oauth.create_client(provider)
@@ -81,7 +87,13 @@ async def oauth_callback(provider: ProviderParam,
     # TODO: handle all errors,
     #  is this correct handling?
     try:
+        # authlib expects a session dict in the scope
+        request.scope["session"] = session.model_extra
+
         token = await client.authorize_access_token(request)
+
+        session.model_extra.clear()
+        session.model_extra.update(request.session)
     except OAuthError:
         raise
         # return RedirectResponse(url=request.url_for("oauth_login", provider=provider),
@@ -137,6 +149,6 @@ async def oauth_callback(provider: ProviderParam,
         db.add(identity)
         db.commit()
 
-    session.sub(identity.user_id)
+    session.sub = identity.user_id
 
-    # TODO: return redirect
+    return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)

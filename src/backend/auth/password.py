@@ -2,14 +2,14 @@ import uuid
 from typing import Annotated
 
 import bcrypt
-from fastapi import Depends, HTTPException, status, APIRouter, Response
+from fastapi import Depends, HTTPException, status, APIRouter
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select, or_, update
 
 from model import DatabaseDep
 from model.identity import User, IdentityProvider, Issuer
-from .helpers import sudo
-from .session import clear_all_sessions, NewSessionDep, SessionDep
+from backend.auth.utils.helpers import sudo
+from backend.auth.utils.session import revoke_all_sessions, UnverifiedSessionDep, SessionDep
 
 router = APIRouter()
 
@@ -18,7 +18,7 @@ router = APIRouter()
 def password_authenticate(
         form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
         db: DatabaseDep,
-        session: NewSessionDep,
+        session: UnverifiedSessionDep,
 ):
     HTTP_EXCEPTION = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                                    detail="Incorrect username or password.")
@@ -47,8 +47,6 @@ def password_authenticate(
             or not verify_password(password, pass_hash)):
         raise HTTP_EXCEPTION
 
-    session.sub(user.id)
-
     # TODO: generalize to multiple 2fa methods
     requires_otp = db.scalar(
         select(IdentityProvider)
@@ -56,8 +54,9 @@ def password_authenticate(
         .where(IdentityProvider.issuer == Issuer.totp)
     )
 
+    session.sub = user.id
     if requires_otp:
-        session.requires_otp()
+        session.requires_totp = True
 
 
 @router.put("/change", dependencies=[Depends(sudo)])
@@ -75,7 +74,7 @@ def change_password(
 
     db.commit()
 
-    clear_all_sessions(session.sub, except_id=session.jti)
+    revoke_all_sessions(db, session.sub, except_id=session.jti)
 
 
 def hash_password(password: str) -> str:

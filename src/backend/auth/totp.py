@@ -1,20 +1,20 @@
 import uuid
-from datetime import timedelta, datetime
+from datetime import timedelta
 from typing import Annotated
 
 import pyotp
 import qrcode
-from fastapi import APIRouter, Depends, HTTPException, Response, status, Form
+from fastapi import APIRouter, Depends, HTTPException, status, Form
 from pydantic import BaseModel
 from sqlalchemy import delete, select, insert
 from starlette.responses import JSONResponse
 
-from .jwt import create_token, verify_token, BaseJWTClaims
 from config import cfg
 from model import DatabaseDep
 from model.identity import User, Issuer, IdentityProvider
 from utils.img import img2base64
-from .helpers import sudo, UserDep, SessionDep
+from backend.auth.utils.helpers import sudo, UserDep, SessionDep
+from backend.auth.utils.jwt import create_token, verify_token, BaseJWTClaims
 
 router = APIRouter()
 

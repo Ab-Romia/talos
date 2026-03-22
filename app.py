@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
 from backend.auth import auth_router, active_user
-from backend.auth.helpers import UserDep
-from backend.auth.session import session_middleware
+from backend.auth.utils.helpers import UserDep
+from backend.auth.utils.session import session_middleware
 from config import cfg
 from model import Base
 from model import engine
@@ -29,7 +29,6 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title='Temp', lifespan=lifespan)
 app.include_router(auth_router, prefix="/api/auth")
-app.add_middleware(SessionMiddleware, secret_key=cfg().auth.jwe_secret)
 app.middleware("http")(session_middleware)
 
 

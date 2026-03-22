@@ -3,15 +3,16 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, status, Form
+from langgraph_sdk.auth.exceptions import HTTPException
 from pydantic import BaseModel
 from sqlalchemy import delete
 
 from config import cfg
 from model import DatabaseDep
 from model.identity import User, Session
-from .helpers import sudo, SessionDep, UserDep
+from backend.auth.utils.helpers import sudo, SessionDep, UserDep
 from .password import create_password_identity
-from .session import NewSessionDep, revoke_session_by_id
+from backend.auth.utils.session import UnverifiedSessionDep, revoke_session_by_id, get_sessions_by_uid, revoke_all_sessions
 
 router = APIRouter()
 
@@ -26,7 +27,7 @@ class CreateUserRequest(BaseModel):
 @router.post("/signup", status_code=status.HTTP_201_CREATED)
 async def create_user(
         create_user: Annotated[CreateUserRequest, Form()],
-        session: NewSessionDep,
+        session: UnverifiedSessionDep,
         db: DatabaseDep):
     # TODO:
     #  exception handling: auto rollback on error
@@ -52,7 +53,7 @@ async def create_user(
 
     create_password_identity(user_id=user.id, password=create_user.password, db=db)
 
-    session.sub(user.id)
+    session.sub = user.id
 
     db.commit()
 
@@ -65,7 +66,7 @@ async def logout(db: DatabaseDep, session: SessionDep):
     )
     db.commit()
 
-    session.delete()
+    session.clear()
 
     return {"message": "Logged out successfully"}
 
@@ -86,6 +87,28 @@ async def activate_sudo(
     session.sudo_exp = datetime.now(timezone.utc) + cfg().auth.sudo_max_age
 
 
-@router.post("/revoke", dependencies=[Depends(sudo)])
-async def revoke_token(session_id: Annotated[UUID, Form()], db: DatabaseDep):
+@router.get("/sessions", dependencies=[Depends(sudo)])
+async def get_session(user: UserDep, db: DatabaseDep):
+    get_sessions_by_uid(user.id, db)
+
+
+@router.delete("/sessions", dependencies=[Depends(sudo)])
+async def revoke_current_token(user: UserDep, db: DatabaseDep):
+    revoke_all_sessions(db, user.id, except_id=None)
+
+
+@router.get("/sessions/{session_id}", dependencies=[Depends(sudo)])
+async def get_session_by_id(session_id: UUID, user: UserDep, db: DatabaseDep):
+    sessions = get_sessions_by_uid(user.id, db)
+
+    for session in sessions:
+        if session.id == session_id:
+            return session
+
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Session not found")
+
+
+@router.delete("/session/{session_id}", dependencies=[Depends(sudo)])
+async def revoke_token(session_id: UUID, db: DatabaseDep):
     revoke_session_by_id(session_id, db)
