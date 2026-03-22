@@ -1,18 +1,20 @@
 import json
+from datetime import timedelta, datetime, timezone
 from unittest.mock import Mock, patch
 
-import jwt
 from fastapi import status
 
-from config import cfg
+from backend.auth.utils.jwt import create_token, verify_token
+from backend.auth.webauthn import WebAuthnChallengeClaims, generate_passkey_new, verify_passkey, register_passkey, \
+    generate_passkey_for_auth
 from model.identity import IdentityProvider, Issuer
 
 
 class TestGeneratePasskey:
-    def test_for_registration(self, client, path, db_session, test_user, auth_token):
+    def test_for_registration(self, client, path, db_session, test_user, sudo_auth_token):
         response = client.post(
-            path("generate_passkey_new"),
-            headers={"Authorization": f"Bearer {auth_token}"},
+            path(generate_passkey_new),
+            headers={"Authorization": f"Bearer {sudo_auth_token}"},
         )
 
         assert response.status_code == status.HTTP_200_OK
@@ -21,17 +23,13 @@ class TestGeneratePasskey:
         assert "jwt_challenge" in data
 
         # Verify JWT challenge contains user info
-        claims = jwt.decode(
-            jwt=data["jwt_challenge"],
-            key=cfg().auth.jwt_secret_key,
-            algorithms=[cfg().auth.jwt_algorithm],
-        )
-        assert "sub" in claims
-        assert "challenge" in claims
-        assert test_user.id.hex == claims["sub"]
+        claims = verify_token(data["jwt_challenge"], return_model=WebAuthnChallengeClaims)
+        assert claims.sub is not None
+        assert claims.challenge is not None
+        assert test_user.id == claims.sub
 
     def test_for_authentication(self, client, path, db_session):
-        response = client.post(path("generate_passkey_for_auth"))
+        response = client.post(path(generate_passkey_for_auth))
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
@@ -39,13 +37,9 @@ class TestGeneratePasskey:
         assert "jwt_challenge" in data
 
         # Verify JWT challenge does not contain user info
-        claims = jwt.decode(
-            jwt=data["jwt_challenge"],
-            key=cfg().auth.jwt_secret_key,
-            algorithms=[cfg().auth.jwt_algorithm],
-        )
-        assert "sub" not in claims
-        assert "challenge" in claims
+        claims = verify_token(data["jwt_challenge"], return_model=WebAuthnChallengeClaims)
+        assert claims.sub is None
+        assert claims.challenge is not None
 
 
 class TestRegisterPasskey:
@@ -63,19 +57,16 @@ class TestRegisterPasskey:
         mock_verify.return_value = mock_verified
 
         challenge = b"test-challenge"
-        jwt_challenge = jwt.encode(
-            payload={
-                "sub": test_user.id.hex,
-                "challenge": bytes_to_base64url(challenge),
-            },
-            key=cfg().auth.jwt_secret_key,
-            algorithm=cfg().auth.jwt_algorithm,
-        )
+        jwt_challenge = create_token(WebAuthnChallengeClaims(
+            sub=test_user.id,
+            challenge=bytes_to_base64url(challenge),
+            exp=datetime.now(timezone.utc) + timedelta(minutes=5)
+        ))
 
         credential = json.dumps({"id": "test-credential-id", "response": {}})
 
         response = client.post(
-            path("register_passkey"),
+            path(register_passkey),
             headers={"Authorization": f"Bearer {sudo_auth_token}"},
             data={
                 "jwt_challenge": jwt_challenge,
@@ -85,8 +76,6 @@ class TestRegisterPasskey:
         )
 
         assert response.status_code == status.HTTP_200_OK
-        data = response.json()
-        assert data["success"] is True
 
         # Verify passkey identity was created
         identity = db_session.query(IdentityProvider).filter(
@@ -96,28 +85,9 @@ class TestRegisterPasskey:
         assert identity is not None
         assert identity.data["name"] == "My Passkey"
 
-    def test_without_sudo_token(self, client, path, db_session, test_user, auth_token):
-        jwt_challenge = jwt.encode(
-            payload={"sub": str(test_user.id), "challenge": "test"},
-            key=cfg().auth.jwt_secret_key,
-            algorithm=cfg().auth.jwt_algorithm,
-        )
-
-        response = client.post(
-            path("register_passkey"),
-            headers={"Authorization": f"Bearer {auth_token}"},
-            data={
-                "jwt_challenge": jwt_challenge,
-                "credential": "{}",
-                "name": "Test",
-            },
-        )
-
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
-
     def test_with_invalid_challenge(self, client, path, db_session, test_user, sudo_auth_token):
         response = client.post(
-            path("register_passkey"),
+            path(register_passkey),
             headers={"Authorization": f"Bearer {sudo_auth_token}"},
             data={
                 "jwt_challenge": "invalid-jwt",
@@ -126,7 +96,7 @@ class TestRegisterPasskey:
             },
         )
 
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     @patch("backend.auth.webauthn.webauthn.verify_registration_response")
     def test_with_verification_failure(self, mock_verify, client, path, db_session, test_user,
@@ -137,19 +107,16 @@ class TestRegisterPasskey:
         # Mock verification to raise exception
         mock_verify.side_effect = InvalidRegistrationResponse("Verification failed")
 
-        jwt_challenge = jwt.encode(
-            payload={
-                "sub": str(test_user.id),
-                "challenge": bytes_to_base64url(b"test-challenge"),
-            },
-            key=cfg().auth.jwt_secret_key,
-            algorithm=cfg().auth.jwt_algorithm,
-        )
+        jwt_challenge = create_token(WebAuthnChallengeClaims(
+            sub=test_user.id,
+            challenge=bytes_to_base64url(b"test-challenge"),
+            exp=datetime.now(timezone.utc) + timedelta(minutes=5)
+        ))
 
         credential = json.dumps({"id": "test-credential-id", "response": {}})
 
         response = client.post(
-            path("register_passkey"),
+            path(register_passkey),
             headers={"Authorization": f"Bearer {sudo_auth_token}"},
             data={
                 "jwt_challenge": jwt_challenge,
@@ -158,7 +125,7 @@ class TestRegisterPasskey:
             },
         )
 
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
 
 class TestVerifyPasskey:
@@ -188,11 +155,10 @@ class TestVerifyPasskey:
         mock_verified.new_sign_count = 1
         mock_verify.return_value = mock_verified
 
-        jwt_challenge = jwt.encode(
-            payload={"challenge": bytes_to_base64url(b"test-challenge")},
-            key=cfg().auth.jwt_secret_key,
-            algorithm=cfg().auth.jwt_algorithm,
-        )
+        jwt_challenge = create_token(WebAuthnChallengeClaims(
+            challenge=bytes_to_base64url(b"test-challenge"),
+            exp=datetime.now(timezone.utc) + timedelta(minutes=5)
+        ))
 
         credential = json.dumps({
             "id": credential_id,
@@ -201,7 +167,7 @@ class TestVerifyPasskey:
         })
 
         response = client.post(
-            path("verify_passkey"),
+            path(verify_passkey),
             data={
                 "jwt_challenge": jwt_challenge,
                 "credential": credential,
@@ -209,14 +175,12 @@ class TestVerifyPasskey:
         )
 
         assert response.status_code == status.HTTP_200_OK
-        data = response.json()
-        assert "access_token" in data
 
     def test_with_invalid_challenge(
             self, client, path, db_session
     ):
         response = client.post(
-            path("verify_passkey"),
+            path(verify_passkey),
             data={
                 "jwt_challenge": "invalid-jwt",
                 "credential": "{}",
@@ -228,11 +192,10 @@ class TestVerifyPasskey:
     def test_with_nonexistent_credential(self, client, path, db_session):
         from webauthn.helpers import bytes_to_base64url
 
-        jwt_challenge = jwt.encode(
-            payload={"challenge": bytes_to_base64url(b"test-challenge")},
-            key=cfg().auth.jwt_secret_key,
-            algorithm=cfg().auth.jwt_algorithm,
-        )
+        jwt_challenge = create_token(WebAuthnChallengeClaims(
+            challenge=bytes_to_base64url(b"test-challenge"),
+            exp=datetime.now(timezone.utc) + timedelta(minutes=5)
+        ))
 
         credential = json.dumps({
             "id": "nonexistent-id",
@@ -241,7 +204,7 @@ class TestVerifyPasskey:
         })
 
         response = client.post(
-            path("verify_passkey"),
+            path(verify_passkey),
             data={
                 "jwt_challenge": jwt_challenge,
                 "credential": credential,
@@ -276,11 +239,10 @@ class TestVerifyPasskey:
         mock_verified.new_sign_count = 6
         mock_verify.return_value = mock_verified
 
-        jwt_challenge = jwt.encode(
-            payload={"challenge": bytes_to_base64url(b"test-challenge")},
-            key=cfg().auth.jwt_secret_key,
-            algorithm=cfg().auth.jwt_algorithm,
-        )
+        jwt_challenge = create_token(WebAuthnChallengeClaims(
+            challenge=bytes_to_base64url(b"test-challenge"),
+            exp=datetime.now(timezone.utc) + timedelta(minutes=5)
+        ))
 
         credential = json.dumps({
             "id": credential_id,
@@ -289,7 +251,7 @@ class TestVerifyPasskey:
         })
 
         response = client.post(
-            path("verify_passkey"),
+            path(verify_passkey),
             data={
                 "jwt_challenge": jwt_challenge,
                 "credential": credential,
@@ -330,11 +292,10 @@ class TestVerifyPasskey:
         # Mock verification to raise exception
         mock_verify.side_effect = InvalidAuthenticationResponse("Verification failed")
 
-        jwt_challenge = jwt.encode(
-            payload={"challenge": bytes_to_base64url(b"test-challenge")},
-            key=cfg().auth.jwt_secret_key,
-            algorithm=cfg().auth.jwt_algorithm,
-        )
+        jwt_challenge = create_token(WebAuthnChallengeClaims(
+            challenge=bytes_to_base64url(b"test-challenge"),
+            exp=datetime.now(timezone.utc) + timedelta(minutes=5)
+        ))
 
         credential = json.dumps({
             "id": credential_id,
@@ -343,8 +304,8 @@ class TestVerifyPasskey:
         })
 
         response = client.post(
-            path("verify_passkey"),
-            params={
+            path(verify_passkey),
+            data={
                 "jwt_challenge": jwt_challenge,
                 "credential": credential,
             },

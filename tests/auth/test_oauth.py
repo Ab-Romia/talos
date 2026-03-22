@@ -1,9 +1,10 @@
 from unittest.mock import Mock, AsyncMock, patch
 
+import pytest
 from fastapi import status
 from sqlalchemy import select
 
-from backend.auth.oauth import OIDC
+from backend.auth.oauth import OIDC, oauth_callback, oauth_login
 from model.identity import IdentityProvider, Issuer, User
 
 
@@ -98,7 +99,7 @@ class TestOIDC:
 
 class TestOAuthLogin:
     def test_google(self, client, path):
-        response = client.get(path("oauth_login", provider="google"), follow_redirects=False)
+        response = client.get(path(oauth_login, provider="google"), follow_redirects=False)
 
         assert response.status_code == status.HTTP_302_FOUND
         location = response.headers["location"]
@@ -109,7 +110,7 @@ class TestOAuthLogin:
         assert "state=" in location
 
     def test_github(self, client, path):
-        response = client.get(path("oauth_login", provider="github"), follow_redirects=False)
+        response = client.get(path(oauth_login, provider="github"), follow_redirects=False)
 
         assert response.status_code == status.HTTP_302_FOUND
         location = response.headers["location"]
@@ -120,7 +121,7 @@ class TestOAuthLogin:
         assert "state=" in location
 
     def test_with_invalid_provider(self, client, path, db_session):
-        response = client.get(path("oauth_login", provider="invalid-provider"))
+        response = client.get(path(oauth_login, provider="invalid-provider"))
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -148,6 +149,13 @@ def get_oauth_identity(db_session, user_id):
 
 
 class TestOAuthCallback:
+    @pytest.fixture(autouse=True)
+    def setup_home_route(self, client):
+        """Ensure a 'home' route exists for url_for calls in the application code."""
+        # Check if 'home' is already defined (e.g. by other tests or actual app)
+        if not any(route.name == "home" for route in client.app.routes):
+            client.app.add_api_route("/dummy-home", lambda: None, name="home", methods=["GET"])
+
     @patch("backend.auth.oauth.oauth")
     def test_creates_new_user(self, mock_oauth, client, path, db_session):
         userinfo = make_userinfo(
@@ -158,10 +166,9 @@ class TestOAuthCallback:
         )
         setup_mock_oauth(mock_oauth, userinfo)
 
-        response = client.get(path("oauth_callback", provider="google"))
+        response = client.get(path(oauth_callback, provider="google"), follow_redirects=False)
 
-        assert response.status_code == status.HTTP_200_OK
-        assert "access_token" in response.json()
+        assert response.status_code == status.HTTP_303_SEE_OTHER
 
         user = db_session.scalar(select(User).where(User.primary_email == userinfo["email"]))
         assert user is not None
@@ -180,10 +187,12 @@ class TestOAuthCallback:
         )
         setup_mock_oauth(mock_oauth, userinfo)
 
-        response = client.get(path("oauth_callback", provider="google"))
+        response = client.get(path(oauth_callback, provider="google"),
+                              follow_redirects=False,
+                              headers={"Accept": "text/html"})
 
-        assert response.status_code == status.HTTP_200_OK
-        assert "access_token" in response.json()
+        assert response.status_code == status.HTTP_303_SEE_OTHER
+        assert "user_session" in response.cookies
 
         identity = get_oauth_identity(db_session, test_user.id)
         assert identity is not None
@@ -206,10 +215,12 @@ class TestOAuthCallback:
         )
         setup_mock_oauth(mock_oauth, userinfo)
 
-        response = client.get(path("oauth_callback", provider="google"))
+        response = client.get(path(oauth_callback, provider="google"),
+                              follow_redirects=False,
+                              headers={"Accept": "text/html"})
 
-        assert response.status_code == status.HTTP_200_OK
-        assert "access_token" in response.json()
+        assert response.status_code == status.HTTP_303_SEE_OTHER
+        assert "user_session" in response.cookies
 
         identities = db_session.scalars(
             select(IdentityProvider).where(
@@ -218,3 +229,38 @@ class TestOAuthCallback:
             )
         ).all()
         assert len(identities) == 1
+
+    @patch("backend.auth.oauth.httpx.get")
+    @patch("backend.auth.oauth.oauth")
+    def test_github_callback_creates_user(self, mock_oauth, mock_httpx_get, client, path, db_session):
+        # Mock OAuth client to return access token
+        mock_client = Mock()
+        mock_client.authorize_access_token = AsyncMock(return_value={"access_token": "gh-token-123"})
+        mock_oauth.create_client.return_value = mock_client
+
+        # Mock GitHub API response
+        github_user_data = {
+            "id": 987654,
+            "email": "github-user@example.com",
+            "name": "GitHub User",
+            "avatar_url": "https://github.com/avatar.jpg",
+        }
+        mock_response = Mock()
+        mock_response.json.return_value = github_user_data
+        mock_httpx_get.return_value = mock_response
+
+        response = client.get(path(oauth_callback, provider="github"), follow_redirects=False)
+
+        assert response.status_code == status.HTTP_303_SEE_OTHER
+
+        # Verify httpx.get was called with correct headers
+        mock_httpx_get.assert_called_once_with(
+            'https://api.github.com/user',
+            headers={"Authorization": "Bearer gh-token-123"}
+        )
+
+        # Verify user created
+        user = db_session.scalar(select(User).where(User.primary_email == "github-user@example.com"))
+        assert user is not None
+        assert user.name == "GitHub User"
+        assert user.data["avatar_url"] == "https://github.com/avatar.jpg"

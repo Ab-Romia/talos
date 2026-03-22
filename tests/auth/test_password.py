@@ -1,8 +1,8 @@
 from fastapi import status
+from sqlalchemy import select
 
-from backend.auth.password import hash_password, verify_password
-from model.identity import IdentityProvider, Issuer
-from utils.datetime import utcnow
+from backend.auth.password import hash_password, verify_password, password_authenticate, change_password
+from model.identity import IdentityProvider, Issuer, Session as UserSession
 
 
 class TestPasswordHashing:
@@ -39,31 +39,32 @@ class TestPasswordAuthentication:
         user, password = test_user_with_password
 
         response = client.post(
-            path("password_authenticate"),
+            path(password_authenticate),
             data={"username": user.username, "password": password},
+            headers={"Accept": "text/html"},
         )
 
         assert response.status_code == status.HTTP_200_OK
-        data = response.json()
-        assert "access_token" in data
-        assert data["token_type"] == "Bearer"
+        assert "user_session" in response.cookies
 
     def test_with_email(self, client, path, db_session, test_user_with_password):
         """Should authenticate using email instead of username."""
         user, password = test_user_with_password
 
         response = client.post(
-            path("password_authenticate"),
+            path(password_authenticate),
             data={"username": user.primary_email, "password": password},
+            headers={"Accept": "text/html"},
         )
 
         assert response.status_code == status.HTTP_200_OK
-        data = response.json()
-        assert "access_token" in data
+        # data = response.json()
+        # assert "session_token" in data
+        assert "user_session" in response.cookies
 
     def test_with_invalid_username(self, client, path, db_session):
         response = client.post(
-            path("password_authenticate"),
+            path(password_authenticate),
             data={"username": "nonexistent", "password": "password123"},
         )
 
@@ -73,8 +74,8 @@ class TestPasswordAuthentication:
         user, _ = test_user_with_password
 
         response = client.post(
-            path("password_authenticate"),
-            data={"username": user.username, "password": "wrongpassword"},
+            path(password_authenticate),
+            data={"username": user.username, "password": "wrong_password"},
         )
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
@@ -85,7 +86,7 @@ class TestPasswordAuthentication:
         db_session.commit()
 
         response = client.post(
-            path("password_authenticate"),
+            path(password_authenticate),
             data={"username": user.username, "password": password},
         )
 
@@ -93,11 +94,12 @@ class TestPasswordAuthentication:
 
     def test_with_deleted_user(self, client, path, db_session, test_user_with_password):
         user, password = test_user_with_password
-        user.deleted_at = utcnow()
+        from datetime import timezone, datetime
+        user.deleted_at = datetime.now(timezone.utc)
         db_session.commit()
 
         response = client.post(
-            path("password_authenticate"),
+            path(password_authenticate),
             data={"username": user.username, "password": password},
         )
 
@@ -116,13 +118,15 @@ class TestPasswordAuthentication:
         db_session.commit()
 
         response = client.post(
-            path("password_authenticate"),
+            path(password_authenticate),
             data={"username": user.username, "password": password},
+            headers={"Accept": "text/html"},
         )
 
         assert response.status_code == status.HTTP_200_OK
-        data = response.json()
-        assert "access_token" in data
+        # data = response.json()
+        # assert "access_token" in data
+        assert "user_session" in response.cookies
         # The token should be short-lived and require OTP
 
 
@@ -132,7 +136,7 @@ class TestChangePassword:
         new_password = "NewPassword456!"
 
         response = client.put(
-            path("change_password"),
+            path(change_password),
             headers={"Authorization": f"Bearer {sudo_auth_token}"},
             params={"new_password": new_password},
         )
@@ -141,14 +145,14 @@ class TestChangePassword:
 
         # Verify old password no longer works
         login_response = client.post(
-            path("password_authenticate"),
+            path(password_authenticate),
             data={"username": user.username, "password": old_password},
         )
         assert login_response.status_code == status.HTTP_401_UNAUTHORIZED
 
-        # Verify new password works
+        # Verify the new password
         login_response = client.post(
-            path("password_authenticate"),
+            path(password_authenticate),
             data={"username": user.username, "password": new_password},
         )
         assert login_response.status_code == status.HTTP_200_OK
@@ -157,7 +161,7 @@ class TestChangePassword:
         new_password = "NewPassword456!"
 
         response = client.put(
-            path("change_password"),
+            path(change_password),
             headers={"Authorization": f"Bearer {auth_token}"},
             params={"new_password": new_password},
         )
@@ -165,16 +169,16 @@ class TestChangePassword:
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_clears_sessions(self, client, path, db_session, test_user_with_password, sudo_auth_token):
-        from backend.auth.helpers import create_or_update_session
-
         user, _ = test_user_with_password
 
         # Create multiple sessions
         for _ in range(3):
-            create_or_update_session(db=db_session, user_id=user.id)
+            session = UserSession(user_id=user.id)
+            db_session.add(session)
+        db_session.commit()
 
         response = client.put(
-            path("change_password"),
+            path(change_password),
             headers={"Authorization": f"Bearer {sudo_auth_token}"},
             params={"new_password": "NewPassword456!"},
         )
@@ -182,5 +186,10 @@ class TestChangePassword:
         assert response.status_code == status.HTTP_200_OK
 
         # New token should be returned
-        data = response.json()
-        assert "access_token" in data
+        # data = response.json()
+        # assert "access_token" in data
+
+        # Verify other sessions are cleared
+        sessions = db_session.execute(select(UserSession).where(UserSession.user_id == user.id)).scalars().all()
+        # Should be 1 session remaining (the current one)
+        assert len(sessions) == 1
