@@ -9,6 +9,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from backend.auth import auth_router, active_user
 from backend.auth.helpers import UserDep
+from backend.auth.session import session_middleware
 from config import cfg
 from model import Base
 from model import engine
@@ -28,7 +29,8 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title='Temp', lifespan=lifespan)
 app.include_router(auth_router, prefix="/api/auth")
-app.add_middleware(SessionMiddleware, secret_key=cfg().auth.jwt_secret_key)
+app.add_middleware(SessionMiddleware, secret_key=cfg().auth.jwe_secret)
+app.middleware("http")(session_middleware)
 
 
 @app.get('/', response_class=HTMLResponse)

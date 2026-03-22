@@ -1,4 +1,5 @@
-import jwt.types
+from datetime import timedelta
+
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict, PydanticBaseSettingsSource, YamlConfigSettingsSource
 
@@ -10,18 +11,25 @@ class OAuthClient(BaseModel):
     access_token_url: str
     authorize_url: str
     server_metadata_url: str = None
-    client_kwargs: dict
+    client_kwargs: dict = {}
 
 
+# TODO: move to yaml
 class AuthConfig(BaseModel):
-    oauth_clients: dict[str, OAuthClient]
+    oauth_clients: dict[str, OAuthClient] = {}
 
     totp_valid_window: int = 1
 
-    jwt_secret_key: bytes
-    jwt_algorithm: str = "HS256"
+    jwe_secret: bytes
+    jwt_header: dict
 
-    jwt_options: jwt.types.Options = None
+    sudo_max_age: timedelta = timedelta(minutes=10)
+    session_max_age: timedelta = timedelta(days=30)
+    session_refresh_threshold: timedelta = timedelta(minutes=10)
+
+    model_config = SettingsConfigDict(
+        val_json_bytes="base64"
+    )
 
 
 class Config(BaseSettings):

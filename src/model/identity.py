@@ -76,14 +76,12 @@ platform_roles_permissions = Table(
 )
 
 
-# TODO: datetime timezone
 class Session(Base):
     __tablename__ = "sessions"
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
     last_used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
 
 
 class PlatformRole(Base):

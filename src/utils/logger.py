@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any, final
 
 from config import LoggingConfig
-from utils.datetime import utcnow
 
 __all__ = ["get_logger"]
 
@@ -106,7 +105,8 @@ class Logger:
         if not self.config.enable_metrics:
             return
 
-        timestamp = utcnow().isoformat()
+        from datetime import timezone, datetime
+        timestamp = datetime.now(timezone.utc).isoformat()
         metric_key = f"{metric_name}_{timestamp}"
         self._metrics[metric_key] = {
             "value": value,
