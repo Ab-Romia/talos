@@ -6,7 +6,7 @@ from starlette.requests import Request
 
 from app import app as fastapi_app
 from backend.auth.utils import helpers
-from backend.auth.utils.helpers import UserDep
+from backend.auth.utils.helpers import UserDep, OptionalUserDep
 from backend.auth.utils.jwt import create_token
 from backend.auth.utils.session import SessionClaims, verified_session, unverified_session
 
@@ -18,8 +18,19 @@ def active_user_path():
     def endpoint(user: UserDep):
         return {"id": str(user.id)}
 
-    if not any(route.path == path for route in fastapi_app.routes):
-        fastapi_app.add_api_route(path, endpoint, methods=["GET"])
+    fastapi_app.add_api_route(path, endpoint, methods=["GET"])
+
+    return path
+
+
+@pytest.fixture(scope="session")
+def opt_active_user_path():
+    path = "/__opt_test_active_user"
+
+    def endpoint(user: OptionalUserDep):
+        return {"id": str(user.id)} if user else None
+
+    fastapi_app.add_api_route(path, endpoint, methods=["GET"])
 
     return path
 
@@ -49,7 +60,7 @@ class TestActiveUserEndpoint:
         resp = client.get(active_user_path, headers={"Authorization": f"Bearer {auth_token}"},
                           cookies={"user_session": auth_token})
 
-        assert resp.status_code == 404
+        assert resp.status_code == 401
 
     def test_when_email_not_verified(self, client, db_session, test_user, test_session, auth_token, active_user_path):
         test_user.email_verified = False
@@ -73,20 +84,22 @@ class TestActiveUserEndpoint:
 
         assert resp.status_code == 401
 
-    # def test_updates_last_active(self, db_session, test_user, test_session):
-    #     from sqlalchemy import select
-    #     from model.identity import Session
-    #     session = db_session.scalar(
-    #         select(Session)
-    #         .where(Session.id == test_session.jti))
-    #
-    #     original_time = session.last_used_at
-    #
-    #     active_user(test_user, test_session)
-    #
-    #     db_session.refresh(session)
-    #
-    #     assert session.last_used_at > original_time
+    def test_optional_user_invalid(self, client, active_user_path, opt_active_user_path):
+        resp1 = client.get(active_user_path)
+        resp2 = client.get(opt_active_user_path)
+
+        assert resp1.status_code == 401
+        assert resp2.status_code == 200
+        assert resp2.json() is None
+
+    def test_optional_user_valid(self, client, auth_token, active_user_path, opt_active_user_path):
+        resp1 = client.get(active_user_path, cookies={"user_session": auth_token})
+        resp2 = client.get(opt_active_user_path, cookies={"user_session": auth_token})
+
+        assert resp2.status_code == 200
+        assert resp1.status_code == 200
+
+        assert resp1.json() == resp2.json()
 
 
 class TestGetSessionDependency:
@@ -104,8 +117,7 @@ class TestGetSessionDependency:
         req.state.set_session = None  # Initialize
 
         unverified_sess = unverified_session(req, token)
-        gen = verified_session(next(unverified_sess), db_session)
-        result = next(gen)
+        result = verified_session(next(unverified_sess), db_session)
 
         assert result.jti == test_session.jti
 

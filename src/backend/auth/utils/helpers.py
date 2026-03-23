@@ -8,9 +8,10 @@ from starlette.requests import Request
 from starlette.responses import RedirectResponse
 
 from backend.auth.utils import errors
-from backend.auth.utils.session import SessionDep, auth_token, unverified_session, verified_session
+from backend.auth.utils.session import SessionDep, auth_token, unverified_session, verified_session, \
+    UnverifiedSessionDep
 from model import DatabaseDep
-from model.identity import User
+from model.identity import User, Session
 
 
 # TODO:
@@ -19,7 +20,6 @@ from model.identity import User
 #  email verification,
 #  multiple account support
 #  sudo mode (re-auth for sensitive actions)
-#  anonymous sessions
 #  remember me functionality
 #  device recognition (e.g. for risk-based authentication)
 #  exception handling
@@ -40,28 +40,25 @@ async def auth_exception_handler(request: Request, exc: errors.AuthException):
     return await fastapi_http_exception_handler(request, exc)
 
 
-def _raw_user(session: SessionDep, db: DatabaseDep):
+def active_user(session: UnverifiedSessionDep, db: DatabaseDep):
     user = db.scalar(select(User)
+                     .join(Session, User.id == Session.user_id)
                      .where(User.id == session.sub)
-                     .where(User.deleted_at.is_(None))
-                     )
+                     .where(Session.id == session.jti)
+                     .where(User.deleted_at.is_(None)))
     if user is None:
         raise errors.UserNotFound()
 
-    return user
-
-
-def active_user(raw_user: Annotated[User, Depends(_raw_user)], session: SessionDep):
     if session.requires_otp:
         raise errors.OTPRequired()
 
-    if raw_user.deleted_at is not None:
+    if user.deleted_at is not None:
         raise errors.UserNotFound()
 
-    if not raw_user.email_verified:
+    if not user.email_verified:
         raise errors.EmailNotVerified()
 
-    return raw_user
+    return user
 
 
 def optional_active_user(request: Request, db: DatabaseDep):
@@ -70,11 +67,8 @@ def optional_active_user(request: Request, db: DatabaseDep):
             authorization=request.headers.get("Authorization"),
             user_session=request.cookies.get("user_session"),
         )
-        unverified_sess = unverified_session(request, token)
-        sess = verified_session(next(unverified_sess), db)
-        raw_user = _raw_user(next(sess), db)
-
-        return active_user(raw_user, sess)
+        sess = unverified_session(request, token)
+        return active_user(next(sess), db)
     except errors.AuthException:
         return None
 
@@ -85,4 +79,4 @@ def sudo(session: SessionDep):
 
 
 UserDep = Annotated[User, Depends(active_user)]
-OptionalUserDep = Annotated[User, Depends(optional_active_user)]
+OptionalUserDep = Annotated[User | None, Depends(optional_active_user)]

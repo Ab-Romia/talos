@@ -98,10 +98,10 @@ def verified_session(claims: UnverifiedSessionDep, db: DatabaseDep):
     if session is None:
         raise errors.SessionExpired()
 
-    yield claims
-
     session.last_used_at = func.now()
     db.commit()
+
+    return claims
 
 
 def unverified_session(request: Request, auth_token: Annotated[str, Depends(auth_token)]):

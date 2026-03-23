@@ -46,7 +46,7 @@ def engine():
         engine.dispose()
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def db_session(engine):
     """Provide a per-test DB session and override app dependency to return it."""
     from model import get_db

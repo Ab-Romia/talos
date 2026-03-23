@@ -30,7 +30,7 @@ class OTPRequired(AuthException):
 
 
 class UserNotFound(AuthException):
-    status_code = status.HTTP_404_NOT_FOUND
+    status_code = status.HTTP_401_UNAUTHORIZED
     detail = "User Not Found"
 
 

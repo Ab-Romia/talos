@@ -4,10 +4,11 @@ from enum import Enum as PyEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
-from sqlalchemy import DateTime, Table, Column, ForeignKey, Enum, Uuid, func
+from sqlalchemy import DateTime, Table, Column, ForeignKey, Enum, Uuid, func, event
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from config import cfg
 from model import Base
 
 users_platform_roles = Table(

@@ -14,7 +14,6 @@ class OAuthClient(BaseModel):
     client_kwargs: dict = {}
 
 
-# TODO: move to yaml
 class AuthConfig(BaseModel):
     oauth_clients: dict[str, OAuthClient] = {}
 
