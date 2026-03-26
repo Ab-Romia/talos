@@ -23,6 +23,7 @@ class SessionClaims(BaseJWTClaims):
     sudo_exp: DATETIME | None = None
     _deleted: bool = False
     _modified: bool = False
+    _verify: bool = False
 
     def __setattr__(self, key, value):
         super().__setattr__(key, value)
@@ -105,9 +106,14 @@ def verified_session(claims: UnverifiedSessionDep, db: DatabaseDep):
 
 
 def unverified_session(request: Request, auth_token: Annotated[str, Depends(auth_token)]):
+    claims = None
     if auth_token:
-        claims = verify_token(auth_token, return_model=SessionClaims)
-    else:
+        try:
+            claims = verify_token(auth_token, return_model=SessionClaims)
+        except errors.ExpiredToken:
+            pass
+
+    if claims is None:
         claims = SessionClaims(exp=datetime.now(timezone.utc) + cfg().auth.session_max_age)
 
     yield claims
@@ -121,8 +127,25 @@ def unverified_session(request: Request, auth_token: Annotated[str, Depends(auth
         request.state.set_session = claims
 
 
+def new_session(claims: UnverifiedSessionDep, db: DatabaseDep):
+    # TODO: handle existing session (e.g. revoke previous session, or allow multiple sessions per user)
+    yield claims
+
+    assert claims.sub is not None, "User ID (sub) must be set for new session"
+    assert claims.jti is not None, "Session ID (jti) must be set for new session"
+
+    sess = Session(
+        id=claims.jti,
+        user_id=claims.sub,
+        last_used_at=func.now(),
+    )
+    db.add(sess)
+    db.commit()
+
+
 SessionDep = Annotated[SessionClaims, Depends(verified_session, scope="function")]
 UnverifiedSessionDep = Annotated[SessionClaims, Depends(unverified_session, scope="function")]
+NewSessionDep = Annotated[SessionClaims, Depends(new_session, scope="function")]
 
 
 def revoke_session_by_id(session_id: uuid.UUID, db: DatabaseDep):

@@ -4,11 +4,10 @@ from enum import Enum as PyEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
-from sqlalchemy import DateTime, Table, Column, ForeignKey, Enum, Uuid, func, event
+from sqlalchemy import DateTime, Table, Column, ForeignKey, Enum, Uuid, func, CheckConstraint, text
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from config import cfg
 from model import Base
 
 users_platform_roles = Table(
@@ -20,20 +19,35 @@ users_platform_roles = Table(
 
 class User(Base):
     __tablename__ = "users"
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    username: Mapped[str] = mapped_column(CITEXT(), unique=True, index=True)
-    primary_email: Mapped[str] = mapped_column(CITEXT(), unique=True, index=True)
-    email_verified: Mapped[bool] = mapped_column(default=False, index=True)
 
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    username: Mapped[str] = mapped_column(CITEXT(32), unique=True, index=True)
+    primary_email: Mapped[str] = mapped_column(CITEXT(), unique=True, index=True)
+    # TODO remove email_verified: users are only added to the database after verification
+    signup_complete: Mapped[bool] = mapped_column(default=False, index=True)
     name: Mapped[str | None] = mapped_column()
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column()
 
     data: Mapped[dict[str, Any]] = mapped_column(default={})
-    roles: Mapped[list["PlatformRole"]] = relationship("PlatformRole",
-                                                       secondary="users_platform_roles",
-                                                       back_populates="users")
+    roles: Mapped[list["Role"]] = relationship("Role",
+                                               secondary="users_platform_roles",
+                                               back_populates="users")
+
+    __table_args__ = (
+        # Ensure that the emails and usernames are partitioned
+        # Emails must contain an @, and usernames cannot contain @
+        # no string can be both
+        CheckConstraint(
+            func.regexp_like(username, r"^[a-zA-Z][a-zA-Z0-9-]{3,}$"),
+            name="username_format"
+        ),
+        CheckConstraint(
+            text("primary_email LIKE '%@%'"),
+            name="email_format"
+        )
+    )
 
 
 class OTP(Base):
@@ -41,13 +55,6 @@ class OTP(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(), default=None)
     code: Mapped[str] = mapped_column()
-
-
-# class UserPassword(Base):
-#     __tablename__ = "user_passwords"
-#     user_id: Mapped[Uuid] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-#     hashed_password: Mapped[str] = mapped_column()
-#     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class Issuer(PyEnum):
@@ -87,13 +94,12 @@ class Session(Base):
     user_agent: Mapped[str | None] = mapped_column()
 
 
-class PlatformRole(Base):
+class Role(Base):
     __tablename__ = "platform_roles"
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(unique=True, index=True)
     description: Mapped[str | None] = mapped_column()
-    permissions: Mapped[list["Permission"]] = relationship("Permission",
-                                                           secondary="platform_role_permissions")
+    permissions: Mapped[list["Permission"]] = relationship(secondary="platform_role_permissions")
     users: Mapped[list["User"]] = relationship(
         "User",
         secondary="users_platform_roles",

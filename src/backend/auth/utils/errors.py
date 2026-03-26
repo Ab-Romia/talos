@@ -8,13 +8,13 @@ class AuthException(HTTPException):
 
     def __init__(self, detail: str = None, status_code: int = None):
         super().__init__(
-            status_code=status_code or self.status_code, 
+            status_code=status_code or self.status_code,
             detail=detail or self.detail
         )
 
 
-class InvalidToken(AuthException):
-    detail = "Invalid Token"
+class InvalidCredentials(AuthException):
+    detail = "Invalid Credentials"
 
 
 class SessionExpired(AuthException):
@@ -34,9 +34,25 @@ class UserNotFound(AuthException):
     detail = "User Not Found"
 
 
-class EmailNotVerified(AuthException):
-    detail = "Email not verified"
+class IncompleteUserProfile(AuthException):
+    detail = "User profile incomplete. Please complete your profile to access this resource."
 
 
 class Unauthenticated(AuthException):
     detail = "No Authentication Provided"
+
+
+class ExpiredToken(AuthException):
+    detail = "Authentication token has expired"
+
+
+class Forbidden(AuthException):
+    status_code = status.HTTP_403_FORBIDDEN
+    detail = "Forbidden"
+
+    def __init__(self, missing_perms: set[str] = None):
+        if missing_perms:
+            detail = f"Forbidden. Required permissions: {', '.join(missing_perms)}"
+        else:
+            detail = self.detail
+        super().__init__(status_code=self.status_code, detail=detail)

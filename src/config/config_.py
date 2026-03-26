@@ -47,6 +47,7 @@ class Config(BaseSettings):
         yaml_file="config/config.yaml"
     )
 
+
     @classmethod
     def settings_customise_sources(
             cls,

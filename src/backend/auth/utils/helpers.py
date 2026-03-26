@@ -1,15 +1,18 @@
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 from fastapi.exception_handlers import http_exception_handler as fastapi_http_exception_handler
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session as DatabaseSession
+from starlette import status
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
 
+from backend.auth.core import CreateUserRequest
 from backend.auth.utils import errors
-from backend.auth.utils.session import SessionDep, auth_token, unverified_session, verified_session, \
-    UnverifiedSessionDep
+from backend.auth.utils.session import SessionDep, auth_token, unverified_session, UnverifiedSessionDep
 from model import DatabaseDep
 from model.identity import User, Session
 
@@ -34,7 +37,7 @@ async def auth_exception_handler(request: Request, exc: errors.AuthException):
         return await fastapi_http_exception_handler(request, exc)
 
     match type(exc):
-        case errors.InvalidToken:
+        case errors.InvalidCredentials:
             return RedirectResponse(url=request.url_for("login"), status_code=302)
 
     return await fastapi_http_exception_handler(request, exc)
@@ -55,8 +58,8 @@ def active_user(session: UnverifiedSessionDep, db: DatabaseDep):
     if user.deleted_at is not None:
         raise errors.UserNotFound()
 
-    if not user.email_verified:
-        raise errors.EmailNotVerified()
+    if not user.signup_complete:
+        raise errors.IncompleteUserProfile()
 
     return user
 
@@ -80,3 +83,30 @@ def sudo(session: SessionDep):
 
 UserDep = Annotated[User, Depends(active_user)]
 OptionalUserDep = Annotated[User | None, Depends(optional_active_user)]
+
+
+def validate_signup_inputs(create_user: CreateUserRequest, db: DatabaseSession):
+    try:
+        with db.begin_nested():
+            db.add(User(username=create_user.username, primary_email=create_user.email))
+            db.flush()
+            db.rollback()
+    except IntegrityError as e:
+        print(f"IntegrityError during user creation: {e.orig}")
+        err = str(e.orig)
+        if "email_format" in err:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="Invalid email format")
+        elif "ix_users_username" in err:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                detail="Username already exists")
+        elif "ix_users_primary_email" in err:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                detail="Email already exists")
+        else:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="Invalid input")
+
+    if len(create_user.password) >= 12:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Password must be at least 12 characters long")

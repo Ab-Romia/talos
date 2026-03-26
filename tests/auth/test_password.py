@@ -82,7 +82,7 @@ class TestPasswordAuthentication:
 
     def test_with_unverified_email(self, client, path, db_session, test_user_with_password):
         user, password = test_user_with_password
-        user.email_verified = False
+        user.signup_complete = False
         db_session.commit()
 
         response = client.post(

@@ -3,7 +3,7 @@ from functools import lru_cache
 from typing import TypeVar, Type
 
 from joserfc import jwe, jwt
-from joserfc.errors import JoseError
+from joserfc.errors import JoseError, ExpiredTokenError
 from pydantic import BaseModel, Field
 
 from backend.auth.utils import errors
@@ -70,5 +70,7 @@ def verify_token(token: str, sub: uuid.UUID = None, return_model: Type[T] = Base
         claims_request.validate(claims)
 
         return return_model.model_validate(claims)
+    except ExpiredTokenError as e:
+        raise errors.ExpiredToken() from e
     except JoseError as e:
-        raise errors.InvalidToken() from e
+        raise errors.InvalidCredentials() from e

@@ -8,10 +8,10 @@ from pydantic import AfterValidator, BaseModel, PydanticUserError
 from sqlalchemy import select
 from starlette.responses import RedirectResponse
 
+from backend.auth.utils.session import UnverifiedSessionDep, NewSessionDep
 from model import DatabaseDep
 from model.identity import IdentityProvider, User, Issuer
 from src.config import cfg
-from backend.auth.utils.session import UnverifiedSessionDep
 
 
 class OIDC(BaseModel):
@@ -74,7 +74,7 @@ async def oauth_login(provider: ProviderParam, request: Request, session: Unveri
 
 @router.get("/{provider}/callback")
 async def oauth_callback(provider: ProviderParam,
-                         session: UnverifiedSessionDep,
+                         session: NewSessionDep,
                          request: Request,
                          db: DatabaseDep):
     client = oauth.create_client(provider)
@@ -148,6 +148,9 @@ async def oauth_callback(provider: ProviderParam,
         )
         db.add(identity)
         db.commit()
+
+        if not user.signup_complete:
+            return RedirectResponse(url="/complete_signup", status_code=status.HTTP_303_SEE_OTHER)
 
     session.sub = identity.user_id
 

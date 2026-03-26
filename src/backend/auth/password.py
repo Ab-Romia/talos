@@ -2,14 +2,15 @@ import uuid
 from typing import Annotated
 
 import bcrypt
-from fastapi import Depends, HTTPException, status, APIRouter
+from fastapi import Depends, APIRouter
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select, or_, update
 
+from backend.auth.utils import errors
+from backend.auth.utils.helpers import sudo
+from backend.auth.utils.session import revoke_all_sessions, SessionDep, NewSessionDep
 from model import DatabaseDep
 from model.identity import User, IdentityProvider, Issuer
-from backend.auth.utils.helpers import sudo
-from backend.auth.utils.session import revoke_all_sessions, UnverifiedSessionDep, SessionDep
 
 router = APIRouter()
 
@@ -18,11 +19,8 @@ router = APIRouter()
 def password_authenticate(
         form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
         db: DatabaseDep,
-        session: UnverifiedSessionDep,
+        session: NewSessionDep,
 ):
-    HTTP_EXCEPTION = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                                   detail="Incorrect username or password.")
-
     username = form_data.username
     password = form_data.password
     email = form_data.username
@@ -35,17 +33,19 @@ def password_authenticate(
                IdentityProvider.issuer == Issuer.password)
     ).one_or_none()
     if row is None:
-        raise HTTP_EXCEPTION
+        raise errors.InvalidCredentials()
 
     user, data = row
 
     assert data is not None and "hash" in data, "Password identity provider should always have a data field"
     pass_hash = data["hash"]
 
-    if (user.email_verified is False
-            or user.deleted_at is not None
-            or not verify_password(password, pass_hash)):
-        raise HTTP_EXCEPTION
+    if user.signup_complete is False:
+        raise errors.IncompleteUserProfile()
+    if user.deleted_at is not None:
+        raise errors.UserNotFound()
+    if not verify_password(password, pass_hash):
+        raise errors.InvalidCredentials()
 
     # TODO: generalize to multiple 2fa methods
     requires_otp = db.scalar(
@@ -89,11 +89,11 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
 
 
-def create_password_identity(user_id: uuid.UUID, password: str, db: DatabaseDep):
+def create_password_identity(user_id: uuid.UUID, password_hash: str, db: DatabaseDep):
     identity = IdentityProvider(
         user_id=user_id,
         issuer=Issuer.password,
-        data={"hash": hash_password(password)},
+        data={"hash": password_hash},
     )
 
     db.add(identity)

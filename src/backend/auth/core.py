@@ -1,61 +1,102 @@
-from datetime import datetime, timezone
+"""
+Authentication-related endpoints.
+"""
+from datetime import datetime, timezone, timedelta
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status, Form
-from langgraph_sdk.auth.exceptions import HTTPException
+from fastapi import APIRouter, Depends, status, Form, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import delete
+from sqlalchemy.exc import IntegrityError
+from starlette.responses import RedirectResponse, HTMLResponse
 
+from backend.auth.utils import jwt
+from backend.auth.utils.helpers import sudo, SessionDep, UserDep, validate_signup_inputs
+from backend.auth.utils.jwt import BaseJWTClaims
+from backend.auth.utils.session import revoke_session_by_id, get_sessions_by_uid, revoke_all_sessions, NewSessionDep
 from config import cfg
 from model import DatabaseDep
 from model.identity import User, Session
-from backend.auth.utils.helpers import sudo, SessionDep, UserDep
-from .password import create_password_identity
-from backend.auth.utils.session import UnverifiedSessionDep, revoke_session_by_id, get_sessions_by_uid, revoke_all_sessions
+from .password import create_password_identity, hash_password
+from ..email.send import send_verification_email
 
 router = APIRouter()
 
 
 class CreateUserRequest(BaseModel):
     username: str
-    primary_email: str
+    email: str
     password: str
-    name: str
 
 
-@router.post("/signup", status_code=status.HTTP_201_CREATED)
-async def create_user(
+class UserVerificationClaims(BaseJWTClaims, CreateUserRequest):
+    pass
+
+
+@router.post("/signup", status_code=status.HTTP_202_ACCEPTED)
+def create_user(
         create_user: Annotated[CreateUserRequest, Form()],
-        session: UnverifiedSessionDep,
+        db: DatabaseDep
+):
+    # TODO:
+    #  - Rate limit
+    #  - Captcha
+
+    validate_signup_inputs(create_user, db)
+
+    claims = UserVerificationClaims(
+        exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        password=hash_password(create_user.password),
+        **create_user.model_dump()
+    )
+    token = jwt.create_token(claims)
+
+    send_verification_email(create_user.email, token)
+
+    return {"message": "Please check your email to verify your account."}
+
+
+@router.get("/complete_signup")
+def complete_signup(token: str):
+    return HTMLResponse(f"TODO: Implement complete signup page. Token: {token}")
+
+
+@router.post("/complete_signup")
+def verify_email(
+        token: Annotated[str, Form()],
+        user_info: dict(str, str),
+        session: NewSessionDep,
         db: DatabaseDep):
     # TODO:
-    #  exception handling: auto rollback on error
-    #  spam prevention:
-    #  - only commit to database on email verify
-    #  - ratelimit
-    #  - captcha
+    #  - move
+    #  - Exception handling for:
+    #  - Rate limit
+    claims = jwt.verify_token(token, return_model=UserVerificationClaims)
 
-    user = User(
-        username=create_user.username,
-        primary_email=create_user.primary_email,
-        email_verified=True,  # TODO: add email verification flow
-        name=create_user.name,
-        data={},
-        roles=[],
-    )
-    db.add(user)
+    # TODO: Continue with signup process (more user info, 2FA setup, etc)
 
-    db.flush()  # get the id before commit
+    try:
+        user = User(
+            username=claims.username,
+            primary_email=claims.email,
+            data=user_info,
+        )
+        db.add(user)
+        db.flush()
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="Username or email already exists")
 
-    # TODO: handle exceptions for duplicate usernames/emails
-    # TODO: handle different identity providers
-
-    create_password_identity(user_id=user.id, password=create_user.password, db=db)
+    create_password_identity(user_id=user.id,
+                             password_hash=claims.password,
+                             db=db)
 
     session.sub = user.id
-
     db.commit()
+
+    return RedirectResponse(url="/complete_signup",
+                            status_code=status.HTTP_302_FOUND)
 
 
 @router.post("/logout")

@@ -12,7 +12,7 @@ from webauthn.helpers.structs import PublicKeyCredentialDescriptor, Authenticato
 from backend.auth.utils import errors
 from backend.auth.utils.helpers import sudo, UserDep
 from backend.auth.utils.jwt import create_token, verify_token, BaseJWTClaims
-from backend.auth.utils.session import UnverifiedSessionDep
+from backend.auth.utils.session import NewSessionDep
 from config import cfg
 from model import DatabaseDep
 from model.identity import Issuer, IdentityProvider
@@ -94,7 +94,7 @@ async def register_passkey(
         claims: WebAuthnChallengeClaims = verify_token(jwt_challenge, sub=user.id, return_model=WebAuthnChallengeClaims)
         challenge = base64url_to_bytes(claims.challenge)
     except Exception as e:
-        raise errors.InvalidToken() from e
+        raise errors.InvalidCredentials() from e
 
     try:
         verified = webauthn.verify_registration_response(
@@ -104,7 +104,7 @@ async def register_passkey(
             expected_origin=_origin(),
         )
     except InvalidRegistrationResponse as e:
-        raise errors.InvalidToken() from e
+        raise errors.InvalidCredentials() from e
 
     db.execute(
         insert(IdentityProvider).values(
@@ -156,7 +156,7 @@ async def verify_passkey(
         jwt_challenge: Annotated[str, Form()],
         credential: Annotated[str, Form()],
         db: DatabaseDep,
-        session: UnverifiedSessionDep
+        session: NewSessionDep,
 ):
     """Verify the authenticator's authentication response and issue a session token."""
     EXCEPTION = HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid passkey or challenge")

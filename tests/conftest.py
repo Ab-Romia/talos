@@ -84,7 +84,7 @@ def test_user(db_session: Session):
         user = User(
             username=user_name,
             primary_email=faker.email(),
-            email_verified=True,
+            signup_complete=True,
             name=faker.name(),
             data={},
             roles=[],

@@ -5,7 +5,6 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-from starlette.middleware.sessions import SessionMiddleware
 
 from backend.auth import auth_router, active_user
 from backend.auth.utils.helpers import UserDep
@@ -48,12 +47,12 @@ async def passkey_test_page(request: Request, user: UserDep):
     return templates.TemplateResponse(request, "pages/passkey_test.html", {"username": user.username})
 
 
-@app.get('/smily')
+@app.get('/smiley')
 async def smily():
     return HTMLResponse('<p style="font-size:24em";>🙂</p>')
 
 
-@app.get('/smily-protected', dependencies=[Depends(active_user)])
+@app.get('/smiley-protected', dependencies=[Depends(active_user)])
 async def smily():
     return HTMLResponse('<p style="font-size:24em";>🙃</p>')
 
