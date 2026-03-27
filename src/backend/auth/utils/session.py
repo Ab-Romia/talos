@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import Request, Depends, Header, Cookie
 from pydantic import ConfigDict
 from sqlalchemy import select, func, delete
+from starlette.middleware.base import RequestResponseEndpoint, BaseHTTPMiddleware
 
 from backend.auth.utils import errors, jwt
 from backend.auth.utils.jwt import verify_token, BaseJWTClaims
@@ -12,8 +13,6 @@ from config import cfg
 from model import DatabaseDep
 from model.identity import Session
 from model.utils import DATETIME
-
-SESSION_KEY = "user_session"
 
 
 class SessionClaims(BaseJWTClaims):
@@ -42,40 +41,41 @@ class SessionClaims(BaseJWTClaims):
         self._deleted = True
 
 
-async def session_middleware(request: Request, call_next):
-    response = await call_next(request)
+class SessionMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
+        response = await call_next(request)
 
-    if "set_session" in request.state:
-        claims: SessionClaims = request.state.set_session
-    else:
+        if "set_session" in request.state:
+            claims: SessionClaims = request.state.set_session
+        else:
+            return response
+
+        token = jwt.create_token(claims)
+        delta = claims.exp - datetime.now(timezone.utc)
+
+        accept_header = request.headers.get("accept", "*/*").split(",")
+        if "text/html" in accept_header:
+            if claims.deleted:
+                response.delete_cookie(key=cfg().auth.session_cookie_key, path="/")
+            elif claims.modified:
+                response.set_cookie(
+                    key=cfg().auth.session_cookie_key,
+                    value=token,
+                    path="/",
+                    secure=True,
+                    httponly=True,
+                    samesite="lax",
+                    max_age=int(delta.total_seconds())
+                )
+        elif "application/json" in accept_header:
+            body = response.json()
+            body["session_token"] = token
+            body["session_expires_at"] = claims.exp.isoformat()
+            response.body = response.json_encoder.encode(body)
+        else:
+            response.headers["X-Session-Token"] = token
+
         return response
-
-    token = jwt.create_token(claims)
-    delta = claims.exp - datetime.now(timezone.utc)
-
-    accept_header = request.headers.get("accept", "*/*").split(",")
-    if "text/html" in accept_header:
-        if claims.deleted:
-            response.delete_cookie(key=SESSION_KEY, path="/")
-        elif claims.modified:
-            response.set_cookie(
-                key=SESSION_KEY,
-                value=token,
-                path="/",
-                secure=True,
-                httponly=True,
-                samesite="lax",
-                max_age=int(delta.total_seconds())
-            )
-    elif "application/json" in accept_header:
-        body = response.json()
-        body["session_token"] = token
-        body["session_expires_at"] = claims.exp.isoformat()
-        response.body = response.json_encoder.encode(body)
-    else:
-        response.headers["X-Session-Token"] = token
-
-    return response
 
 
 def auth_token(authorization: Annotated[str, Header()] = None,
@@ -148,7 +148,7 @@ UnverifiedSessionDep = Annotated[SessionClaims, Depends(unverified_session, scop
 NewSessionDep = Annotated[SessionClaims, Depends(new_session, scope="function")]
 
 
-def revoke_session_by_id(session_id: uuid.UUID, db: DatabaseDep):
+def revoke(session_id: uuid.UUID, db: DatabaseDep):
     db.execute(
         delete(Session)
         .where(Session.id == session_id)
@@ -156,7 +156,7 @@ def revoke_session_by_id(session_id: uuid.UUID, db: DatabaseDep):
     db.commit()
 
 
-def revoke_all_sessions(db: DatabaseDep, user_id: uuid.UUID, except_id: uuid.UUID = None):
+def revoke_by_uid(user_id: uuid.UUID, db: DatabaseDep, except_id: uuid.UUID = None):
     db.execute(
         delete(Session)
         .where(Session.user_id == user_id)
@@ -165,17 +165,10 @@ def revoke_all_sessions(db: DatabaseDep, user_id: uuid.UUID, except_id: uuid.UUI
     db.commit()
 
 
-def get_all_sessions(db: DatabaseDep, user_id: uuid.UUID):
-    return db.scalars(
-        select(Session.id)
-        .where(Session.user_id == user_id)
-    ).all()
-
-
-def get_sessions_by_uid(uid, db):
+def get_by_uid(user_id: uuid.UUID, db: DatabaseDep):
     sessions = db.scalars(
         select(Session.id, Session.last_used_at, Session.user_agent)
-        .where(Session.user_id == uid)
+        .where(Session.user_id == user_id)
     )
 
     return sessions

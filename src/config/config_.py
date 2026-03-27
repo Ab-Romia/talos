@@ -25,6 +25,7 @@ class AuthConfig(BaseModel):
     sudo_max_age: timedelta = timedelta(minutes=10)
     session_max_age: timedelta = timedelta(days=30)
     session_refresh_threshold: timedelta = timedelta(minutes=10)
+    session_cookie_key: str = "user_session"
 
     model_config = SettingsConfigDict(
         val_json_bytes="base64"
@@ -46,7 +47,6 @@ class Config(BaseSettings):
         extra="ignore",
         yaml_file="config/config.yaml"
     )
-
 
     @classmethod
     def settings_customise_sources(

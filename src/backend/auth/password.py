@@ -8,7 +8,7 @@ from sqlalchemy import select, or_, update
 
 from backend.auth.utils import errors
 from backend.auth.utils.helpers import sudo
-from backend.auth.utils.session import revoke_all_sessions, SessionDep, NewSessionDep
+from backend.auth.utils.session import revoke_by_uid, SessionDep, NewSessionDep
 from model import DatabaseDep
 from model.identity import User, IdentityProvider, Issuer
 
@@ -74,7 +74,7 @@ def change_password(
 
     db.commit()
 
-    revoke_all_sessions(db, session.sub, except_id=session.jti)
+    revoke_by_uid(session.sub, db, except_id=session.jti)
 
 
 def hash_password(password: str) -> str:

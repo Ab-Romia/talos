@@ -1,14 +1,13 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Depends
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend.auth import auth_router, active_user
-from backend.auth.utils.helpers import UserDep
-from backend.auth.utils.session import session_middleware
+from backend.auth.utils.session import SessionMiddleware
 from config import cfg
 from model import Base
 from model import engine
@@ -28,7 +27,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title='Temp', lifespan=lifespan)
 app.include_router(auth_router, prefix="/api/auth")
-app.middleware("http")(session_middleware)
+app.add_middleware(SessionMiddleware)
 
 
 @app.get('/', response_class=HTMLResponse)
@@ -37,14 +36,16 @@ async def root():
         return f.read()
 
 
-@app.get('/config')
-async def config_page():
-    return cfg()
+@app.get("/signup", response_class=HTMLResponse)
+def signup_page():
+    # TODO:
+    return HTMLResponse("TODO")
 
 
-@app.get('/passkey-test', response_class=HTMLResponse)
-async def passkey_test_page(request: Request, user: UserDep):
-    return templates.TemplateResponse(request, "pages/passkey_test.html", {"username": user.username})
+@app.get("/signup/verify")
+def complete_signup(token: str):
+    # TODO:
+    return HTMLResponse(f"TODO: Token: {token}")
 
 
 @app.get('/smiley')

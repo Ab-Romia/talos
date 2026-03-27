@@ -14,7 +14,7 @@ from starlette.responses import RedirectResponse, HTMLResponse
 from backend.auth.utils import jwt
 from backend.auth.utils.helpers import sudo, SessionDep, UserDep, validate_signup_inputs
 from backend.auth.utils.jwt import BaseJWTClaims
-from backend.auth.utils.session import revoke_session_by_id, get_sessions_by_uid, revoke_all_sessions, NewSessionDep
+from backend.auth.utils.session import revoke, get_by_uid, revoke_by_uid, NewSessionDep
 from config import cfg
 from model import DatabaseDep
 from model.identity import User, Session
@@ -130,17 +130,17 @@ async def activate_sudo(
 
 @router.get("/sessions", dependencies=[Depends(sudo)])
 async def get_session(user: UserDep, db: DatabaseDep):
-    get_sessions_by_uid(user.id, db)
+    get_by_uid(user.id, db)
 
 
 @router.delete("/sessions", dependencies=[Depends(sudo)])
 async def revoke_current_token(user: UserDep, db: DatabaseDep):
-    revoke_all_sessions(db, user.id, except_id=None)
+    revoke_by_uid(user.id, db, except_id=None)
 
 
 @router.get("/sessions/{session_id}", dependencies=[Depends(sudo)])
 async def get_session_by_id(session_id: UUID, user: UserDep, db: DatabaseDep):
-    sessions = get_sessions_by_uid(user.id, db)
+    sessions = get_by_uid(user.id, db)
 
     for session in sessions:
         if session.id == session_id:
@@ -152,4 +152,4 @@ async def get_session_by_id(session_id: UUID, user: UserDep, db: DatabaseDep):
 
 @router.delete("/session/{session_id}", dependencies=[Depends(sudo)])
 async def revoke_token(session_id: UUID, db: DatabaseDep):
-    revoke_session_by_id(session_id, db)
+    revoke(session_id, db)
