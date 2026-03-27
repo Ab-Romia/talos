@@ -139,7 +139,7 @@ def new_session(claims: UnverifiedSessionDep, db: DatabaseDep):
         user_id=claims.sub,
         last_used_at=func.now(),
     )
-    db.add(sess)
+    db.merge(sess)
     db.commit()
 
 
