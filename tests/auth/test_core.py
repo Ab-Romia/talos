@@ -6,7 +6,7 @@ from fastapi import status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.auth.core import activate_sudo, logout, revoke_token, create_user, verify_email
+from backend.auth.core import activate_sudo, logout, revoke_token, initiate_signup, complete_signup
 from backend.auth.utils.jwt import verify_token
 from backend.auth.utils.session import SessionClaims
 from model.identity import User, Session as UserSession, IdentityProvider, Issuer
@@ -15,28 +15,28 @@ from model.identity import User, Session as UserSession, IdentityProvider, Issue
 class TestSignup:
     def test_success(self, client, path, db_session, capsys):
         suffix = uuid.uuid4().hex
-        user_data = {
-            "username": f"test-{suffix}",
-            "email": f"{suffix}@example.com",
-            "password": "TestPassword123!",
-        }
+        email_data = {"email": f"{suffix}@example.com"}
 
-        response = client.post(path(create_user), data=user_data)
+        response = client.post(path(initiate_signup), data=email_data)
+        
+        if response.status_code != 202:
+            print("ERROR", response.json())
 
-        assert response.status_code == status.HTTP_200_OK
-
-        user = db_session.scalar(
-            select(User)
-            .where(User.username == user_data["username"])
-        )
-        assert user is None
+        assert response.status_code == status.HTTP_202_ACCEPTED
 
         stdout = capsys.readouterr().out
         match = re.search(r"token=([^\n]+)", stdout)
         assert match is not None
         verify_token_value = match.group(1).strip()
+        
+        user_data = {
+            "email_token": verify_token_value,
+            "username": f"test-{suffix}",
+            "auth_type": "password",
+            "password": "TestPassword123!",
+        }
 
-        verify_response = client.get(f"{path(verify_email)}?token={verify_token_value}", follow_redirects=False)
+        verify_response = client.post(path(complete_signup), data=user_data, follow_redirects=False)
         assert verify_response.status_code == status.HTTP_302_FOUND
 
         user = db_session.scalar(
@@ -44,7 +44,7 @@ class TestSignup:
             .where(User.username == user_data["username"])
         )
         assert user is not None
-        assert user.primary_email == user_data["email"]
+        assert user.primary_email == email_data["email"]
 
         identity = db_session.scalar(
             select(IdentityProvider)
@@ -56,26 +56,18 @@ class TestSignup:
 
     def test_signup_duplicate_username_or_email(self, client, path, test_user):
         response = client.post(
-            path(create_user),
-            data={
-                "username": test_user.username,
-                "email": test_user.primary_email,
-                "password": "Password123!",
-            }
+            path(initiate_signup),
+            data={"email": test_user.primary_email}
         )
 
         assert response.status_code == status.HTTP_409_CONFLICT
 
     def test_verify_duplicate_user_returns_conflict(self, client, path, db_session: Session, capsys, test_user):
         response = client.post(
-            path(create_user),
-            data={
-                "username": "new-user-for-verify",
-                "email": "new_user_for_verify@example.com",
-                "password": "Password123!",
-            }
+            path(initiate_signup),
+            data={"email": "new_user_for_verify@example.com"}
         )
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_202_ACCEPTED
 
         stdout = capsys.readouterr().out
         match = re.search(r"token=([^\n]+)", stdout)
@@ -93,7 +85,15 @@ class TestSignup:
         db_session.add(conflict)
         db_session.commit()
 
-        verify_response = client.get(f"{path(verify_email)}?token={verify_token_value}")
+        verify_response = client.post(
+            path(complete_signup),
+            data={
+                "email_token": verify_token_value,
+                "username": "new-user-for-verify",
+                "auth_type": "password",
+                "password": "Password123!"
+            }
+        )
         assert verify_response.status_code == status.HTTP_409_CONFLICT
 
 

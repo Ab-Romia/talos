@@ -1,96 +1,137 @@
-"""
-Authentication-related endpoints.
-"""
+"""Authentication-related endpoints."""
+import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, status, Form, HTTPException
-from pydantic import BaseModel
+from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
-from starlette.responses import RedirectResponse, HTMLResponse
 
-from backend.auth.utils import jwt
-from backend.auth.utils.helpers import sudo, SessionDep, UserDep, validate_signup_inputs
-from backend.auth.utils.jwt import BaseJWTClaims
-from backend.auth.utils.session import revoke, get_by_uid, revoke_by_uid, NewSessionDep
 from config import cfg
 from model import DatabaseDep
 from model.identity import User, Session
+from utils.email import send_email
+from utils.ratelimit import email_ratelimit
 from .password import create_password_identity, hash_password
-from ..email.send import send_verification_email
+from .utils import jwt
+from .utils.helpers import sudo, UserDep
+from .utils.session import revoke, get_by_uid, revoke_by_uid, NewSessionDep, SessionDep
 
 router = APIRouter()
 
 
-class CreateUserRequest(BaseModel):
-    username: str
+class InitSignupClaims(jwt.BaseJWTClaims):
     email: str
-    password: str
 
 
-class UserVerificationClaims(BaseJWTClaims, CreateUserRequest):
-    pass
-
-
-@router.post("/signup", status_code=status.HTTP_202_ACCEPTED)
-def create_user(
-        create_user: Annotated[CreateUserRequest, Form()],
-        db: DatabaseDep
-):
+@router.post("/signup",
+             status_code=status.HTTP_202_ACCEPTED,
+             dependencies=[Depends(email_ratelimit("signup", "1/2minute"))])
+async def initiate_signup(email: Annotated[str, Form()], db: DatabaseDep):
     # TODO:
-    #  - Rate limit
     #  - Captcha
 
-    validate_signup_inputs(create_user, db)
+    try:
+        with db.begin_nested():
+            db.add(User(username='usr-' + uuid.uuid4().hex,
+                        primary_email=email))
+            db.flush()
+            db.rollback()
+    except IntegrityError as e:
+        if "email_format" in str(e.orig):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email format")
+        elif "ix_users_primary_email" in str(e.orig):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already exists")
 
-    claims = UserVerificationClaims(
+    token = jwt.create_token(InitSignupClaims(
         exp=datetime.now(timezone.utc) + timedelta(hours=1),
-        password=hash_password(create_user.password),
-        **create_user.model_dump()
-    )
-    token = jwt.create_token(claims)
+        email=email
+    ))
 
-    send_verification_email(create_user.email, token)
+    await send_email(email, f"http://localhost:8000/signup/complete?token={token}")
 
     return {"message": "Please check your email to verify your account."}
 
 
-@router.get("/complete_signup")
-def complete_signup(token: str):
-    return HTMLResponse(f"TODO: Implement complete signup page. Token: {token}")
+class PasswordAuth(BaseModel):
+    auth_type: Literal["password"]
+    password: str
 
 
-@router.post("/complete_signup")
-def verify_email(
-        token: Annotated[str, Form()],
-        user_info: dict(str, str),
-        session: NewSessionDep,
-        db: DatabaseDep):
+class PasskeyAuth(BaseModel):
+    auth_type: Literal["passkey"]
+    # TODO: Add specific passkey fields if needed
+    passkey: str
+
+
+class OtpAuth(BaseModel):
+    auth_type: Literal["otp"]
+    otp: str
+
+
+AuthInfo = Annotated[PasswordAuth | PasskeyAuth | OtpAuth, Field(discriminator="auth_type")]
+
+
+class SignupRequest(BaseModel):
+    email_token: str
+    username: str
+    name: str | None = None
+
+    auth_info: list[AuthInfo]
+
+
+@router.post("/signup/complete")
+def complete_signup(signup_info: Annotated[SignupRequest, Form()], session: NewSessionDep, db: DatabaseDep):
     # TODO:
-    #  - move
-    #  - Exception handling for:
     #  - Rate limit
-    claims = jwt.verify_token(token, return_model=UserVerificationClaims)
+    claims = jwt.verify_token(signup_info.email_token, return_model=InitSignupClaims)
 
-    # TODO: Continue with signup process (more user info, 2FA setup, etc)
+    for auth_method in signup_info.auth_info:
+        match auth_method:
+            case PasswordAuth(password=password):
+                if len(password) < 12:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                        detail="Password must be at least 8 characters long")
+            case PasskeyAuth():
+                pass  # TODO: implement passkey validation
+            case OtpAuth():
+                pass  # TODO: implement OTP validation
 
     try:
         user = User(
-            username=claims.username,
+            username=signup_info.username,
             primary_email=claims.email,
-            data=user_info,
+            # TODO: rest of info
         )
         db.add(user)
         db.flush()
-    except IntegrityError:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail="Username or email already exists")
+    except IntegrityError as e:
+        db.rollback()
+        err = str(e.orig)
+        if "email_format" in err:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="Invalid email format")
+        elif "ix_users_username" in err:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                detail="Username already exists")
+        elif "ix_users_primary_email" in err:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                detail="Email already exists")
+        else:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=f"Invalid input: {err}")
 
-    create_password_identity(user_id=user.id,
-                             password_hash=claims.password,
-                             db=db)
+    for auth_method in signup_info.auth_info:
+        match auth_method:
+            case PasswordAuth(password=password):
+                _ = create_password_identity(user.id, hash_password(password), db)
+            case PasskeyAuth():
+                pass  # TODO: implement passkey signup
+            case OtpAuth():
+                pass  # TODO: implement OTP signup
 
     session.sub = user.id
     db.commit()
@@ -113,16 +154,12 @@ async def logout(db: DatabaseDep, session: SessionDep):
 
 
 class SudoRequest(BaseModel):
-    passkey: str = None
-    password: str = None
-    otp: str = None
+    auth_info: AuthInfo
 
 
 @router.post("/sudo")
-async def activate_sudo(
-        # login_credentials: SudoRequest,
-        session: SessionDep,
-):
+async def activate_sudo(session: SessionDep,
+                        login_credentials: Annotated[SudoRequest | None, Form()]):
     # TODO: implement different sudo methods (password, otp, passkey)
 
     session.sudo_exp = datetime.now(timezone.utc) + cfg().auth.sudo_max_age

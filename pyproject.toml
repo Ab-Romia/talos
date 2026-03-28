@@ -24,6 +24,7 @@ dependencies = [
     "qrcode[pil]>=8.2",
     "joserfc>=1.6.3",
     "black>=26.3.1",
+    "limits>=5.8.0",
 ]
 
 [dependency-groups]

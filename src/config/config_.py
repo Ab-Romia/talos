@@ -37,7 +37,8 @@ class Config(BaseSettings):
     app_host: str
     app_port: int
 
-    database_url: str = ""
+    database_url: str
+    cache_backend: str = "memory://"
 
     auth: AuthConfig = None
 
