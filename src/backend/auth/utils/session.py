@@ -52,27 +52,18 @@ async def session_middleware(request: Request, call_next):
     token = jwt.create_token(claims)
     delta = claims.exp - datetime.now(timezone.utc)
 
-    accept_header = request.headers.get("accept", "*/*").split(",")
-    if "text/html" in accept_header:
-        if claims.deleted:
-            response.delete_cookie(key=SESSION_KEY, path="/")
-        elif claims.modified:
-            response.set_cookie(
-                key=SESSION_KEY,
-                value=token,
-                path="/",
-                secure=True,
-                httponly=True,
-                samesite="lax",
-                max_age=int(delta.total_seconds())
-            )
-    elif "application/json" in accept_header:
-        body = response.json()
-        body["session_token"] = token
-        body["session_expires_at"] = claims.exp.isoformat()
-        response.body = response.json_encoder.encode(body)
-    else:
-        response.headers["X-Session-Token"] = token
+    if claims.deleted:
+        response.delete_cookie(key=SESSION_KEY, path="/")
+    elif claims.modified:
+        response.set_cookie(
+            key=SESSION_KEY,
+            value=token,
+            path="/",
+            secure=False,
+            httponly=True,
+            samesite="lax",
+            max_age=int(delta.total_seconds())
+        )
 
     return response
 

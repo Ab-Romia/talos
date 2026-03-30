@@ -112,3 +112,13 @@ async def get_session_by_id(session_id: UUID, user: UserDep, db: DatabaseDep):
 @router.delete("/session/{session_id}", dependencies=[Depends(sudo)])
 async def revoke_token(session_id: UUID, db: DatabaseDep):
     revoke_session_by_id(session_id, db)
+
+
+@router.get("/me")
+def get_current_user(user: UserDep):
+    return {
+        "id": str(user.id),
+        "username": user.username,
+        "name": user.name,
+        "email": user.primary_email,
+    }

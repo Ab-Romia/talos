@@ -41,7 +41,7 @@ export const refreshToken = createAsyncThunk(
   'auth/refresh',
   async (_, { rejectWithValue }) => {
     try {
-      const data = await authService.refresh()
+      const data = await authService.me()
       return data
     } catch (err) {
       return rejectWithValue(err.detail || 'Session expired')
@@ -111,8 +111,9 @@ const authSlice = createSlice({
         state.sessionChecked = true
         localStorage.removeItem('talos_auth')
       })
-      .addCase(refreshToken.fulfilled, (state) => {
+      .addCase(refreshToken.fulfilled, (state, action) => {
         state.isAuthenticated = true
+        state.user = action.payload
         state.sessionChecked = true
         localStorage.setItem('talos_auth', 'true')
       })

@@ -17,7 +17,7 @@ __all__ = ["RAGChain"]
 @final
 class RAGChain:
     def __init__(self, collection_name: str, config: RagConfig = global_rag_config, workspace_id: str | None = None):
-        from src.rag import (
+        from rag import (
             get_query_rewriter,
             get_hyde_embeddings,
             get_vectorstore,
@@ -96,7 +96,7 @@ class RAGChain:
         return full_response
 
     def stream_query(self, question: str, include_citations: bool = True):
-        from src.rag import format_citations
+        from rag import format_citations
 
         self.last_query_info = {
             "original_query": question,
@@ -134,7 +134,7 @@ class RAGChain:
         self.memory.add_ai_message(full_response)
 
     async def ingest_documents(self, file_paths: list[str]):
-        from src.rag import load_documents
+        from rag import load_documents
 
         documents = [doc async for doc in load_documents(file_paths)]
         return self.vectorstore.add_documents(documents)

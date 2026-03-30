@@ -23,6 +23,9 @@ import {
   Copy, RefreshCw, ThumbsUp, ThumbsDown, FileText, X,
 } from 'lucide-react'
 
+import { useSelector } from 'react-redux'
+import { chatService } from '../../services/chat'
+
 const TEAM_MEMBERS = [
   'Abdelrahman Abouromia',
   'Mohab Sherif',
@@ -31,22 +34,6 @@ const TEAM_MEMBERS = [
   'Nourhane Tarek',
   'Abdullah Elsalmy',
   'Dr. Mervat Mikhail',
-]
-
-const initialMessages = [
-  {
-    id: 1, role: 'ai', name: 'Talos', time: '2:01 PM',
-    body: "Hello! I'm your AI research assistant. I have access to all documents in this workspace. Ask me anything about your uploaded research.",
-  },
-  {
-    id: 2, role: 'user', name: 'Abdelrahman Mashaal', initials: 'AM', time: '2:04 PM',
-    body: 'What are the main findings from the RAG evaluation paper?',
-  },
-  {
-    id: 3, role: 'ai', name: 'Talos', time: '2:04 PM',
-    body: 'RICH',
-    sources: ['RAG_Evaluation_2024.pdf', 'Reranking_Methods.pdf', 'Chunking_Strategies.docx'],
-  },
 ]
 
 function getTimeString() {
@@ -77,7 +64,7 @@ function SourceChip({ name, onClick }) {
 
 export default function ChatPage() {
   const [input, setInput] = useState('')
-  const [messages, setMessages] = useState(initialMessages)
+  const [messages, setMessages] = useState([])
   const [snackbar, setSnackbar] = useState({ open: false, message: '' })
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -85,10 +72,50 @@ export default function ChatPage() {
   const [usersAnchor, setUsersAnchor] = useState(null)
   const [sourceDialog, setSourceDialog] = useState({ open: false, name: '' })
   const [thumbsState, setThumbsState] = useState({})
+  const [streaming, setStreaming] = useState(false)
+  const [workspaceId, setWorkspaceId] = useState(null)
+  const [chatroomId, setChatroomId] = useState(null)
+
+  const user = useSelector((state) => state.auth.user)
 
   const threadRef = useRef(null)
   const textareaRef = useRef(null)
-  const nextIdRef = useRef(4)
+  const nextIdRef = useRef(1)
+
+  // Initialize: ensure workspace + chatroom exist, load messages
+  useEffect(() => {
+    async function init() {
+      try {
+        let workspaces = await chatService.getWorkspaces()
+        let ws = workspaces[0]
+        if (!ws) {
+          ws = await chatService.createWorkspace('My Workspace')
+        }
+        setWorkspaceId(ws.id)
+
+        let chatrooms = await chatService.getChatrooms(ws.id)
+        let cr = chatrooms[0]
+        if (!cr) {
+          cr = await chatService.createChatroom(ws.id, 'general')
+        }
+        setChatroomId(cr.id)
+
+        const history = await chatService.getMessages(ws.id, cr.id)
+        const mapped = history.map((m) => ({
+          id: nextIdRef.current++,
+          role: m.role,
+          name: m.role === 'ai' ? 'Talos' : (user?.name || 'You'),
+          initials: m.role === 'user' ? (user?.name || 'U').split(' ').map(n => n[0]).join('').slice(0, 2) : undefined,
+          time: m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '',
+          body: m.content,
+        }))
+        setMessages(mapped)
+      } catch (err) {
+        console.error('Chat init failed:', err)
+      }
+    }
+    init()
+  }, [user])
 
   useEffect(() => {
     if (threadRef.current) {
@@ -107,31 +134,56 @@ export default function ChatPage() {
 
   const handleSend = useCallback(() => {
     const text = input.trim()
-    if (!text) return
+    if (!text || streaming || !workspaceId || !chatroomId) return
 
     const userMsg = {
       id: nextIdRef.current++,
       role: 'user',
-      name: 'Abdelrahman Mashaal',
-      initials: 'AM',
+      name: user?.name || 'You',
+      initials: (user?.name || 'U').split(' ').map(n => n[0]).join('').slice(0, 2),
       time: getTimeString(),
       body: text,
     }
     setMessages((prev) => [...prev, userMsg])
     setInput('')
 
-    setTimeout(() => {
-      const preview = text.length > 30 ? text.slice(0, 30) + '...' : text
-      const aiMsg = {
-        id: nextIdRef.current++,
-        role: 'ai',
-        name: 'Talos',
-        time: getTimeString(),
-        body: `I'm analyzing your query about "${preview}" This feature will be connected to the RAG pipeline soon.`,
-      }
-      setMessages((prev) => [...prev, aiMsg])
-    }, 1000)
-  }, [input])
+    const aiId = nextIdRef.current++
+    const aiMsg = {
+      id: aiId,
+      role: 'ai',
+      name: 'Talos',
+      time: getTimeString(),
+      body: '',
+      sources: null,
+    }
+    setMessages((prev) => [...prev, aiMsg])
+    setStreaming(true)
+
+    chatService.sendMessage(
+      workspaceId,
+      chatroomId,
+      text,
+      (chunk) => {
+        setMessages((prev) =>
+          prev.map((m) => m.id === aiId ? { ...m, body: m.body + chunk } : m)
+        )
+      },
+      (sources) => {
+        if (sources.length > 0) {
+          setMessages((prev) =>
+            prev.map((m) => m.id === aiId ? { ...m, sources: sources.map(s => s.filename) } : m)
+          )
+        }
+        setStreaming(false)
+      },
+      (error) => {
+        setMessages((prev) =>
+          prev.map((m) => m.id === aiId ? { ...m, body: error } : m)
+        )
+        setStreaming(false)
+      },
+    )
+  }, [input, streaming, workspaceId, chatroomId, user])
 
   const handleKeyDown = useCallback((e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -161,9 +213,7 @@ export default function ChatPage() {
 
 
   const handleCopy = useCallback((msg) => {
-    const text = msg.body === 'RICH'
-      ? 'Based on the uploaded evaluation paper, the main findings are: 1. Hybrid retrieval outperforms single-method approaches. 2. Cross-encoder reranking is critical for precision. 3. Chunk size significantly affects answer quality.'
-      : msg.body
+    const text = msg.body
     navigator.clipboard.writeText(text).then(() => {
       showSnackbar('Copied to clipboard')
     }).catch(() => {
@@ -351,28 +401,7 @@ export default function ChatPage() {
                   <span className="text-[12px] text-ink-muted">{msg.time}</span>
                 </div>
 
-                {msg.body === 'RICH' ? (
-                  <div className="text-[14px] text-ink leading-relaxed">
-                    <p className="mb-3">Based on the uploaded evaluation paper, the main findings are:</p>
-                    <p className="mb-3">
-                      <strong>1. Hybrid retrieval outperforms single-method approaches.</strong>{' '}
-                      Combining dense embeddings with BM25 sparse retrieval improved recall by 23% compared to dense-only retrieval <CitationMarker number={1} />.
-                      The fusion strategy used reciprocal rank fusion (RRF) for score combination.
-                    </p>
-                    <p className="mb-3">
-                      <strong>2. Cross-encoder reranking is critical for precision.</strong>{' '}
-                      Adding a reranking step after initial retrieval improved the precision@10 metric by 31% <CitationMarker number={2} />,
-                      though it adds ~200ms of latency per query.
-                    </p>
-                    <p>
-                      <strong>3. Chunk size significantly affects answer quality.</strong>{' '}
-                      The paper found that 512-token chunks with 50-token overlap produced the best balance of context and specificity{' '}
-                      <CitationMarker number={1} /> <CitationMarker number={3} />.
-                    </p>
-                  </div>
-                ) : (
-                  <p className="text-[14px] text-ink leading-relaxed">{msg.body}</p>
-                )}
+                <p className="text-[14px] text-ink leading-relaxed whitespace-pre-wrap">{msg.body}{msg.role === 'ai' && streaming && messages[messages.length - 1]?.id === msg.id ? '▍' : ''}</p>
 
                 {msg.sources && (
                   <div className="mt-4 pt-3 border-t border-[rgba(28,27,26,0.06)]">
@@ -426,7 +455,7 @@ export default function ChatPage() {
                   ? 'bg-amber text-white shadow-sm hover:bg-amber-hover hover:shadow-md'
                   : 'bg-surface-3 text-ink-muted cursor-default'
               }`}
-              disabled={!input.trim()}
+              disabled={!input.trim() || streaming}
             >
               <ArrowUp size={16} strokeWidth={2.5} />
             </button>
@@ -498,7 +527,7 @@ export default function ChatPage() {
           <div className="flex flex-col items-center justify-center py-8 text-center">
             <FileText size={48} className="text-ink-muted mb-4" />
             <Typography variant="body2" color="text.secondary">
-              Preview not available in demo mode
+              Document preview not available yet
             </Typography>
           </div>
         </DialogContent>

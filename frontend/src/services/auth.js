@@ -13,8 +13,8 @@ export const authService = {
     return api.post('/api/auth/logout')
   },
 
-  refresh() {
-    return api.post('/api/auth/refresh')
+  me() {
+    return api.get('/api/auth/me')
   },
 
   googleLogin() {

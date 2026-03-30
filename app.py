@@ -6,6 +6,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from backend.auth import auth_router, active_user
+from backend.chat import chat_router
 from backend.auth.utils.helpers import UserDep
 from backend.auth.utils.session import session_middleware
 from config import cfg
@@ -58,6 +59,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title='Temp', lifespan=lifespan)
 app.include_router(auth_router, prefix="/api/auth")
+app.include_router(chat_router, prefix="/api")
 app.include_router(files_router, prefix="/api")
 app.middleware("http")(session_middleware)
 
