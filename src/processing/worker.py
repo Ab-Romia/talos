@@ -18,6 +18,8 @@ def get_redis_settings() -> RedisSettings:
         host=parsed.hostname or "localhost",
         port=parsed.port or 6379,
         database=int(parsed.path.lstrip("/") or 0),
+        password=parsed.password,
+        username=parsed.username,
     )
 
 
@@ -48,9 +50,7 @@ async def on_shutdown(ctx):
 class WorkerSettings:
     """ARQ worker settings."""
 
-    from processing.tasks import process_file
-
-    functions = [func(process_file, max_tries=3)]
+    functions = [func("processing.tasks.process_file", max_tries=3)]
     redis_settings = get_redis_settings()
     on_startup = on_startup
     on_shutdown = on_shutdown

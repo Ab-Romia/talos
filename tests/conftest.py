@@ -3,7 +3,7 @@ from datetime import timedelta
 import pytest
 import sqlalchemy
 import sqlalchemy.exc
-from charset_normalizer.md import lru_cache
+from functools import lru_cache
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text, delete
 from sqlalchemy.orm import Session

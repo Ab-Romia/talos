@@ -2,26 +2,26 @@ import { api } from './api'
 
 export const authService = {
   login(username, password) {
-    return api.postForm('/auth/password/', { username, password })
+    return api.postForm('/api/auth/password/', { username, password })
   },
 
   signup({ username, primary_email, password, name }) {
-    return api.post('/auth/signup', { username, primary_email, password, name })
+    return api.postForm('/api/auth/signup', { username, primary_email, password, name })
   },
 
   logout() {
-    return api.post('/auth/logout')
+    return api.post('/api/auth/logout')
   },
 
   refresh() {
-    return api.post('/auth/refresh')
+    return api.post('/api/auth/refresh')
   },
 
   googleLogin() {
-    window.location.href = '/auth/google/login'
+    window.location.href = '/api/auth/oauth/google'
   },
 
   githubLogin() {
-    window.location.href = '/auth/github'
+    window.location.href = '/api/auth/oauth/github'
   },
 }

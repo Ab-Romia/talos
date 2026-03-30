@@ -47,6 +47,8 @@ async def upload_file(
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "File exceeds maximum size")
     except UnsupportedFileType as e:
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, str(e))
+    except ValueError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
 
     # Enqueue background processing
     arq_pool = getattr(request.app.state, "arq_pool", None)

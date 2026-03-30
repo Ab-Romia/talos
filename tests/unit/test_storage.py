@@ -110,6 +110,13 @@ class TestMinIOStorage:
         internal.fget_object.assert_called_once_with("talos-uploads", "key", "/tmp/test")
 
     @pytest.mark.asyncio
+    async def test_download_file_to_path_raises_storage_error(self):
+        storage, internal, _ = _make_storage()
+        internal.fget_object.side_effect = _s3_error()
+        with pytest.raises(StorageError):
+            await storage.download_file_to_path("key", "/tmp/test")
+
+    @pytest.mark.asyncio
     async def test_delete_file_calls_remove_object(self):
         storage, internal, _ = _make_storage()
         await storage.delete_file("key")

@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 from io import BytesIO
+from urllib.parse import quote
 
 import urllib3
 from fastapi.concurrency import run_in_threadpool
@@ -136,7 +137,7 @@ class MinIOStorage:
                 storage_key,
                 expires=expires,
                 response_headers={
-                    "response-content-disposition": f'attachment; filename="{original_filename}"'
+                    "response-content-disposition": f"attachment; filename*=UTF-8''{quote(original_filename)}"
                 },
             )
             return url

@@ -138,6 +138,22 @@ class TestProcessImage:
         assert record.thumbnail_storage_key.endswith("_thumb.jpg")
 
     @pytest.mark.asyncio
+    async def test_raises_on_corrupt_image(self, mock_storage):
+        from processing.images import process_image
+
+        record = _make_record()
+        db = MagicMock()
+
+        async def fake_download(key, path):
+            with open(path, "wb") as f:
+                f.write(b"not a valid image at all")
+
+        mock_storage.download_file_to_path = AsyncMock(side_effect=fake_download)
+
+        with pytest.raises(Exception):
+            await process_image(record, db, mock_storage)
+
+    @pytest.mark.asyncio
     async def test_cleans_up_temp_file(self, mock_storage):
         from processing.images import process_image
 

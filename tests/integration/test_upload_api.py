@@ -46,6 +46,15 @@ class TestUploadAPI:
         )
         assert resp.status_code == 202
 
+    def test_upload_unsupported_mime_returns_415(self, client, test_workspace):
+        # ZIP magic bytes -> detected as application/zip (not in ALLOWED_MIME_TYPES)
+        zip_header = b'PK\x03\x04' + b'\x00' * 100
+        resp = client.post(
+            f"/api/workspaces/{test_workspace.id}/files",
+            files={"file": ("archive.zip", zip_header, "application/zip")},
+        )
+        assert resp.status_code == 415
+
     def test_upload_persists_to_db(self, client, test_workspace, db_session):
         resp = client.post(
             f"/api/workspaces/{test_workspace.id}/files",

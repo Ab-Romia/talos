@@ -3,7 +3,7 @@ import pytest
 from files.exceptions import (
     FileError,
     FileTooLarge,
-    FileNotFoundError,
+    FileRecordNotFound,
     StorageError,
     UnsupportedFileType,
 )
@@ -24,7 +24,7 @@ class TestExceptions:
         assert "video/mp4" in str(exc)
 
     def test_file_not_found_attrs(self):
-        exc = FileNotFoundError("abc-123")
+        exc = FileRecordNotFound("abc-123")
         assert exc.file_id == "abc-123"
         assert "abc-123" in str(exc)
 
@@ -37,5 +37,5 @@ class TestExceptions:
     def test_hierarchy(self):
         assert issubclass(FileTooLarge, FileError)
         assert issubclass(UnsupportedFileType, FileError)
-        assert issubclass(FileNotFoundError, FileError)
+        assert issubclass(FileRecordNotFound, FileError)
         assert issubclass(StorageError, FileError)

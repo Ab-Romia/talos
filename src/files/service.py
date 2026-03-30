@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime
 
 import magic
+from utils.datetime import utcnow
 from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -21,7 +22,7 @@ logger = get_logger(__name__)
 
 
 class FileService:
-    def __init__(self, db: Session, storage: MinIOStorage):
+    def __init__(self, db: Session, storage: MinIOStorage | None = None):
         self.db = db
         self.storage = storage
 
@@ -40,6 +41,19 @@ class FileService:
 
         if detected_mime not in ALLOWED_MIME_TYPES:
             raise UnsupportedFileType(detected_mime)
+
+        # 1b. Validate chatroom belongs to workspace
+        if chatroom_id is not None:
+            from model.messaging import Chatroom
+            chatroom = self.db.scalar(
+                select(Chatroom).where(
+                    Chatroom.id == chatroom_id,
+                    Chatroom.workspace_id == workspace_id,
+                    Chatroom.deleted_at.is_(None),
+                )
+            )
+            if chatroom is None:
+                raise ValueError(f"Chatroom {chatroom_id} not found in workspace {workspace_id}")
 
         # 2. Get actual file size
         file.file.seek(0, os.SEEK_END)
@@ -61,10 +75,7 @@ class FileService:
         )
 
         # 4. Compute checksum
-        sha256 = hashlib.sha256()
-        while chunk := file.file.read(1024 * 1024):
-            sha256.update(chunk)
-        checksum = sha256.hexdigest()
+        checksum = hashlib.file_digest(file.file, "sha256").hexdigest()
         file.file.seek(0)
 
         # 5. Upload to MinIO
@@ -193,7 +204,7 @@ class FileService:
         if file is None:
             return None
 
-        file.deleted_at = datetime.now()
+        file.deleted_at = utcnow()
         self.db.commit()
         self.db.refresh(file)
 

@@ -15,7 +15,7 @@ class UnsupportedFileType(FileError):
         super().__init__(f"Unsupported file type: {mime_type}")
 
 
-class FileNotFoundError(FileError):
+class FileRecordNotFound(FileError):
     def __init__(self, file_id: str):
         self.file_id = file_id
         super().__init__(f"File not found: {file_id}")

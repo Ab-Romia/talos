@@ -92,24 +92,17 @@ class TestProcessFile:
 
     @pytest.mark.asyncio
     async def test_sets_failed_on_error(self):
-        file_id = uuid.uuid4()
         record = MagicMock(spec=FileAttachment)
         record.processing_status = ProcessingStatus.UPLOADED
         record.content_type = "text/plain"
         record.processing_error = None
-
-        db = MagicMock()
-        db.get.return_value = record
-        factory = MagicMock(return_value=db)
-        factory.return_value.__enter__ = MagicMock(return_value=db)
-        factory.return_value.__exit__ = MagicMock(return_value=False)
-        ctx = {"db_session_factory": factory, "minio_storage": MagicMock()}
+        ctx, db = self._make_ctx(file_record=record)
 
         mock_proc_doc = AsyncMock(side_effect=RuntimeError("extraction failed"))
         with patch.dict("sys.modules", {"processing.documents": MagicMock(process_document=mock_proc_doc)}):
             from processing.tasks import process_file
             with pytest.raises(RuntimeError):
-                await process_file(ctx, str(file_id))
+                await process_file(ctx, str(uuid.uuid4()))
 
         db.rollback.assert_called_once()
         assert record.processing_status == ProcessingStatus.FAILED

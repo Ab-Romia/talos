@@ -5,7 +5,7 @@ from typing import Optional
 
 from sqlalchemy import (
     DateTime, UUID, ForeignKey, String, BigInteger,
-    Index, Table, Column, text,
+    Index, Table, Column, text, func,
 )
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -66,8 +66,8 @@ class FileAttachment(Base):
     thumbnail_storage_key: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     chunk_count: Mapped[Optional[int]] = mapped_column(nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False, default=datetime.now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False, default=datetime.now, onupdate=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=True)
 
     workspace = relationship("Workspace", back_populates="files")

@@ -222,3 +222,77 @@ class TestFileServiceDelete:
 
         result = svc.attach_to_message(uuid.uuid4(), uuid.uuid4(), uuid.uuid4())
         assert result is True
+
+    def test_attach_returns_false_when_message_not_found(self):
+        db = MagicMock()
+        file_record = MagicMock()
+        db.scalar.side_effect = [file_record, None]  # file found, message not
+        svc = FileService(db, storage=None)
+
+        result = svc.attach_to_message(uuid.uuid4(), uuid.uuid4(), uuid.uuid4())
+        assert result is False
+
+
+@pytest.mark.unit
+class TestFileServiceUploadEdgeCases:
+    @pytest.mark.asyncio
+    @patch("files.service.magic.from_buffer", return_value="text/plain")
+    async def test_upload_handles_no_extension(self, mock_magic, mock_storage):
+        db = MagicMock()
+        svc = FileService(db, mock_storage)
+        upload = _make_upload_file(filename="README")
+
+        result = await svc.upload(upload, uuid.uuid4(), uuid.uuid4())
+        assert not result.storage_key.endswith(".")
+
+
+@pytest.mark.unit
+class TestFileServiceListFiles:
+    def test_list_files_empty_results(self):
+        db = MagicMock()
+        db.scalars.return_value.all.return_value = []
+        svc = FileService(db, storage=None)
+
+        files, cursor = svc.list_files(uuid.uuid4())
+        assert files == []
+        assert cursor is None
+
+    def test_list_files_invalid_cursor_ignored(self):
+        db = MagicMock()
+        db.scalars.return_value.all.return_value = []
+        svc = FileService(db, storage=None)
+
+        files, cursor = svc.list_files(uuid.uuid4(), cursor="not-a-valid-cursor")
+        assert files == []
+        assert cursor is None
+
+    def test_list_files_returns_next_cursor_when_more(self):
+        db = MagicMock()
+        records = []
+        for i in range(21):
+            r = MagicMock()
+            r.created_at = datetime(2025, 1, 1, 0, 0, i)
+            r.id = uuid.uuid4()
+            records.append(r)
+        db.scalars.return_value.all.return_value = records
+        svc = FileService(db, storage=None)
+
+        files, cursor = svc.list_files(uuid.uuid4(), limit=20)
+        assert len(files) == 20
+        assert cursor is not None
+        assert "|" in cursor
+
+    def test_list_files_no_cursor_when_exactly_at_limit(self):
+        db = MagicMock()
+        records = []
+        for i in range(20):
+            r = MagicMock()
+            r.created_at = datetime(2025, 1, 1, 0, 0, i)
+            r.id = uuid.uuid4()
+            records.append(r)
+        db.scalars.return_value.all.return_value = records
+        svc = FileService(db, storage=None)
+
+        files, cursor = svc.list_files(uuid.uuid4(), limit=20)
+        assert len(files) == 20
+        assert cursor is None

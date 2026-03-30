@@ -32,11 +32,11 @@ async def process_image(
 
         # Generate thumbnail
         with Image.open(tmp_path) as img:
-            img.thumbnail(THUMBNAIL_SIZE)
-
-            # Convert to RGB if necessary (e.g., RGBA PNGs)
+            # Convert to RGB first (faster to thumbnail a 3-channel image)
             if img.mode in ("RGBA", "P"):
                 img = img.convert("RGB")
+
+            img.thumbnail(THUMBNAIL_SIZE)
 
             thumb_buffer = BytesIO()
             img.save(thumb_buffer, format="JPEG", quality=85)
