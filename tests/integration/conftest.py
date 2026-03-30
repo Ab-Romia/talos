@@ -126,7 +126,7 @@ def make_file(db_session, test_user):
 def client(db_session, test_user, test_workspace, mock_storage):
     """FastAPI TestClient with all dependencies overridden and lifespan disabled."""
     from fastapi.testclient import TestClient
-    from backend.auth.helpers import active_user
+    from backend.auth.utils.helpers import active_user
     from files.dependencies import get_workspace_member, get_storage
     from app import app
 

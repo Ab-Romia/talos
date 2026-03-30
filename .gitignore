@@ -78,10 +78,3 @@ temp/
 *.cast
 
 node_modules
-
-# Config with secrets
-config/config.yaml
-config/*.local.yaml
-
-# Frontend build output
-frontend/dist/

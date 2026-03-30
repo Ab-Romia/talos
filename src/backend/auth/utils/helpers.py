@@ -1,0 +1,82 @@
+from datetime import datetime, timezone
+from typing import Annotated
+
+from fastapi import Depends
+from fastapi.exception_handlers import http_exception_handler as fastapi_http_exception_handler
+from sqlalchemy import select
+from starlette.requests import Request
+from starlette.responses import RedirectResponse
+
+from backend.auth.utils import errors
+from backend.auth.utils.session import SessionDep, auth_token, unverified_session, verified_session, \
+    UnverifiedSessionDep
+from model import DatabaseDep
+from model.identity import User, Session
+
+
+# TODO:
+#  forgot password,
+#  backup codes for totp
+#  email verification,
+#  multiple account support
+#  sudo mode (re-auth for sensitive actions)
+#  remember me functionality
+#  device recognition (e.g. for risk-based authentication)
+#  exception handling
+#  use starlette middleware session
+#  prevent re-signin, and invalidate prev session on resignin
+
+
+async def auth_exception_handler(request: Request, exc: errors.AuthException):
+    # TODO: return JSON response for non-browser requests (e.g. API clients) instead of redirecting to login page
+    # Check if the request is a browser GET request (accepts text/html)
+    if request.method.upper() != "GET" or "text/html" not in request.headers.get("accept", ""):
+        return await fastapi_http_exception_handler(request, exc)
+
+    match type(exc):
+        case errors.InvalidToken:
+            return RedirectResponse(url=request.url_for("login"), status_code=302)
+
+    return await fastapi_http_exception_handler(request, exc)
+
+
+def active_user(session: UnverifiedSessionDep, db: DatabaseDep):
+    user = db.scalar(select(User)
+                     .join(Session, User.id == Session.user_id)
+                     .where(User.id == session.sub)
+                     .where(Session.id == session.jti)
+                     .where(User.deleted_at.is_(None)))
+    if user is None:
+        raise errors.UserNotFound()
+
+    if session.requires_otp:
+        raise errors.OTPRequired()
+
+    if user.deleted_at is not None:
+        raise errors.UserNotFound()
+
+    if not user.email_verified:
+        raise errors.EmailNotVerified()
+
+    return user
+
+
+def optional_active_user(request: Request, db: DatabaseDep):
+    try:
+        token = auth_token(
+            authorization=request.headers.get("Authorization"),
+            user_session=request.cookies.get("user_session"),
+        )
+        sess = unverified_session(request, token)
+        return active_user(next(sess), db)
+    except errors.AuthException:
+        return None
+
+
+def sudo(session: SessionDep):
+    if session.sudo_exp is None or session.sudo_exp < datetime.now(timezone.utc):
+        raise errors.SudoRequired()
+
+
+UserDep = Annotated[User, Depends(active_user)]
+OptionalUserDep = Annotated[User | None, Depends(optional_active_user)]

@@ -1,14 +1,14 @@
 import uuid
 from datetime import timedelta
 
-import jwt
 from fastapi import status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from config import cfg
+from backend.auth.core import activate_sudo, logout, revoke_token, create_user
+from backend.auth.utils.jwt import verify_token
+from backend.auth.utils.session import SessionClaims
 from model.identity import User, Session as UserSession
-from utils.datetime import utcnow
 
 
 class TestSignup:
@@ -22,7 +22,7 @@ class TestSignup:
             "name": faker.name(),
         }
 
-        response = client.post(path("create_user"), data=user_data)
+        response = client.post(path(create_user), data=user_data)
 
         assert response.status_code == status.HTTP_201_CREATED
 
@@ -38,19 +38,17 @@ class TestSignup:
 
 
 class TestLogout:
-
     def test_deletes_session(self, client, path, db_session, test_user, test_session, auth_token):
-        session_id = test_session.id
+        session_id = test_session.jti
 
-        jwt_claims = jwt.decode(auth_token,
-                                key=cfg().auth.jwt_secret_key,
-                                algorithms=[cfg().auth.jwt_algorithm], )
-        assert jwt_claims["sub"] == str(test_user.id)
-        assert jwt_claims["jti"] == str(session_id)
-        assert jwt_claims["exp"] > utcnow().timestamp()
+        jwt_claims = verify_token(auth_token, return_model=SessionClaims)
+        assert jwt_claims.sub == test_user.id
+        assert jwt_claims.jti == session_id
+        from datetime import timezone, datetime
+        assert jwt_claims.exp > datetime.now(timezone.utc)
 
         response = client.post(
-            path("logout"),
+            path(logout),
             headers={"Authorization": f"Bearer {auth_token}"},
         )
 
@@ -61,37 +59,41 @@ class TestLogout:
         assert session is None
 
     def test_without_token(self, client, path, db_session):
-        response = client.post(path("logout"))
+        response = client.post(path(logout))
 
         assert response.status_code in [status.HTTP_200_OK, status.HTTP_401_UNAUTHORIZED]
 
 
 class TestSudo:
     def test_creates_short_lived_token(self, client, path, db_session, test_user, test_session, auth_token):
-        from backend.auth.helpers import JWTClaims
-
         response = client.post(
-            path("sudo"),
+            path(activate_sudo),
             headers={"Authorization": f"Bearer {auth_token}"},
             json={"password": "test"},  # TODO: Implementation needed
         )
 
         assert response.status_code == status.HTTP_200_OK
-        data = response.json()
-        assert "access_token" in data
+        # Implementation returns the token in the cookie by default when Accept header is not application/json
+        # and response body is empty.
+        token = response.cookies.get("user_session")
+        if token is None:
+            token = response.headers.get("X-Session-Token")
+
+        assert token is not None
 
         # Verify token has sudo flag
-        token = data["access_token"]
-        claims = JWTClaims.from_jwt_string(token)
-        assert claims.sudo is True
+        claims = verify_token(token, return_model=SessionClaims)
+        assert claims.sudo_exp is not None
 
-        # Verify short expiration
-        exp_delta = claims.exp - utcnow()
-        assert exp_delta < timedelta(minutes=20)  # Should be ~15 minutes
+        # Verify short sudo expiration
+        from datetime import timezone, datetime
+        sudo_delta = claims.sudo_exp - datetime.now(timezone.utc)
+        assert sudo_delta < timedelta(minutes=20)  # Should be ~15 minutes
+        assert sudo_delta > timedelta(seconds=0)
 
     def test_without_authentication(self, client, path, db_session):
         response = client.post(
-            path("sudo"),
+            path(activate_sudo),
             json={"password": "test"},
         )
 
@@ -99,31 +101,24 @@ class TestSudo:
 
 
 class TestRevokeToken:
-    def test_session_with_sudo_token(self, client, path, db_session, test_user, sudo_auth_token):
-        from backend.auth.helpers import create_or_update_session
-
-        # Create a session to revoke
-        session_id = create_or_update_session(db=db_session, user_id=test_user.id)
-
-        response = client.post(
-            path("revoke_token"),
+    def test_session_with_sudo_token(self, client, path, db_session, test_session, sudo_auth_token):
+        response = client.delete(
+            path(revoke_token, session_id=test_session.jti),
             headers={"Authorization": f"Bearer {sudo_auth_token}"},
-            data={"session_id": str(session_id)},
         )
 
         assert response.status_code == status.HTTP_200_OK
 
         # Verify session was deleted
-        session = db_session.get(UserSession, session_id)
+        session = db_session.get(UserSession, test_session.jti)
         assert session is None
 
     def test_without_sudo_token(self, client, path, db_session, auth_token):
         session_id = uuid.uuid4()
 
-        response = client.post(
-            path("revoke_token"),
+        response = client.delete(
+            path(revoke_token, session_id=session_id),
             headers={"Authorization": f"Bearer {auth_token}"},
-            data={"session_id": str(session_id)},
         )
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED

@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 
-from backend.auth.helpers import active_user
+from backend.auth.utils.helpers import active_user
 from files.constants import MAX_FILE_SIZE
 from files.dependencies import get_storage, get_workspace_member
 from files.exceptions import FileTooLarge, UnsupportedFileType

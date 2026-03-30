@@ -1,32 +1,25 @@
 import uuid
-from datetime import datetime, timedelta
+from typing import Annotated
 
 import bcrypt
-from fastapi import Depends, HTTPException, status, APIRouter, Response
+from fastapi import Depends, HTTPException, status, APIRouter
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select, or_, update
 
 from model import DatabaseDep
 from model.identity import User, IdentityProvider, Issuer
-from .helpers import create_and_save_token, clear_all_sessions, sudo_token, UserDep
+from backend.auth.utils.helpers import sudo
+from backend.auth.utils.session import revoke_all_sessions, UnverifiedSessionDep, SessionDep
 
 router = APIRouter()
 
 
-def hash_password(password: str) -> str:
-    """Hash a plaintext password using bcrypt."""
-    salt = bcrypt.gensalt()
-    hashed = bcrypt.hashpw(password.encode("utf-8"), salt)
-    return hashed.decode("utf-8")
-
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a plaintext password against a hashed password."""
-    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
-
-
 @router.post("/")
-def password_authenticate(response: Response, db: DatabaseDep, form_data: OAuth2PasswordRequestForm = Depends()):
+def password_authenticate(
+        form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+        db: DatabaseDep,
+        session: UnverifiedSessionDep,
+):
     HTTP_EXCEPTION = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                                    detail="Incorrect username or password.")
 
@@ -61,35 +54,39 @@ def password_authenticate(response: Response, db: DatabaseDep, form_data: OAuth2
         .where(IdentityProvider.issuer == Issuer.totp)
     )
 
+    session.sub = user.id
     if requires_otp:
-        # create a short-lived token requiring OTP (does not create DB session yet)
-        # TODO: use starlette session
-        return create_and_save_token(response=response,
-                                     db=db, user_id=user.id,
-                                     duration=timedelta(minutes=5),
-                                     requires_otp=True,
-                                     cookie_key="access_token",
-                                     session_cookie=True,
-                                     save_to_db=False)
-    else:
-        # create and save a normal session token and set cookie
-        return create_and_save_token(response=response, db=db, user_id=user.id)
+        session.requires_totp = True
 
 
-@router.put("/change", dependencies=[Depends(sudo_token)])
-def change_password(new_password: str, response: Response, user: UserDep, db: DatabaseDep):
+@router.put("/change", dependencies=[Depends(sudo)])
+def change_password(
+        new_password: str,
+        db: DatabaseDep,
+        session: SessionDep
+):
     db.execute(
         update(IdentityProvider)
-        .where(IdentityProvider.user_id == user.id,
+        .where(IdentityProvider.user_id == session.sub,
                IdentityProvider.issuer == Issuer.password)
         .values(data={"hash": hash_password(new_password)})
     )
 
     db.commit()
 
-    clear_all_sessions(user, db)
+    revoke_all_sessions(db, session.sub, except_id=session.jti)
 
-    return create_and_save_token(response=response, db=db, user_id=user.id)
+
+def hash_password(password: str) -> str:
+    """Hash a plaintext password using bcrypt."""
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password.encode("utf-8"), salt)
+    return hashed.decode("utf-8")
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a plaintext password against a hashed password."""
+    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
 
 
 def create_password_identity(user_id: uuid.UUID, password: str, db: DatabaseDep):

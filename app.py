@@ -5,10 +5,9 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-from starlette.middleware.sessions import SessionMiddleware
-
 from backend.auth import auth_router, active_user
-from backend.auth.helpers import UserDep
+from backend.auth.utils.helpers import UserDep
+from backend.auth.utils.session import session_middleware
 from config import cfg
 from files.models import FileAttachment, message_files  # noqa: F401 — register with Base.metadata
 from files.router import router as files_router
@@ -60,7 +59,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title='Temp', lifespan=lifespan)
 app.include_router(auth_router, prefix="/api/auth")
 app.include_router(files_router, prefix="/api")
-app.add_middleware(SessionMiddleware, secret_key=cfg().auth.jwt_secret_key)
+app.middleware("http")(session_middleware)
 
 
 @app.get('/', response_class=HTMLResponse)

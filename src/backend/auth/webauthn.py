@@ -1,34 +1,38 @@
 from datetime import timedelta
 from typing import Annotated
 
-import jwt
 import webauthn
-from fastapi import APIRouter, Depends, Form, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Form, HTTPException, status
 from sqlalchemy import insert, select, update
 from webauthn.helpers import bytes_to_base64url, base64url_to_bytes
 from webauthn.helpers.exceptions import InvalidRegistrationResponse, InvalidAuthenticationResponse
 from webauthn.helpers.structs import PublicKeyCredentialDescriptor, AuthenticatorSelectionCriteria, \
     ResidentKeyRequirement
 
-from backend.auth.helpers import create_and_save_token, sudo_token, UserDep
+from backend.auth.utils import errors
+from backend.auth.utils.helpers import sudo, UserDep
+from backend.auth.utils.jwt import create_token, verify_token, BaseJWTClaims
+from backend.auth.utils.session import UnverifiedSessionDep
 from config import cfg
 from model import DatabaseDep
 from model.identity import Issuer, IdentityProvider
-from utils.datetime import utcnow
 
 router = APIRouter()
 
 
 def _rp_id() -> str:
-    return "localhost"
+    return cfg().app_host
 
 
 def _origin() -> str:
-    # return config().app_origin
-    return "http://localhost:8000"  # TODO: make this configurable and support https in production
+    return cfg().app_host
 
 
-@router.post("/register/challenge", dependencies=[Depends(sudo_token)])
+class WebAuthnChallengeClaims(BaseJWTClaims):
+    challenge: str
+
+
+@router.post("/register/challenge", dependencies=[Depends(sudo)])
 async def generate_passkey_new(user: UserDep, db: DatabaseDep):
     """
     Generate WebAuthn options for registration.
@@ -37,7 +41,6 @@ async def generate_passkey_new(user: UserDep, db: DatabaseDep):
     """
 
     # For registration (authenticated user): generate registration options
-    # TODO: exclude credentials
     credentials = db.scalars(
         select(IdentityProvider.data["credential_id"])
         .where(IdentityProvider.issuer == Issuer.passkey)
@@ -61,16 +64,15 @@ async def generate_passkey_new(user: UserDep, db: DatabaseDep):
         )
     )
 
-    jwt_claims = {
-        "sub": user.id.hex,
-        "exp": utcnow() + timedelta(minutes=1),
-        "challenge": bytes_to_base64url(options.challenge)}
+    from datetime import timezone, datetime
 
-    jwt_challenge = jwt.encode(
-        payload=jwt_claims,
-        key=cfg().auth.jwt_secret_key,
-        algorithm=cfg().auth.jwt_algorithm,
+    jwt_claims = WebAuthnChallengeClaims(
+        sub=user.id,
+        exp=datetime.now(timezone.utc) + timedelta(minutes=1),
+        challenge=bytes_to_base64url(options.challenge),
     )
+
+    jwt_challenge = create_token(jwt_claims)
 
     return {
         "options": webauthn.helpers.options_to_json_dict(options),
@@ -87,17 +89,12 @@ async def register_passkey(
         db: DatabaseDep,
 ):
     """Verify the authenticator's registration response and persist the credential."""
-    # TODO: ensure single use challenge
+
     try:
-        claims = jwt.decode(
-            jwt=jwt_challenge,
-            key=cfg().auth.jwt_secret_key,
-            algorithms=[cfg().auth.jwt_algorithm],
-            subject=user.id.hex,
-        )
-        challenge = base64url_to_bytes(claims["challenge"])
-    except (jwt.PyJWTError, KeyError):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid challenge token")
+        claims: WebAuthnChallengeClaims = verify_token(jwt_challenge, sub=user.id, return_model=WebAuthnChallengeClaims)
+        challenge = base64url_to_bytes(claims.challenge)
+    except Exception as e:
+        raise errors.InvalidToken() from e
 
     try:
         verified = webauthn.verify_registration_response(
@@ -107,7 +104,7 @@ async def register_passkey(
             expected_origin=_origin(),
         )
     except InvalidRegistrationResponse as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"Registration failed: {e}")
+        raise errors.InvalidToken() from e
 
     db.execute(
         insert(IdentityProvider).values(
@@ -125,8 +122,7 @@ async def register_passkey(
     )
     db.commit()
 
-    return {"success": True,
-            "message": "Passkey registered successfully",
+    return {"message": "Passkey registered successfully",
             "credential": verified.credential_id.hex()}
 
 
@@ -141,16 +137,14 @@ async def generate_passkey_for_auth():
     # For authentication (unauthenticated): generate authentication options
     options = webauthn.generate_authentication_options(rp_id=_rp_id())
 
-    jwt_claims = {
-        "exp": utcnow() + timedelta(minutes=1),
-        "challenge": bytes_to_base64url(options.challenge)
-    }
+    from datetime import timezone, datetime
 
-    jwt_challenge = jwt.encode(
-        payload=jwt_claims,
-        key=cfg().auth.jwt_secret_key,
-        algorithm=cfg().auth.jwt_algorithm,
+    jwt_claims = WebAuthnChallengeClaims(
+        exp=datetime.now(timezone.utc) + timedelta(minutes=1),
+        challenge=bytes_to_base64url(options.challenge),
     )
+
+    jwt_challenge = create_token(jwt_claims)
     return {
         "options": webauthn.helpers.options_to_json_dict(options),
         "jwt_challenge": jwt_challenge,
@@ -159,22 +153,18 @@ async def generate_passkey_for_auth():
 
 @router.post("/verify")
 async def verify_passkey(
-        response: Response,
         jwt_challenge: Annotated[str, Form()],
         credential: Annotated[str, Form()],
         db: DatabaseDep,
+        session: UnverifiedSessionDep
 ):
     """Verify the authenticator's authentication response and issue a session token."""
     EXCEPTION = HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid passkey or challenge")
 
     try:
-        decoded = jwt.decode(
-            jwt=jwt_challenge,
-            key=cfg().auth.jwt_secret_key,
-            algorithms=[cfg().auth.jwt_algorithm],
-        )
-        challenge = base64url_to_bytes(decoded["challenge"])
-    except (jwt.PyJWTError, KeyError):
+        claims: WebAuthnChallengeClaims = verify_token(jwt_challenge, return_model=WebAuthnChallengeClaims)
+        challenge = base64url_to_bytes(claims.challenge)
+    except Exception:
         raise EXCEPTION
 
     # Parse the credential ID from the JSON to find the matching stored credential
@@ -216,4 +206,5 @@ async def verify_passkey(
     )
     db.commit()
 
-    return create_and_save_token(response=response, db=db, user_id=identity.user_id)
+    session.sub = identity.user_id
+    return {"message": "Authenticated"}

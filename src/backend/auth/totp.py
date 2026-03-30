@@ -1,18 +1,32 @@
 import uuid
-from typing import Annotated, Any
+from datetime import timedelta
+from typing import Annotated
 
-import jwt
 import pyotp
-from fastapi import APIRouter, Depends, HTTPException, Response, status, Form
+import qrcode
+from fastapi import APIRouter, Depends, HTTPException, status, Form
+from pydantic import BaseModel
 from sqlalchemy import delete, select, insert
 from starlette.responses import JSONResponse
 
 from config import cfg
 from model import DatabaseDep
 from model.identity import User, Issuer, IdentityProvider
-from .helpers import create_and_save_token, JWTClaims, jwt_claims, _raw_user, sudo_token, UserDep
+from utils.img import img2base64
+from backend.auth.utils.helpers import sudo, UserDep, SessionDep
+from backend.auth.utils.jwt import create_token, verify_token, BaseJWTClaims
 
 router = APIRouter()
+
+
+class TOTPCreateResponse(BaseModel):
+    uri: str
+    jwt_totp: str
+    qr: str
+
+
+class TotpSetupClaims(BaseJWTClaims):
+    totp_secret: str
 
 
 @router.post("/create")
@@ -23,17 +37,14 @@ def generate_totp(user: UserDep):
         issuer_name=cfg().app_name
     )
 
-    # TODO: generate QR code image for URI and return as data URL
-    qr_img = None
+    qr_img = qrcode.make(uri)
 
-    return {
-        "uri": uri,
-        "jwt_totp": jwt_claims,
-        "qr": qr_img
-    }
+    return TOTPCreateResponse(uri=uri,
+                              jwt_totp=jwt_claims,
+                              qr=img2base64(qr_img))
 
 
-@router.post("", dependencies=[Depends(sudo_token)])
+@router.post("", dependencies=[Depends(sudo)])
 def register_totp(
         otp: Annotated[str, Form()],
         jwt_totp_claims: Annotated[str, Form()],
@@ -59,7 +70,6 @@ def register_totp(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                             detail="Invalid TOTP")
 
-    # Create or update the TOTP identity provider for the user
     db.execute(
         insert(IdentityProvider)
         .values(
@@ -76,9 +86,8 @@ def register_totp(
 
 @router.post("/verify")
 def verify_totp(
-        response: Response,
         totp: Annotated[str, Form()],
-        jwt_claims: Annotated[JWTClaims, Depends(jwt_claims)],
+        session: SessionDep,
         db: DatabaseDep,
 ):
     """
@@ -89,14 +98,12 @@ def verify_totp(
     """
     totp_data = db.scalar(
         select(IdentityProvider.data)
-        .where(IdentityProvider.user_id == jwt_claims.sub,
+        .where(IdentityProvider.user_id == session.sub,
                IdentityProvider.issuer == Issuer.totp)
     )
 
-    if not totp_data:
+    if not totp_data or "secret" not in totp_data:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="TOTP not set up for user")
-
-    assert "secret" in totp_data, "TOTP identity provider should always have a secret in data field"
 
     is_valid = pyotp.TOTP(totp_data["secret"]) \
         .verify(totp, valid_window=cfg().auth.totp_valid_window)
@@ -104,14 +111,14 @@ def verify_totp(
     if not is_valid:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid TOTP")
 
-    if jwt_claims.requires_otp:
-        return create_and_save_token(response=response, db=db, user_id=jwt_claims.sub)
+    if session.requires_otp:
+        session.requires_otp = False
 
     return {"success": True, "message": "TOTP verified"}
 
 
 @router.delete("")
-def delete_totp(user: Annotated[User, Depends(_raw_user)], db: DatabaseDep):
+def delete_totp(user: UserDep, db: DatabaseDep):
     result = db.execute(
         delete(IdentityProvider)
         .where(IdentityProvider.user_id == user.id,
@@ -126,16 +133,11 @@ def delete_totp(user: Annotated[User, Depends(_raw_user)], db: DatabaseDep):
     return {"message": "TOTP cleared"}
 
 
-def decode_jwt_totp_helper(jwt_totp_claims: str, user: User) -> Any:
+def decode_jwt_totp_helper(jwt_totp_claims: str, user: User) -> str:
     try:
-        claims = jwt.decode(
-            jwt=jwt_totp_claims,
-            key=cfg().auth.jwt_secret_key,
-            algorithms=[cfg().auth.jwt_algorithm],
-            subject=user.id.hex,
-        )
-        totp_secret = claims["totp_secret"]
-    except (jwt.PyJWTError, KeyError):
+        claims = verify_token(jwt_totp_claims, return_model=TotpSetupClaims, sub=user.id)
+        totp_secret = claims.totp_secret
+    except Exception:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JWT")
     return totp_secret
 
@@ -144,9 +146,12 @@ def create_totp_helper(sub: uuid.UUID):
     otp_base32 = pyotp.random_base32()
     totp = pyotp.totp.TOTP(otp_base32)
 
-    jwt_claims = jwt.encode(
-        payload={"sub": sub.hex, "totp_secret": otp_base32},
-        key=cfg().auth.jwt_secret_key,
-        algorithm=cfg().auth.jwt_algorithm,
+    from datetime import timezone, datetime
+    claims = TotpSetupClaims(
+        sub=sub,
+        totp_secret=otp_base32,
+        exp=datetime.now(timezone.utc) + timedelta(minutes=10)
     )
-    return jwt_claims, totp
+
+    token = create_token(claims)
+    return token, totp

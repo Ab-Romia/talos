@@ -1,18 +1,20 @@
-import jwt
-from fastapi import status
+from datetime import timedelta
+
 from jinja2.utils import url_quote
 from sqlalchemy import select
+from fastapi import status
 
-from backend.auth.totp import create_totp_helper
-from config import cfg
+from backend.auth.totp import create_totp_helper, TotpSetupClaims, delete_totp, register_totp, verify_totp, \
+    generate_totp
+from backend.auth.utils.jwt import create_token, verify_token
+from backend.auth.utils.session import SessionClaims
 from model.identity import IdentityProvider, Issuer
-from utils.datetime import utcnow
 
 
 class TestTOTP:
     def test_generate(self, client, path, db_session, test_user, auth_token):
         response = client.post(
-            path("generate_totp"),
+            path(generate_totp),
             headers={"Authorization": f"bearer {auth_token}"},
         )
 
@@ -21,13 +23,9 @@ class TestTOTP:
         uri = data["uri"]
         jwt_totp = data["jwt_totp"]
 
-        jwt_claims = jwt.decode(
-            jwt_totp,
-            key=cfg().auth.jwt_secret_key,
-            algorithms=[cfg().auth.jwt_algorithm],
-        )
-        assert jwt_claims["sub"] == test_user.id.hex
-        totp_secret = jwt_claims["totp_secret"]
+        jwt_claims = verify_token(jwt_totp, return_model=TotpSetupClaims)
+        assert jwt_claims.sub == test_user.id
+        totp_secret = jwt_claims.totp_secret
 
         assert uri.startswith("otpauth://totp/")
         assert f"secret={totp_secret}" in data["uri"]
@@ -39,7 +37,7 @@ class TestTOTP:
         current_otp = totp.now()
 
         response = client.post(
-            path("register_totp"),
+            path(register_totp),
             headers={"Authorization": f"Bearer {sudo_auth_token}"},
             data={"otp": current_otp, "jwt_totp_claims": jwt_totp},
         )
@@ -58,7 +56,7 @@ class TestTOTP:
         jwt_totp, totp = create_totp_helper(test_user.id)
 
         response = client.post(
-            path("register_totp"),
+            path(register_totp),
             headers={"Authorization": f"Bearer {sudo_auth_token}"},
             data={"otp": "000000", "jwt_totp_claims": jwt_totp},
         )
@@ -66,9 +64,6 @@ class TestTOTP:
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_verify(self, client, path, db_session, test_user, test_session):
-        from backend.auth.helpers import JWTClaims
-        from datetime import timedelta
-
         # Setup TOTP for user
         jwt_totp, totp = create_totp_helper(test_user.id)
         identity = IdentityProvider(
@@ -80,30 +75,31 @@ class TestTOTP:
         db_session.commit()
 
         current_otp = totp.now()
-        prev_otp = totp.at(utcnow() - timedelta(seconds=30))
+        from datetime import timezone, datetime
+        prev_otp = totp.at(datetime.now(timezone.utc) - timedelta(seconds=30))
 
-        claims = JWTClaims(
+        claims = SessionClaims(
             sub=test_user.id,
-            jti=test_session.id,
-            exp=utcnow() + timedelta(minutes=5),
+            jti=test_session.jti,
+            exp=datetime.now(timezone.utc) + timedelta(minutes=5),
             requires_otp=True,
         )
-        token = claims.to_jwt_string()
+        token = create_token(claims)
 
         res1 = client.post(
-            path("verify_totp"),
+            path(verify_totp),
             headers={"Authorization": f"Bearer {token}"},
             data={"totp": current_otp},
         )
 
         res2 = client.post(
-            path("verify_totp"),
+            path(verify_totp),
             headers={"Authorization": f"Bearer {token}"},
             data={"totp": prev_otp},
         )
 
         res3 = client.post(
-            path("verify_totp"),
+            path(verify_totp),
             headers={"Authorization": f"Bearer {token}"},
             data={"totp": "000000"},
         )
@@ -113,19 +109,19 @@ class TestTOTP:
         assert res3.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_verify_when_not_setup(self, client, path, db_session, test_user, test_session):
-        from backend.auth.helpers import JWTClaims
-        from datetime import timedelta
+        from backend.auth.utils.session import SessionClaims
+        from datetime import timedelta, timezone, datetime
 
-        claims = JWTClaims(
+        claims = SessionClaims(
             sub=test_user.id,
-            jti=test_session.id,
-            exp=utcnow() + timedelta(minutes=5),
+            jti=test_session.jti,
+            exp=datetime.now(timezone.utc) + timedelta(minutes=5),
             requires_otp=True,
         )
-        token = claims.to_jwt_string()
+        token = create_token(claims)
 
         response = client.post(
-            path("verify_totp"),
+            path(verify_totp),
             headers={"Authorization": f"Bearer {token}"},
             data={"totp": "123456"},
         )
@@ -144,7 +140,7 @@ class TestTOTP:
         db_session.commit()
 
         response = client.delete(
-            path("delete_totp"),
+            path(delete_totp),
             headers={"Authorization": f"Bearer {auth_token}"},
         )
 
@@ -159,7 +155,7 @@ class TestTOTP:
 
     def test_delete_when_not_setup(self, client, path, auth_token):
         response = client.delete(
-            path("delete_totp"),
+            path(delete_totp),
             headers={"Authorization": f"Bearer {auth_token}"},
         )
 

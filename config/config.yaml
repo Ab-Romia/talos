@@ -1,4 +1,11 @@
 auth:
+  jwt_header: { "alg": "dir", "enc": "A256GCM" }
+  sudo_max_age: PT10M
+  session_max_age: P30D
+  session_refresh_threshold: PT10M
+
+  totp_valid_window: 1
+
   oauth_clients:
     google:
       api_base_url: https://www.googleapis.com/oauth2/v2/
@@ -11,3 +18,4 @@ auth:
       access_token_url: https://github.com/login/oauth/access_token
       authorize_url: https://github.com/login/oauth/authorize
       client_kwargs: { "scope": "read:user user:email" }
+

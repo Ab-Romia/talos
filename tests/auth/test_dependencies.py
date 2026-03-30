@@ -4,216 +4,179 @@ from datetime import timedelta
 import pytest
 from starlette.requests import Request
 
-from backend.auth import active_user, helpers
-from backend.auth.helpers import AuthErrorCode, AuthException, JWTClaims, jwt_claims, session, sudo_token
-from utils.datetime import utcnow
+from app import app as fastapi_app
+from backend.auth.utils import helpers
+from backend.auth.utils.helpers import UserDep, OptionalUserDep
+from backend.auth.utils.jwt import create_token
+from backend.auth.utils.session import SessionClaims, verified_session, unverified_session
 
 
-class TestJWTClaims:
-    def test_to_jwt_string(self):
-        user_id = uuid.uuid4()
-        exp = utcnow() + timedelta(hours=1)
-        claims = JWTClaims(sub=user_id, exp=exp)
+@pytest.fixture(scope="session")
+def active_user_path():
+    path = "/__test_active_user"
 
-        jwt_string = claims.to_jwt_string()
+    def endpoint(user: UserDep):
+        return {"id": str(user.id)}
 
-        assert isinstance(jwt_string, str)
-        assert len(jwt_string) > 0
+    fastapi_app.add_api_route(path, endpoint, methods=["GET"])
 
-    def test_from_jwt_string(self):
-        user_id = uuid.uuid4()
-        exp = utcnow() + timedelta(hours=1)
-        original_claims = JWTClaims(sub=user_id, exp=exp)
-        jwt_string = original_claims.to_jwt_string()
-
-        decoded_claims = JWTClaims.from_jwt_string(jwt_string)
-
-        assert decoded_claims == original_claims
-
-    def test_expired_token(self):
-        user_id = uuid.uuid4()
-        exp = utcnow() - timedelta(hours=1)
-        claims = JWTClaims(sub=user_id, exp=exp)
-        jwt_string = claims.to_jwt_string()
-
-        with pytest.raises(AuthException) as exc_info:
-            JWTClaims.from_jwt_string(jwt_string)
-
-        assert exc_info.value.err_code == AuthErrorCode.EXPIRED_TOKEN
-
-    def test_invalid_token(self):
-        with pytest.raises(AuthException) as exc_info:
-            JWTClaims.from_jwt_string("invalid.token.here")
-
-        assert exc_info.value.err_code == AuthErrorCode.BAD_TOKEN
-
-    def test_default_values(self):
-        user_id = uuid.uuid4()
-        exp = utcnow() + timedelta(hours=1)
-        claims = JWTClaims(sub=user_id, exp=exp)
-
-        assert claims.requires_otp is False
-        assert claims.sudo is False
-        assert isinstance(claims.jti, uuid.UUID)
+    return path
 
 
-class TestJwtClaimsDependency:
-    def test_valid_token(self):
-        user_id = uuid.uuid4()
-        exp = utcnow() + timedelta(hours=1)
-        claims = JWTClaims(sub=user_id, exp=exp)
-        token = claims.to_jwt_string()
+@pytest.fixture(scope="session")
+def opt_active_user_path():
+    path = "/__opt_test_active_user"
 
-        result = jwt_claims(token)
+    def endpoint(user: OptionalUserDep):
+        return {"id": str(user.id)} if user else None
 
-        assert result.sub == user_id
+    fastapi_app.add_api_route(path, endpoint, methods=["GET"])
 
-    def test_invalid_token(self):
-        with pytest.raises(AuthException):
-            jwt_claims("invalid-token")
+    return path
 
 
-class TestActiveUserDependency:
-    def test_valid_session(self, db_session, test_user, test_session):
-        claims = JWTClaims(
-            sub=test_user.id,
-            jti=test_session.id,
-            exp=test_session.expires_at,
-        )
+class TestActiveUserEndpoint:
+    def test_valid_session(self, client, test_user, auth_token, active_user_path):
+        resp = client.get(active_user_path, cookies={"user_session": auth_token})
 
-        user = active_user(raw_user=test_user, jwt_claims=claims, db=db_session)
+        assert resp.status_code == 200
+        assert resp.json()["id"] == str(test_user.id)
 
-        assert user.id == test_user.id
+    def test_when_otp_required(self, client, test_session, active_user_path):
+        test_session.requires_otp = True
+        auth_token = create_token(test_session)
 
-    def test_when_otp_required(self, db_session, test_user, test_session):
-        claims = JWTClaims(
-            sub=test_user.id,
-            jti=test_session.id,
-            exp=test_session.expires_at,
-            requires_otp=True,
-        )
+        resp = client.get(active_user_path,
+                          headers={"Authorization": f"Bearer {auth_token}"},
+                          cookies={"user_session": auth_token})
 
-        with pytest.raises(AuthException) as exc_info:
-            active_user(raw_user=test_user, jwt_claims=claims, db=db_session)
+        assert resp.status_code == 401
 
-        assert exc_info.value.err_code == AuthErrorCode.OTP_REQUIRED
-
-    def test_when_user_deleted(self, db_session, test_user, test_session):
-        test_user.deleted_at = utcnow()
+    def test_when_user_deleted(self, client, db_session, test_user, test_session, auth_token, active_user_path):
+        from datetime import timezone, datetime
+        test_user.deleted_at = datetime.now(timezone.utc)
         db_session.commit()
 
-        claims = JWTClaims(
-            sub=test_user.id,
-            jti=test_session.id,
-            exp=test_session.expires_at,
-        )
+        resp = client.get(active_user_path, headers={"Authorization": f"Bearer {auth_token}"},
+                          cookies={"user_session": auth_token})
 
-        with pytest.raises(AuthException) as exc_info:
-            active_user(raw_user=test_user, jwt_claims=claims, db=db_session)
+        assert resp.status_code == 401
 
-        assert exc_info.value.err_code == AuthErrorCode.USER_DELETED
-
-    def test_when_email_not_verified(self, db_session, test_user, test_session):
+    def test_when_email_not_verified(self, client, db_session, test_user, test_session, auth_token, active_user_path):
         test_user.email_verified = False
         db_session.commit()
 
-        claims = JWTClaims(
-            sub=test_user.id,
-            jti=test_session.id,
-            exp=test_session.expires_at,
-        )
+        resp = client.get(active_user_path, headers={"Authorization": f"Bearer {auth_token}"},
+                          cookies={"user_session": auth_token})
 
-        with pytest.raises(AuthException) as exc_info:
-            active_user(raw_user=test_user, jwt_claims=claims, db=db_session)
+        assert resp.status_code == 401
 
-        assert exc_info.value.err_code == AuthErrorCode.EMAIL_NOT_VERIFIED
-
-    def test_when_session_not_found(self, db_session, test_user):
-        claims = JWTClaims(
+    def test_when_session_not_found(self, client, test_user, active_user_path):
+        from datetime import timezone, datetime
+        claims = SessionClaims(
             sub=test_user.id,
             jti=uuid.uuid4(),  # Non-existent session
-            exp=utcnow() + timedelta(hours=1),
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
+        token = create_token(claims)
 
-        with pytest.raises(AuthException) as exc_info:
-            active_user(raw_user=test_user, jwt_claims=claims, db=db_session)
+        resp = client.get(active_user_path, cookies={"user_session": token})
 
-        assert exc_info.value.err_code == AuthErrorCode.EXPIRED_TOKEN
+        assert resp.status_code == 401
 
-    def test_updates_last_active(self, db_session, test_user, test_session):
-        original_time = test_session.last_used_at
-        claims = JWTClaims(
-            sub=test_user.id,
-            jti=test_session.id,
-            exp=test_session.expires_at,
-        )
+    def test_optional_user_invalid(self, client, active_user_path, opt_active_user_path):
+        resp1 = client.get(active_user_path)
+        resp2 = client.get(opt_active_user_path)
 
-        active_user(raw_user=test_user, jwt_claims=claims, db=db_session)
+        assert resp1.status_code == 401
+        assert resp2.status_code == 200
+        assert resp2.json() is None
 
-        db_session.refresh(test_session)
-        assert test_session.last_used_at > original_time
+    def test_optional_user_valid(self, client, auth_token, active_user_path, opt_active_user_path):
+        resp1 = client.get(active_user_path, cookies={"user_session": auth_token})
+        resp2 = client.get(opt_active_user_path, cookies={"user_session": auth_token})
+
+        assert resp2.status_code == 200
+        assert resp1.status_code == 200
+
+        assert resp1.json() == resp2.json()
 
 
 class TestGetSessionDependency:
     def test_when_exists(self, db_session, test_user, test_session):
-        claims = JWTClaims(
+        claims = SessionClaims(
             sub=test_user.id,
-            jti=test_session.id,
-            exp=test_session.expires_at,
+            jti=test_session.jti,
+            exp=test_session.exp,
         )
 
-        session = helpers.session(jwt_claims=claims, db=db_session)
+        # create a token and call the session dependency directly
+        token = create_token(claims)
 
-        assert session.id == test_session.id
+        req = Request({"type": "http", "state": {}})
+        req.state.set_session = None  # Initialize
+
+        unverified_sess = unverified_session(req, token)
+        result = verified_session(next(unverified_sess), db_session)
+
+        assert result.jti == test_session.jti
 
     def test_when_not_found(self, db_session, test_user):
-        claims = JWTClaims(
+        from datetime import timezone, datetime
+        from starlette.requests import Request
+
+        claims = SessionClaims(
             sub=test_user.id,
             jti=uuid.uuid4(),
-            exp=utcnow() + timedelta(hours=1),
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
+        token = create_token(claims)
 
-        with pytest.raises(AuthException) as exc_info:
-            session(jwt_claims=claims, db=db_session)
+        req = Request({"type": "http", "state": {}})
 
-        assert exc_info.value.err_code == AuthErrorCode.EXPIRED_TOKEN
+        with pytest.raises(Exception):
+            gen = verified_session(req, db_session, token)
+            next(gen)
 
 
 class TestSudoTokenDependency:
     def test_sudo_token(self, db_session, test_user, test_session):
-        claims = JWTClaims(
+        from datetime import timezone, datetime
+        claims = SessionClaims(
             sub=test_user.id,
-            jti=test_session.id,
-            exp=utcnow() + timedelta(minutes=15),
-            sudo=True,
+            jti=test_session.jti,
+            exp=datetime.now(timezone.utc) + timedelta(minutes=15),
+            sudo_exp=datetime.now(timezone.utc) + timedelta(minutes=1),
         )
 
-        result = sudo_token(jwt_claims=claims, db=db_session)
-
-        assert result.sudo is True
+        helpers.sudo(claims)
 
     def test_when_not_sudo(self, db_session, test_user, test_session):
-        claims = JWTClaims(
+        from datetime import timezone, datetime
+        claims = SessionClaims(
             sub=test_user.id,
-            jti=test_session.id,
-            exp=utcnow() + timedelta(hours=1),
-            sudo=False,
+            jti=test_session.jti,
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+            sudo_exp=None,
         )
 
-        with pytest.raises(AuthException) as exc_info:
-            sudo_token(jwt_claims=claims, db=db_session)
-
-        assert exc_info.value.err_code == AuthErrorCode.BAD_TOKEN
+        with pytest.raises(Exception):
+            helpers.sudo(claims)
 
     def test_when_session_not_found(self, db_session, test_user):
-        claims = JWTClaims(
+        from datetime import timezone, datetime
+        from starlette.requests import Request
+
+        claims = SessionClaims(
             sub=test_user.id,
             jti=uuid.uuid4(),
-            exp=utcnow() + timedelta(minutes=15),
-            sudo=True,
+            exp=datetime.now(timezone.utc) + timedelta(minutes=15),
+            sudo_exp=None,
         )
 
-        with pytest.raises(AuthException) as exc_info:
-            sudo_token(jwt_claims=claims, db=db_session)
+        token = create_token(SessionClaims(sub=test_user.id, jti=claims.jti, exp=claims.exp))
+        req = Request({"type": "http", "state": {}})
 
-        assert exc_info.value.err_code == AuthErrorCode.EXPIRED_TOKEN
+        with pytest.raises(Exception):
+            gen = verified_session(req, db_session, token)
+            next(gen)

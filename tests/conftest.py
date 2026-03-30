@@ -1,4 +1,5 @@
 from datetime import timedelta
+from typing import Callable
 
 import pytest
 import sqlalchemy
@@ -9,10 +10,10 @@ from sqlalchemy import select, text, delete
 from sqlalchemy.orm import Session
 
 from app import app
-from backend.auth.helpers import JWTClaims
 from backend.auth.password import hash_password
+from backend.auth.utils.jwt import create_token
+from backend.auth.utils.session import SessionClaims
 from model.identity import User, Session as UserSession, IdentityProvider, Issuer
-from utils.datetime import utcnow
 
 
 @pytest.fixture(scope="session")
@@ -45,7 +46,7 @@ def engine():
         engine.dispose()
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def db_session(engine):
     """Provide a per-test DB session and override app dependency to return it."""
     from model import get_db
@@ -65,8 +66,10 @@ def client() -> TestClient:
 
 @pytest.fixture(autouse=True)
 def path(client: TestClient):
-    def build_path(route_name: str, **path_params):
-        return client.app.url_path_for(route_name, **path_params)
+    def build_path(route: str | Callable, **path_params):
+        if callable(route):
+            route = route.__name__
+        return client.app.url_path_for(route, **path_params)
 
     return build_path
 
@@ -124,46 +127,46 @@ def test_user_with_password(db_session: Session, test_user: User):
 
 
 @pytest.fixture
-def test_session(db_session, test_user: User) -> UserSession:
-    session = UserSession(
-        user_id=test_user.id,
-        expires_at=utcnow() + timedelta(days=30),
-    )
+def test_session(db_session, test_user) -> SessionClaims:
+    from datetime import timezone, datetime
+    session = UserSession(user_id=test_user.id)
     db_session.add(session)
     db_session.commit()
     db_session.refresh(session)
-    return session
+
+    return SessionClaims(
+        sub=test_user.id,
+        jti=session.id,
+        exp=datetime.now(timezone.utc) + timedelta(days=30),
+    )
 
 
 @pytest.fixture
-def auth_token(test_user: User, test_session: UserSession) -> str:
-    claims = JWTClaims(
-        sub=test_user.id,
-        jti=test_session.id,
-        exp=test_session.expires_at,
-    )
-    return claims.to_jwt_string()
+def auth_token(test_session) -> str:
+    return create_token(test_session)
 
 
 @pytest.fixture
-def sudo_auth_token(test_user: User, test_session: UserSession) -> str:
-    claims = JWTClaims(
+def sudo_auth_token(test_user: User, test_session: SessionClaims) -> str:
+    from datetime import timezone, datetime
+    claims = SessionClaims(
         sub=test_user.id,
-        jti=test_session.id,
-        exp=utcnow() + timedelta(minutes=15),
-        sudo=True,
+        jti=test_session.jti,
+        exp=datetime.now(timezone.utc) + timedelta(minutes=15),
+        sudo_exp=datetime.now(timezone.utc) + timedelta(minutes=15),
     )
-    return claims.to_jwt_string()
+    return create_token(claims)
 
 
 @pytest.fixture
-def expired_token(test_user: User, test_session: UserSession) -> str:
-    claims = JWTClaims(
+def expired_token(test_user: User, test_session: SessionClaims) -> str:
+    from datetime import timezone, datetime
+    claims = SessionClaims(
         sub=test_user.id,
-        jti=test_session.id,
-        exp=utcnow() - timedelta(hours=1),
+        jti=test_session.jti,
+        exp=datetime.now(timezone.utc) - timedelta(hours=1),
     )
-    return claims.to_jwt_string()
+    return create_token(claims)
 
 
 # ── File upload fixtures ──
@@ -174,7 +177,6 @@ from unittest.mock import AsyncMock
 
 os.environ.setdefault("DATABASE_URL", "postgresql://talos_app:password@localhost:5432/talos_test")
 
-# Import identity/messaging models so SQLAlchemy can resolve relationships
 import model.identity  # noqa: F401
 import model.messaging  # noqa: F401
 

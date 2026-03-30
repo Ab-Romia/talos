@@ -3,7 +3,7 @@ import uuid
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
 
-from backend.auth.helpers import active_user
+from backend.auth.utils.helpers import active_user
 from files.storage import MinIOStorage
 from model import DatabaseDep
 from model.identity import User

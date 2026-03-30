@@ -1,17 +1,17 @@
 from typing import Annotated
 
 import httpx
-from authlib.integrations.base_client import MismatchingStateError
-from authlib.integrations.starlette_client import OAuth, StarletteOAuth2App
-from fastapi import Request, HTTPException, status, Response, APIRouter
+from authlib.integrations.base_client import OAuthError
+from authlib.integrations.starlette_client import OAuth
+from fastapi import Request, HTTPException, status, APIRouter
 from pydantic import AfterValidator, BaseModel, PydanticUserError
 from sqlalchemy import select
 from starlette.responses import RedirectResponse
 
-from src.config import cfg
 from model import DatabaseDep
 from model.identity import IdentityProvider, User, Issuer
-from .helpers import create_and_save_token
+from src.config import cfg
+from backend.auth.utils.session import UnverifiedSessionDep
 
 
 class OIDC(BaseModel):
@@ -41,7 +41,8 @@ for name, client in cfg().auth.oauth_clients.items():
 
 
 def invalid_provider_exception(provider):
-    return HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                         detail=f"Invalid OAuth provider: {provider}")
 
 
 def check_provider(provider: str):
@@ -54,12 +55,16 @@ ProviderParam = Annotated[str, AfterValidator(check_provider)]
 
 
 @router.get("/{provider}")
-async def oauth_login(provider: ProviderParam, request: Request):
-    client: StarletteOAuth2App = oauth.create_client(provider)
+async def oauth_login(provider: ProviderParam, request: Request, session: UnverifiedSessionDep):
+    client = oauth.create_client(provider)
 
     redirect_uri = request.url_for("oauth_callback", provider=provider)
     try:
-        return await client.authorize_redirect(request, redirect_uri)
+        request.scope["session"] = {}  # authlib expects a session dict in the scope
+        res = await client.authorize_redirect(request, redirect_uri)
+        session.model_extra.update(request.session or {})
+
+        return res
     except httpx.ConnectError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -67,8 +72,11 @@ async def oauth_login(provider: ProviderParam, request: Request):
         )
 
 
-@router.get("/{provider}/callback", name="oauth_callback")
-async def oauth_callback(provider: ProviderParam, request: Request, response: Response, db: DatabaseDep, ):
+@router.get("/{provider}/callback")
+async def oauth_callback(provider: ProviderParam,
+                         session: UnverifiedSessionDep,
+                         request: Request,
+                         db: DatabaseDep):
     client = oauth.create_client(provider)
 
     fail = HTTPException(
@@ -79,10 +87,17 @@ async def oauth_callback(provider: ProviderParam, request: Request, response: Re
     # TODO: handle all errors,
     #  is this correct handling?
     try:
+        # authlib expects a session dict in the scope
+        request.scope["session"] = session.model_extra
+
         token = await client.authorize_access_token(request)
-    except MismatchingStateError:
-        return RedirectResponse(url=request.url_for("oauth_login", provider=provider),
-                                status_code=status.HTTP_302_FOUND)
+
+        session.model_extra.clear()
+        session.model_extra.update(request.session)
+    except OAuthError:
+        raise
+        # return RedirectResponse(url=request.url_for("oauth_login", provider=provider),
+        #                         status_code=status.HTTP_302_FOUND)
 
     try:
         match provider:
@@ -100,45 +115,40 @@ async def oauth_callback(provider: ProviderParam, request: Request, response: Re
     except PydanticUserError:
         raise fail
 
-    identity: IdentityProvider | None = db.scalar(
-        select(IdentityProvider).where(
+    identity = db.scalar(
+        select(IdentityProvider)
+        .where(
             IdentityProvider.issuer == Issuer.oauth,
             IdentityProvider.data["sub"].as_string() == user_info.sub,
         )
     )
 
-    if identity is not None:
-        # Existing user
-        return create_and_save_token(response=response, db=db, user_id=identity.user_id)
-
-    # New Identity or new user
-
-    user = db.scalar(
-        select(User).where(User.primary_email == user_info.email)
-    )
-    if user is None:
-        # New user
-        # TODO: handle account creation -> redirect to first time profile customizations
-        user = User(
-            primary_email=user_info.email,
-            name=user_info.name,
-            username=user_info.name.replace(" ", "-").lower(),
-            data={"avatar_url": user_info.picture} if user_info.picture else {},
-            roles=[],
+    if identity is None:
+        # New Identity or new user
+        user = db.scalar(
+            select(User).where(User.primary_email == user_info.email)
         )
-        db.add(user)
-        db.flush()  # populate user.id
+        if user is None:
+            # New user
+            # TODO: handle account creation -> redirect to first time profile customizations
+            user = User(
+                primary_email=user_info.email,
+                name=user_info.name,
+                username=user_info.name.replace(" ", "-").lower(),
+                data={"avatar_url": user_info.picture} if user_info.picture else {},
+                roles=[],
+            )
+            db.add(user)
+            db.flush()  # populate user.id
 
-    new_identity = IdentityProvider(
-        user_id=user.id,
-        issuer=Issuer.oauth,
-        data=user_info.model_dump(),
-    )
-    db.add(new_identity)
-    db.commit()
+        identity = IdentityProvider(
+            user_id=user.id,
+            issuer=Issuer.oauth,
+            data=user_info.model_dump(),
+        )
+        db.add(identity)
+        db.commit()
 
-    # TODO: return redirect
-    token = create_and_save_token(response=response, db=db, user_id=user.id)
-    # return RedirectResponse(url=request.url_for("profile"),
-    #                         status_code=status.HTTP_302_FOUND)
-    return token
+    session.sub = identity.user_id
+
+    return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
