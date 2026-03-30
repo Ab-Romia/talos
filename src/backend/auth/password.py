@@ -54,6 +54,12 @@ def password_authenticate(
         .where(IdentityProvider.issuer == Issuer.totp)
     )
 
+    # Create DB session record so active_user can find it
+    from model.identity import Session as DBSession
+    db_session = DBSession(id=session.jti, user_id=user.id)
+    db.add(db_session)
+    db.commit()
+
     session.sub = user.id
     if requires_otp:
         session.requires_totp = True

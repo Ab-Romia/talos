@@ -53,6 +53,10 @@ async def create_user(
 
     create_password_identity(user_id=user.id, password=create_user.password, db=db)
 
+    # Create DB session record so active_user can find it
+    db_session = Session(id=session.jti, user_id=user.id)
+    db.add(db_session)
+
     session.sub = user.id
 
     db.commit()
