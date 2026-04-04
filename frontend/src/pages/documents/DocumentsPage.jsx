@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import Button from '@mui/material/Button'
 import Chip from '@mui/material/Chip'
 import TextField from '@mui/material/TextField'
@@ -18,15 +18,8 @@ import TableContainer from '@mui/material/TableContainer'
 import TableHead from '@mui/material/TableHead'
 import TableRow from '@mui/material/TableRow'
 import { Plus, Search, Upload, Grid3X3, List, FileText, Filter } from 'lucide-react'
-
-const initialDocs = [
-  { id: 1, name: 'RAG_Evaluation_2024.pdf', type: 'PDF', size: '2.4 MB', chunks: 48, status: 'indexed' },
-  { id: 2, name: 'Reranking_Methods.pdf', type: 'PDF', size: '1.8 MB', chunks: 32, status: 'indexed' },
-  { id: 3, name: 'Chunking_Strategies.docx', type: 'DOCX', size: '890 KB', chunks: 18, status: 'indexed' },
-  { id: 4, name: 'Attention_Is_All_You_Need.pdf', type: 'PDF', size: '3.1 MB', chunks: null, status: 'processing' },
-  { id: 5, name: 'project_notes.md', type: 'MD', size: '45 KB', chunks: 6, status: 'indexed' },
-  { id: 6, name: 'meeting_transcript_feb.txt', type: 'TXT', size: '120 KB', chunks: null, status: 'error' },
-]
+import { documentService } from '../../services/documents'
+import { chatService } from '../../services/chat'
 
 const typeColors = { PDF: '#C4462A', DOCX: '#2E6FC4', TXT: '#6B6966', MD: '#3D8C5C' }
 const statusMap = { indexed: 'success', processing: 'warning', error: 'error' }
@@ -46,45 +39,81 @@ function formatFileSize(bytes) {
 
 export default function DocumentsPage() {
   const [view, setView] = useState('grid')
-  const [docs, setDocs] = useState(initialDocs)
+  const [docs, setDocs] = useState([])
   const [searchQuery, setSearchQuery] = useState('')
   const [filterType, setFilterType] = useState('All types')
   const [filterAnchorEl, setFilterAnchorEl] = useState(null)
   const [selectedDoc, setSelectedDoc] = useState(null)
   const [snackbar, setSnackbar] = useState({ open: false, message: '' })
   const [dragOver, setDragOver] = useState(false)
+  const [workspaceId, setWorkspaceId] = useState(null)
   const fileInputRef = useRef(null)
-  const nextIdRef = useRef(7)
 
-  const handleFiles = useCallback((files) => {
-    const newDocs = Array.from(files).map((file) => {
-      const id = nextIdRef.current++
-      const doc = {
-        id,
-        name: file.name,
-        type: getFileExtension(file.name),
-        size: formatFileSize(file.size),
-        chunks: null,
-        status: 'processing',
+  // Load workspace and files on mount
+  useEffect(() => {
+    async function init() {
+      try {
+        let workspaces = await chatService.getWorkspaces()
+        let ws = workspaces[0]
+        if (!ws) ws = await chatService.createWorkspace('My Workspace')
+        setWorkspaceId(ws.id)
+
+        const result = await documentService.list(ws.id)
+        const mapped = (result.files || []).map((f) => ({
+          id: f.id,
+          name: f.original_filename,
+          type: getFileExtension(f.original_filename),
+          size: formatFileSize(f.size_bytes),
+          chunks: f.chunk_count,
+          status: f.processing_status === 'indexed' ? 'indexed' : f.processing_status === 'failed' ? 'error' : 'processing',
+        }))
+        setDocs(mapped)
+      } catch (err) {
+        console.error('Documents init failed:', err)
       }
-
-      setTimeout(() => {
-        setDocs((prev) =>
-          prev.map((d) =>
-            d.id === id
-              ? { ...d, status: 'indexed', chunks: Math.floor(Math.random() * 60) + 5 }
-              : d
-          )
-        )
-        setSnackbar({ open: true, message: `${file.name} indexed successfully` })
-      }, 2000)
-
-      return doc
-    })
-
-    setDocs((prev) => [...prev, ...newDocs])
-    setSnackbar({ open: true, message: `Uploading ${newDocs.length} file(s)...` })
+    }
+    init()
   }, [])
+
+  const handleFiles = useCallback(async (files) => {
+    if (!workspaceId) return
+    setSnackbar({ open: true, message: `Uploading ${files.length} file(s)...` })
+
+    for (const file of Array.from(files)) {
+      try {
+        const result = await documentService.upload(workspaceId, file)
+        const doc = {
+          id: result.file_id,
+          name: result.filename,
+          type: getFileExtension(result.filename),
+          size: formatFileSize(result.size_bytes),
+          chunks: null,
+          status: 'processing',
+        }
+        setDocs((prev) => [...prev, doc])
+
+        // Poll for processing status
+        const poll = setInterval(async () => {
+          try {
+            const status = await documentService.getStatus(workspaceId, result.file_id)
+            if (status.processing_status === 'indexed' || status.processing_status === 'failed') {
+              clearInterval(poll)
+              setDocs((prev) =>
+                prev.map((d) =>
+                  d.id === result.file_id
+                    ? { ...d, status: status.processing_status === 'indexed' ? 'indexed' : 'error', chunks: status.chunk_count }
+                    : d
+                )
+              )
+              setSnackbar({ open: true, message: status.processing_status === 'indexed' ? `${file.name} indexed successfully` : `${file.name} processing failed` })
+            }
+          } catch { clearInterval(poll) }
+        }, 3000)
+      } catch (err) {
+        setSnackbar({ open: true, message: `Failed to upload ${file.name}: ${err.detail || 'unknown error'}` })
+      }
+    }
+  }, [workspaceId])
 
   const handleFileInput = (e) => {
     if (e.target.files?.length) {
@@ -111,11 +140,17 @@ export default function DocumentsPage() {
     setDragOver(false)
   }
 
-  const handleDeleteDoc = (docId) => {
+  const handleDeleteDoc = async (docId) => {
+    if (!workspaceId) return
     const docName = docs.find((d) => d.id === docId)?.name
-    setDocs((prev) => prev.filter((d) => d.id !== docId))
-    setSelectedDoc(null)
-    setSnackbar({ open: true, message: `${docName} deleted` })
+    try {
+      await documentService.delete(workspaceId, docId)
+      setDocs((prev) => prev.filter((d) => d.id !== docId))
+      setSelectedDoc(null)
+      setSnackbar({ open: true, message: `${docName} deleted` })
+    } catch (err) {
+      setSnackbar({ open: true, message: `Failed to delete ${docName}` })
+    }
   }
 
   const filteredDocs = docs.filter((doc) => {

@@ -3,9 +3,11 @@ import { authService } from '../services/auth'
 
 export const login = createAsyncThunk(
   'auth/login',
-  async ({ username, password }, { rejectWithValue }) => {
+  async ({ username, password }, { rejectWithValue, dispatch }) => {
     try {
       const data = await authService.login(username, password)
+      // Fetch user profile after login (cookie is now set)
+      dispatch(refreshToken())
       return data
     } catch (err) {
       return rejectWithValue(err.detail || 'Login failed')

@@ -174,8 +174,10 @@ def send_message(
     db.commit()
     db.refresh(user_msg)
 
-    # Stream AI response via SSE
+    # Stream AI response via SSE — uses its own DB session since the
+    # outer `db` may close once FastAPI's dependency scope ends.
     def generate_sse():
+        from model import SessionLocal
         ai_response = ""
         try:
             from rag.rag_chain import RAGChain
@@ -185,16 +187,17 @@ def send_message(
             )
 
             # Load recent chat history into RAG memory
-            recent = db.scalars(
-                select(Message).where(
-                    Message.chatroom_id == chatroom_id,
-                ).order_by(Message.created_at.desc()).limit(10)
-            ).all()
-            for msg in reversed(recent[1:]):  # skip the just-saved user message
-                if msg.sender_id:
-                    rag.memory.add_user_message(msg.content)
-                else:
-                    rag.memory.add_ai_message(msg.content)
+            with SessionLocal() as gen_db:
+                recent = gen_db.scalars(
+                    select(Message).where(
+                        Message.chatroom_id == chatroom_id,
+                    ).order_by(Message.created_at.desc()).limit(10)
+                ).all()
+                for msg in reversed(recent[1:]):
+                    if msg.sender_id:
+                        rag.memory.add_user_message(msg.content)
+                    else:
+                        rag.memory.add_ai_message(msg.content)
 
             for chunk in rag.stream_query(body.content):
                 ai_response += chunk
@@ -219,16 +222,17 @@ def send_message(
             ai_response = error_msg
             yield f"data: {json.dumps({'type': 'error', 'content': error_msg})}\n\n"
 
-        # Save AI response to DB
+        # Save AI response to DB with its own session
         if ai_response:
-            ai_msg = Message(
-                workspace_id=workspace_id,
-                chatroom_id=chatroom_id,
-                sender_id=None,  # None = AI message
-                content=ai_response,
-            )
-            db.add(ai_msg)
-            db.commit()
+            with SessionLocal() as gen_db:
+                ai_msg = Message(
+                    workspace_id=workspace_id,
+                    chatroom_id=chatroom_id,
+                    sender_id=None,
+                    content=ai_response,
+                )
+                gen_db.add(ai_msg)
+                gen_db.commit()
 
     return StreamingResponse(
         generate_sse(),
