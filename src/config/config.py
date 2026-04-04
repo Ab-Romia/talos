@@ -1,10 +1,18 @@
+from enum import Enum
 from pathlib import Path
 from typing import Literal, ClassVar
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-__all__ = ["global_rag_config", "RagConfig", "LoggingConfig"]
+__all__ = ["global_rag_config", "RagConfig", "LoggingConfig", "CompressionType"]
+
+
+class CompressionType(str, Enum):
+    LLM = "llm"
+    EMBEDDINGS = "embeddings"
+    PIPELINE = "pipeline"
+    NONE = "none"
 
 
 class RagConfig(BaseSettings):
@@ -26,7 +34,7 @@ class RagConfig(BaseSettings):
     hybrid_dense_weight: float = 0.5
     hybrid_sparse_weight: float = 0.5
 
-    compression_type: Literal["llm", "embeddings", "pipeline", "none"] = "none"
+    compression_type: CompressionType = CompressionType.NONE
 
     chunk_size: int = 1000
     chunk_overlap: int = 200

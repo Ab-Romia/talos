@@ -6,6 +6,7 @@ from langchain_classic.retrievers.document_compressors import (
 )
 from langchain_core.retrievers import BaseRetriever
 
+from config import CompressionType
 from ..generation import get_llm
 from ..vector_store import get_embeddings
 
@@ -14,17 +15,17 @@ __all__ = ["compression_retriever"]
 
 def compression_retriever(
         base_retriever: BaseRetriever,
-        compression_type: str = "none",
+        compression_type: CompressionType = CompressionType.NONE,
 ):
     """Context compression using CLaRa techniques."""
     match compression_type:
-        case "llm":
+        case CompressionType.LLM:
             compressor = LLMChainExtractor.from_llm(get_llm())
-        case "embeddings":
+        case CompressionType.EMBEDDINGS:
             compressor = EmbeddingsFilter(
                 embeddings=get_embeddings(), similarity_threshold=0.76
             )
-        case "pipeline":
+        case CompressionType.PIPELINE:
             embeddings_filter = EmbeddingsFilter(
                 embeddings=get_embeddings(), similarity_threshold=0.76
             )

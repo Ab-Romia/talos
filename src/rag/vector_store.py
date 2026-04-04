@@ -20,11 +20,18 @@ __all__ = [
 
 WORKSPACE_COLLECTION = "talos_documents"
 
-connections.connect(
-    alias="default",
-    host=global_rag_config.milvus_host,
-    port=global_rag_config.milvus_port,
-)
+_milvus_connected = False
+
+
+def _ensure_milvus_connection():
+    global _milvus_connected
+    if not _milvus_connected:
+        connections.connect(
+            alias="default",
+            host=global_rag_config.milvus_host,
+            port=global_rag_config.milvus_port,
+        )
+        _milvus_connected = True
 
 
 def get_embeddings(provider: str | None = None) -> Embeddings:
@@ -49,6 +56,7 @@ def get_vectorstore(
         embedding_provider: str | None = None,
         embeddings: Embeddings | None = None,
 ) -> VectorStore:
+    _ensure_milvus_connection()
     if embeddings is None:
         embeddings = get_embeddings(embedding_provider)
 
@@ -62,6 +70,7 @@ def get_vectorstore(
 
 
 def clear_collection(collection_name: str):
+    _ensure_milvus_connection()
     col_name = collection_name
 
     if utility.has_collection(col_name):
@@ -77,6 +86,7 @@ class CollectionInfo:
 
 
 def get_collection_info(collection_name: str | None = None) -> CollectionInfo | None:
+    _ensure_milvus_connection()
     col_name = collection_name or global_rag_config.milvus_collection_name
 
     if utility.has_collection(col_name):
@@ -113,6 +123,7 @@ def get_workspace_vectorstore(
 
 def delete_file_chunks(file_id: str, collection_name: str = WORKSPACE_COLLECTION):
     """Delete all vector chunks for a given file_id from Milvus."""
+    _ensure_milvus_connection()
     from pymilvus import MilvusClient
 
     client = MilvusClient(

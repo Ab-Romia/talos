@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
@@ -61,6 +62,13 @@ app = FastAPI(title='Temp', lifespan=lifespan)
 app.include_router(auth_router, prefix="/api/auth")
 app.include_router(chat_router, prefix="/api")
 app.include_router(files_router, prefix="/api")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.middleware("http")(session_middleware)
 
 
