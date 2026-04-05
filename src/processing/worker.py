@@ -27,6 +27,8 @@ async def on_startup(ctx):
     """Initialize DB session factory and MinIO storage for the worker."""
     from model import SessionLocal
     from files.storage import MinIOStorage
+    import model.identity  # noqa: F401 — register models with SQLAlchemy
+    import model.messaging  # noqa: F401
 
     app_cfg = cfg()
     minio_cfg = app_cfg.minio
