@@ -50,7 +50,7 @@ async def on_shutdown(ctx):
 class WorkerSettings:
     """ARQ worker settings."""
 
-    functions = [func("processing.tasks.process_file", max_tries=3)]
+    functions = [func("processing.tasks.process_file", name="process_file", max_tries=3)]
     redis_settings = get_redis_settings()
     on_startup = on_startup
     on_shutdown = on_shutdown
