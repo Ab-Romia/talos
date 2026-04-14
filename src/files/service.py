@@ -172,6 +172,9 @@ class FileService:
             # cursor format: "{created_at_iso}|{uuid}"
             try:
                 ts_str, id_str = cursor.split("|", 1)
+                # URL decoding converts "+" in the tz offset (e.g. "+00:00") to a space,
+                # so put it back before parsing the ISO timestamp.
+                ts_str = ts_str.replace(" ", "+")
                 cursor_ts = datetime.fromisoformat(ts_str)
                 cursor_id = uuid.UUID(id_str)
                 query = query.where(
