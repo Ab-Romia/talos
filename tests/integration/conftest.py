@@ -1,6 +1,7 @@
 import os
 import uuid
 from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -123,7 +124,15 @@ def make_file(db_session, test_user):
 
 
 @pytest.fixture
-def client(db_session, test_user, test_workspace, mock_storage):
+def mock_arq_pool():
+    """Fake ARQ pool that records enqueue calls without hitting Redis."""
+    pool = AsyncMock()
+    pool.enqueue_job = AsyncMock()
+    return pool
+
+
+@pytest.fixture
+def client(db_session, test_user, test_workspace, mock_storage, mock_arq_pool):
     """FastAPI TestClient with all dependencies overridden and lifespan disabled."""
     from fastapi.testclient import TestClient
     from backend.auth.utils.helpers import active_user
@@ -133,7 +142,7 @@ def client(db_session, test_user, test_workspace, mock_storage):
     # Replace the lifespan with a no-op to avoid connecting to MinIO/Redis
     @asynccontextmanager
     async def _noop_lifespan(_app):
-        _app.state.arq_pool = None
+        _app.state.arq_pool = mock_arq_pool
         _app.state.minio_storage = mock_storage
         yield
 

@@ -67,7 +67,15 @@ async def process_document(
         for i, chunk in enumerate(chunks):
             chunk.metadata["chunk_index"] = i
 
-        # Ingest into Milvus workspace collection
+        # Clear any chunks from prior attempts so retries stay idempotent.
+        # Milvus has no unique constraint on (file_id, chunk_index), so
+        # re-ingesting without this would duplicate chunks.
+        from rag.vector_store import delete_file_chunks
+        delete_file_chunks(
+            str(file_record.id),
+            workspace_id=str(file_record.workspace_id),
+        )
+
         from rag.ingestion import ingest_file_chunks
         ingest_file_chunks(chunks, str(file_record.workspace_id), str(file_record.id))
 

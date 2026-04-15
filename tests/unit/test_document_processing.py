@@ -84,6 +84,20 @@ class TestProcessDocument:
         record.chunk_count = None
         return record
 
+    def _patched_rag_modules(self, mock_ingest=None, mock_delete=None):
+        """Return a sys.modules patch that stubs the rag submodules used by
+        process_document so unit tests never reach Milvus."""
+        ingestion = MagicMock(ingest_file_chunks=mock_ingest or MagicMock())
+        vector_store = MagicMock(delete_file_chunks=mock_delete or MagicMock())
+        return patch.dict(
+            "sys.modules",
+            {
+                "rag": MagicMock(),
+                "rag.ingestion": ingestion,
+                "rag.vector_store": vector_store,
+            },
+        )
+
     @pytest.mark.asyncio
     async def test_downloads_file(self, mock_storage):
         from processing.documents import process_document
@@ -97,8 +111,7 @@ class TestProcessDocument:
 
         mock_storage.download_file_to_path = AsyncMock(side_effect=fake_download)
 
-        mock_rag_ingestion = MagicMock(ingest_file_chunks=MagicMock())
-        with patch.dict("sys.modules", {"rag": MagicMock(), "rag.ingestion": mock_rag_ingestion}):
+        with self._patched_rag_modules():
             await process_document(record, db, mock_storage)
 
         mock_storage.download_file_to_path.assert_awaited_once()
@@ -117,11 +130,38 @@ class TestProcessDocument:
         mock_storage.download_file_to_path = AsyncMock(side_effect=fake_download)
 
         mock_ingest = MagicMock()
-        mock_rag_ingestion = MagicMock(ingest_file_chunks=mock_ingest)
-        with patch.dict("sys.modules", {"rag": MagicMock(), "rag.ingestion": mock_rag_ingestion}):
+        with self._patched_rag_modules(mock_ingest=mock_ingest):
             await process_document(record, db, mock_storage)
 
         mock_ingest.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_deletes_existing_chunks_before_reingest(self, mock_storage):
+        """Retries must be idempotent: any chunks from a prior failed run are
+        removed before new chunks land in Milvus, otherwise retries duplicate
+        rows (Milvus has no unique key on file_id + chunk_index)."""
+        from processing.documents import process_document
+
+        record = self._make_record()
+        db = MagicMock()
+
+        async def fake_download(key, path):
+            with open(path, "w") as f:
+                f.write("content to be chunked")
+
+        mock_storage.download_file_to_path = AsyncMock(side_effect=fake_download)
+
+        call_order: list[str] = []
+        mock_delete = MagicMock(side_effect=lambda *a, **kw: call_order.append("delete"))
+        mock_ingest = MagicMock(side_effect=lambda *a, **kw: call_order.append("ingest"))
+
+        with self._patched_rag_modules(mock_ingest=mock_ingest, mock_delete=mock_delete):
+            await process_document(record, db, mock_storage)
+
+        assert call_order == ["delete", "ingest"]
+        mock_delete.assert_called_once_with(
+            str(record.id), workspace_id=str(record.workspace_id)
+        )
 
     @pytest.mark.asyncio
     async def test_sets_zero_chunks_no_text(self, mock_storage):
@@ -154,8 +194,7 @@ class TestProcessDocument:
 
         mock_storage.download_file_to_path = AsyncMock(side_effect=fake_download)
 
-        mock_rag_ingestion = MagicMock(ingest_file_chunks=MagicMock())
-        with patch.dict("sys.modules", {"rag": MagicMock(), "rag.ingestion": mock_rag_ingestion}):
+        with self._patched_rag_modules():
             await process_document(record, db, mock_storage)
 
         assert len(created_paths) == 1

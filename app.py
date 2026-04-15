@@ -46,10 +46,15 @@ async def lifespan(_: FastAPI):
     # Initialize ARQ Redis pool for background task enqueueing
     from arq import create_pool
     from processing.worker import get_redis_settings
+    from utils.logger import get_logger
     try:
         app.state.arq_pool = await create_pool(get_redis_settings())
     except Exception:
-        app.state.arq_pool = None  # Graceful degradation if Redis unavailable
+        # Keep the app running so non-upload endpoints stay usable, but log
+        # loudly — uploads will now fail fast with 503 instead of silently
+        # accepting files that never get processed.
+        get_logger(__name__).error("Failed to initialize ARQ Redis pool", exc_info=True)
+        app.state.arq_pool = None
 
     yield
 

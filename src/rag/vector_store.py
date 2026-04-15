@@ -121,19 +121,32 @@ def get_workspace_vectorstore(
     )
 
 
-def delete_file_chunks(file_id: str, collection_name: str = WORKSPACE_COLLECTION):
-    """Delete all vector chunks for a given file_id from Milvus."""
+def delete_file_chunks(
+    file_id: str,
+    workspace_id: str | None = None,
+    collection_name: str = WORKSPACE_COLLECTION,
+):
+    """Delete all vector chunks for a given file_id from Milvus.
+
+    When workspace_id is supplied, the delete is additionally scoped to
+    that workspace so a caller cannot accidentally wipe another tenant's
+    rows if file_ids ever collide.
+    """
     _ensure_milvus_connection()
+    if not utility.has_collection(collection_name):
+        return
+
     from pymilvus import MilvusClient
 
     client = MilvusClient(
         uri=f"http://{global_rag_config.milvus_host}:{global_rag_config.milvus_port}"
     )
 
-    if not utility.has_collection(collection_name):
-        return
+    parts = [f'file_id == "{file_id}"']
+    if workspace_id:
+        parts.append(f'workspace_id == "{workspace_id}"')
 
     client.delete(
         collection_name=collection_name,
-        filter=f'file_id == "{file_id}"',
+        filter=" && ".join(parts),
     )

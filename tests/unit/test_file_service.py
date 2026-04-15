@@ -183,7 +183,7 @@ class TestFileServiceDelete:
         assert file_record.deleted_at is not None
         db.commit.assert_called()
 
-    def test_soft_delete_calls_vector_cleanup(self):
+    def test_soft_delete_calls_vector_cleanup_scoped_to_workspace(self):
         db = MagicMock()
         file_record = MagicMock(spec=FileAttachment)
         file_record.deleted_at = None
@@ -192,9 +192,11 @@ class TestFileServiceDelete:
 
         mock_del = MagicMock()
         mock_rag_vs = MagicMock(delete_file_chunks=mock_del)
+        file_id = uuid.uuid4()
+        workspace_id = uuid.uuid4()
         with patch.dict("sys.modules", {"rag": MagicMock(), "rag.vector_store": mock_rag_vs}):
-            svc.soft_delete(uuid.uuid4(), uuid.uuid4())
-        mock_del.assert_called_once()
+            svc.soft_delete(file_id, workspace_id)
+        mock_del.assert_called_once_with(str(file_id), workspace_id=str(workspace_id))
 
     def test_soft_delete_tolerates_vector_failure(self):
         db = MagicMock()

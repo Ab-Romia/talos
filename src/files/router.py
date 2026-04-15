@@ -52,8 +52,13 @@ async def upload_file(
 
     # Enqueue background processing
     arq_pool = getattr(request.app.state, "arq_pool", None)
-    if arq_pool is not None:
-        await arq_pool.enqueue_job("process_file", str(db_file.id), _job_id=f"process_{db_file.id}")
+    try:
+        await FileService.enqueue_processing(arq_pool, db_file.id)
+    except RuntimeError:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "File processing queue unavailable; try again later",
+        )
 
     return FileUploadResponse(
         file_id=db_file.id,

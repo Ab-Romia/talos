@@ -36,7 +36,10 @@ class TestUploadAPI:
         )
         assert resp.status_code == 413
 
-    def test_upload_without_arq_still_succeeds(self, client, test_workspace):
+    def test_upload_without_arq_returns_503(self, client, test_workspace):
+        """If the ARQ pool is unavailable, uploads fail fast so the client
+        knows the file will not be processed, rather than silently accepting
+        it and leaving the file stuck in UPLOADED forever."""
         from app import app
         app.state.arq_pool = None
 
@@ -44,7 +47,19 @@ class TestUploadAPI:
             f"/api/workspaces/{test_workspace.id}/files",
             files={"file": ("test.txt", b"data", "text/plain")},
         )
+        assert resp.status_code == 503
+
+    def test_upload_enqueues_processing_job(self, client, test_workspace, mock_arq_pool):
+        """A successful upload schedules the file for background processing."""
+        resp = client.post(
+            f"/api/workspaces/{test_workspace.id}/files",
+            files={"file": ("enqueued.txt", b"queue me", "text/plain")},
+        )
         assert resp.status_code == 202
+        mock_arq_pool.enqueue_job.assert_called_once()
+        args, kwargs = mock_arq_pool.enqueue_job.call_args
+        assert args[0] == "process_file"
+        assert args[1] == resp.json()["file_id"]
 
     def test_upload_unsupported_mime_returns_415(self, client, test_workspace):
         # ZIP magic bytes -> detected as application/zip (not in ALLOWED_MIME_TYPES)

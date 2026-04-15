@@ -214,12 +214,67 @@ class FileService:
         # Remove vector chunks from Milvus
         try:
             from rag.vector_store import delete_file_chunks
-            delete_file_chunks(str(file_id))
+            delete_file_chunks(str(file_id), workspace_id=str(workspace_id))
         except Exception:
             logger.warning("Failed to delete file chunks from vector store", file_id=str(file_id))
 
         logger.info("File soft-deleted", file_id=str(file_id))
         return file
+
+    @staticmethod
+    async def enqueue_processing(arq_pool, file_id: uuid.UUID) -> None:
+        """Enqueue the background processing job for a file.
+
+        Raises RuntimeError if the ARQ pool is unavailable so the caller
+        can translate that to an HTTP error. Using the file id as the ARQ
+        job id keeps enqueues idempotent per file.
+        """
+        if arq_pool is None:
+            raise RuntimeError("ARQ pool not available")
+        await arq_pool.enqueue_job(
+            "process_file",
+            str(file_id),
+            _job_id=f"process_{file_id}",
+        )
+
+    def reset_for_retry(
+        self,
+        file_id: uuid.UUID,
+        workspace_id: uuid.UUID,
+    ) -> FileAttachment | None:
+        """Reset a file so it can be reprocessed.
+
+        Returns the file with status flipped back to UPLOADED, or None if
+        the file is missing. Raises ValueError if the file is in a state
+        that cannot be retried (currently PROCESSING or INDEXED).
+        """
+        file = self.get_file(file_id, workspace_id)
+        if file is None:
+            return None
+        if file.processing_status in (ProcessingStatus.PROCESSING, ProcessingStatus.INDEXED):
+            raise ValueError(f"Cannot retry file in {file.processing_status.value} state")
+
+        file.processing_status = ProcessingStatus.UPLOADED
+        file.processing_error = None
+        file.chunk_count = None
+        self.db.commit()
+        self.db.refresh(file)
+        return file
+
+    async def get_thumbnail_url(
+        self,
+        file_id: uuid.UUID,
+        workspace_id: uuid.UUID,
+    ) -> str | None:
+        """Return a presigned URL to the thumbnail, or None if there isn't one."""
+        file = self.get_file(file_id, workspace_id)
+        if file is None or not file.thumbnail_storage_key:
+            return None
+
+        return await self.storage.generate_presigned_download_url(
+            storage_key=file.thumbnail_storage_key,
+            original_filename=f"thumb_{file.original_filename}.jpg",
+        )
 
     def attach_to_message(
         self,
