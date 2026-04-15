@@ -1,6 +1,7 @@
 """Chat and workspace endpoints — connects frontend to RAG pipeline."""
 
 import json
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -16,6 +17,10 @@ from model.messaging import Workspace, Chatroom, Message
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Hard ceiling on how long an SSE stream may run before the server closes it.
+# Prevents zombie streams if the upstream LLM or retriever hangs.
+MAX_STREAM_SECONDS = 300
 
 router = APIRouter()
 
@@ -179,6 +184,7 @@ def send_message(
     def generate_sse():
         from model import SessionLocal
         ai_response = ""
+        started = time.monotonic()
         try:
             from rag.rag_chain import RAGChain
             rag = RAGChain(
@@ -199,9 +205,17 @@ def send_message(
                     else:
                         rag.memory.add_ai_message(msg.content)
 
+            timed_out = False
             for chunk in rag.stream_query(body.content):
+                if time.monotonic() - started > MAX_STREAM_SECONDS:
+                    timed_out = True
+                    break
                 ai_response += chunk
                 yield f"data: {json.dumps({'type': 'chunk', 'content': chunk})}\n\n"
+
+            if timed_out:
+                yield f"data: {json.dumps({'type': 'error', 'content': 'Stream exceeded maximum duration'})}\n\n"
+                return
 
             # Send metadata (citations, docs count)
             info = rag.last_query_info

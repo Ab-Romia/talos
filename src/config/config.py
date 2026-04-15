@@ -20,7 +20,6 @@ class RagConfig(BaseSettings):
     openai_model: str = "gpt-4o-mini"
 
     embedding_model: str = "text-embedding-3-small"
-    embedding_cache_dir: str = ".cache/embeddings"
     embedding_provider: str = "openai"
 
     milvus_host: str = "localhost"
@@ -28,11 +27,8 @@ class RagConfig(BaseSettings):
     milvus_collection_name: str = "documents_v2"
 
     retrieval_top_k: int = 5
-    rerank_top_k: int = 3
-    use_hybrid_retrieval: bool = True
+    use_hybrid_retrieval: bool = False
     use_reranking: bool = True
-    hybrid_dense_weight: float = 0.5
-    hybrid_sparse_weight: float = 0.5
 
     compression_type: CompressionType = CompressionType.NONE
 
