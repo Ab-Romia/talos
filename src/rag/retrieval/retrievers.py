@@ -1,4 +1,5 @@
 from collections.abc import Iterable
+from functools import lru_cache
 
 from langchain_classic.retrievers import (
     EnsembleRetriever,
@@ -14,6 +15,15 @@ from config import RagConfig
 from config import global_rag_config
 
 __all__ = ["get_retriever"]
+
+CROSS_ENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+
+@lru_cache(maxsize=1)
+def _get_cross_encoder(model_name: str = CROSS_ENCODER_MODEL) -> HuggingFaceCrossEncoder:
+    """Load the reranker once and reuse it for every request. Without this,
+    a fresh transformer was being instantiated on every chat message."""
+    return HuggingFaceCrossEncoder(model_name=model_name)
 
 
 # TODO: instead of passing boolean flags, pass reranker and retriever
@@ -42,10 +52,7 @@ def get_retriever(
         base_retriever = dense_retriever
 
     if config.use_reranking:
-        # TODO: make async:
-        model = HuggingFaceCrossEncoder(
-            model_name="cross-encoder/ms-marco-MiniLM-L-6-v2"
-        )
+        model = _get_cross_encoder()
         compressor = CrossEncoderReranker(model=model, top_n=config.retrieval_top_k)
         return ContextualCompressionRetriever(
             base_compressor=compressor, base_retriever=base_retriever

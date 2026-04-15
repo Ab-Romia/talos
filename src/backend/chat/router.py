@@ -37,6 +37,7 @@ class ChatroomCreate(BaseModel):
 
 class MessageCreate(BaseModel):
     content: str
+    file_ids: list[uuid.UUID] | None = None
 
 
 # ── Workspaces ──
@@ -179,6 +180,16 @@ def send_message(
     db.commit()
     db.refresh(user_msg)
 
+    # Attach any referenced files to the message so retrieval can scope
+    # to them. Silently skip ids that don't belong to this workspace.
+    attached_file_ids: list[str] = []
+    if body.file_ids:
+        from files.service import FileService
+        svc = FileService(db, storage=None)
+        for fid in body.file_ids:
+            if svc.attach_to_message(fid, user_msg.id, workspace_id):
+                attached_file_ids.append(str(fid))
+
     # Stream AI response via SSE — uses its own DB session since the
     # outer `db` may close once FastAPI's dependency scope ends.
     def generate_sse():
@@ -190,6 +201,7 @@ def send_message(
             rag = RAGChain(
                 collection_name="talos_documents",
                 workspace_id=str(workspace_id),
+                file_ids=attached_file_ids or None,
             )
 
             # Load recent chat history into RAG memory
