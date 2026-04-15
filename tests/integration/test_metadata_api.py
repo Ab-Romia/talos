@@ -68,3 +68,20 @@ class TestMetadataAPI:
         data = resp.json()
         assert data["files"] == []
         assert data["next_cursor"] is None
+
+    def test_thumbnail_returns_presigned_url(self, client, test_workspace, make_file):
+        f = make_file(
+            test_workspace.id,
+            content_type="image/png",
+            thumbnail_storage_key="workspaces/x/thumb.jpg",
+        )
+        resp = client.get(f"/api/workspaces/{test_workspace.id}/files/{f.id}/thumbnail")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["file_id"] == str(f.id)
+        assert data["thumbnail_url"].startswith("http")
+
+    def test_thumbnail_404_when_not_generated(self, client, test_workspace, make_file):
+        f = make_file(test_workspace.id, content_type="application/pdf")
+        resp = client.get(f"/api/workspaces/{test_workspace.id}/files/{f.id}/thumbnail")
+        assert resp.status_code == 404

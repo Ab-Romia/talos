@@ -8,7 +8,13 @@ from backend.auth.utils.helpers import active_user
 from files.constants import MAX_FILE_SIZE
 from files.dependencies import get_storage, get_workspace_member
 from files.exceptions import FileTooLarge, UnsupportedFileType
-from files.schemas import FileDownloadResponse, FileListResponse, FileMetadata, FileUploadResponse
+from files.schemas import (
+    FileDownloadResponse,
+    FileListResponse,
+    FileMetadata,
+    FileThumbnailResponse,
+    FileUploadResponse,
+)
 from files.service import FileService
 from files.storage import MinIOStorage
 from model import DatabaseDep
@@ -112,6 +118,64 @@ async def download_file(
 
     url, filename = result
     return FileDownloadResponse(file_id=file_id, filename=filename, download_url=url)
+
+
+# --- Thumbnail (pre-signed URL) ---
+
+@router.get(
+    "/workspaces/{workspace_id}/files/{file_id}/thumbnail",
+    response_model=FileThumbnailResponse,
+)
+async def get_file_thumbnail(
+    workspace_id: uuid.UUID,
+    file_id: uuid.UUID,
+    user: User = Depends(active_user),
+    workspace: Workspace = Depends(get_workspace_member),
+    db: DatabaseDep = None,
+    storage: MinIOStorage = Depends(get_storage),
+):
+    """Return a pre-signed URL to the file's generated thumbnail, if any."""
+    svc = FileService(db, storage)
+    url = await svc.get_thumbnail_url(file_id, workspace_id)
+    if url is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Thumbnail not found")
+    return FileThumbnailResponse(file_id=file_id, thumbnail_url=url)
+
+
+# --- Retry processing ---
+
+@router.post(
+    "/workspaces/{workspace_id}/files/{file_id}/retry",
+    response_model=FileMetadata,
+)
+async def retry_file_processing(
+    request: Request,
+    workspace_id: uuid.UUID,
+    file_id: uuid.UUID,
+    user: User = Depends(active_user),
+    workspace: Workspace = Depends(get_workspace_member),
+    db: DatabaseDep = None,
+):
+    """Re-enqueue a file for processing. Valid for UPLOADED and FAILED states."""
+    svc = FileService(db, storage=None)
+    try:
+        file = svc.reset_for_retry(file_id, workspace_id)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+
+    if file is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found")
+
+    arq_pool = getattr(request.app.state, "arq_pool", None)
+    try:
+        await FileService.enqueue_processing(arq_pool, file.id)
+    except RuntimeError:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "File processing queue unavailable; try again later",
+        )
+
+    return FileMetadata.model_validate(file)
 
 
 # --- Processing status ---

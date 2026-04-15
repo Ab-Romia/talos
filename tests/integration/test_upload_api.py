@@ -82,3 +82,39 @@ class TestUploadAPI:
         record = db_session.get(FileAttachment, uuid.UUID(file_id))
         assert record is not None
         assert record.original_filename == "persist.txt"
+
+
+@pytest.mark.integration
+class TestRetryAPI:
+    def test_retry_resets_failed_file_and_enqueues(
+        self, client, test_workspace, make_file, db_session, mock_arq_pool
+    ):
+        from files.models import FileAttachment, ProcessingStatus
+
+        f = make_file(
+            test_workspace.id,
+            processing_status=ProcessingStatus.FAILED,
+            processing_error="something went wrong",
+            chunk_count=None,
+        )
+        resp = client.post(f"/api/workspaces/{test_workspace.id}/files/{f.id}/retry")
+        assert resp.status_code == 200
+
+        db_session.expire_all()
+        record = db_session.get(FileAttachment, f.id)
+        assert record.processing_status == ProcessingStatus.UPLOADED
+        assert record.processing_error is None
+        mock_arq_pool.enqueue_job.assert_called_once()
+
+    def test_retry_rejects_indexed_file(self, client, test_workspace, make_file):
+        from files.models import ProcessingStatus
+
+        f = make_file(test_workspace.id, processing_status=ProcessingStatus.INDEXED)
+        resp = client.post(f"/api/workspaces/{test_workspace.id}/files/{f.id}/retry")
+        assert resp.status_code == 409
+
+    def test_retry_404_when_missing(self, client, test_workspace):
+        resp = client.post(
+            f"/api/workspaces/{test_workspace.id}/files/{uuid.uuid4()}/retry"
+        )
+        assert resp.status_code == 404

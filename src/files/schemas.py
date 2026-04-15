@@ -41,6 +41,11 @@ class FileDownloadResponse(BaseModel):
     download_url: str
 
 
+class FileThumbnailResponse(BaseModel):
+    file_id: uuid.UUID
+    thumbnail_url: str
+
+
 class FileListResponse(BaseModel):
     files: list[FileMetadata]
     next_cursor: str | None
