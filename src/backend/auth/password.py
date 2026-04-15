@@ -54,10 +54,12 @@ def password_authenticate(
         .where(IdentityProvider.issuer == Issuer.totp)
     )
 
-    # Create DB session record so active_user can find it
+    # Create or refresh DB session record so active_user can find it.
+    # Using merge() keeps re-login idempotent when the browser still has a
+    # valid cookie from a previous session — db.add() would collide on the
+    # existing sessions.id primary key.
     from model.identity import Session as DBSession
-    db_session = DBSession(id=session.jti, user_id=user.id)
-    db.add(db_session)
+    db.merge(DBSession(id=session.jti, user_id=user.id))
     db.commit()
 
     session.sub = user.id
