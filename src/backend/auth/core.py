@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, status, Form
 from langgraph_sdk.auth.exceptions import HTTPException
 from pydantic import BaseModel
 from sqlalchemy import delete
+from sqlalchemy.exc import IntegrityError
 
 from config import cfg
 from model import DatabaseDep
@@ -46,10 +47,14 @@ async def create_user(
     )
     db.add(user)
 
-    db.flush()  # get the id before commit
-
-    # TODO: handle exceptions for duplicate usernames/emails
-    # TODO: handle different identity providers
+    try:
+        db.flush()  # get the id before commit
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username or email already taken",
+        )
 
     create_password_identity(user_id=user.id, password=create_user.password, db=db)
 
