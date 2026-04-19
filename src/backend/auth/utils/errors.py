@@ -1,6 +1,8 @@
 from fastapi import HTTPException
 from starlette import status
 
+from backend.auth.perms import PermissionSet
+
 
 class AuthException(HTTPException):
     status_code = status.HTTP_401_UNAUTHORIZED
@@ -50,7 +52,7 @@ class Forbidden(AuthException):
     status_code = status.HTTP_403_FORBIDDEN
     detail = "Forbidden"
 
-    def __init__(self, missing_perms: set[str] = None):
+    def __init__(self, missing_perms: PermissionSet = None):
         if missing_perms:
             detail = f"Forbidden. Required permissions: {', '.join(missing_perms)}"
         else:
