@@ -1,7 +1,8 @@
+import functools
 import uuid
 from datetime import datetime
-from enum import Enum as PyEnum
-from typing import Any
+from enum import Enum as PyEnum, auto
+from typing import Any, Self
 
 from pydantic import BaseModel, Field
 from sqlalchemy import DateTime, Table, Column, ForeignKey, Enum, Uuid, func, CheckConstraint, text
@@ -100,6 +101,12 @@ class Role(Base):
     name: Mapped[str] = mapped_column(unique=True, index=True)
     description: Mapped[str | None] = mapped_column()
     permissions: Mapped[list["Permission"]] = relationship(secondary="platform_role_permissions")
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True,
+                                                           default=None)
+    priority: Mapped[int] = mapped_column(index=True, default=0)
+    channel_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("channels.id", ondelete="CASCADE"), index=True,
+                                                         default=None)
+
     users: Mapped[list["User"]] = relationship(
         "User",
         secondary="users_platform_roles",
@@ -107,11 +114,73 @@ class Role(Base):
     )
 
 
+@functools.total_ordering
+class PermissionScope(PyEnum, int):
+    OWN = auto()
+    CHANNEL = auto()
+    WORKSPACE = auto()
+    ANY = auto()
+
+    def __lt__(self, other: PermissionScope) -> bool:
+        return self.value < other.value
+
+    def __str__(self):
+        return self.name.lower()
+
+    @classmethod
+    def from_str(cls, raw_scope) -> Self:
+        if raw_scope is None or raw_scope == "*":
+            return cls.ANY
+        return cls[raw_scope.upper()]
+
+
 class Permission(Base):
     __tablename__ = "permissions"
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    name: Mapped[str] = mapped_column(unique=True, index=True)
+    resource: Mapped[str] = mapped_column(index=True)
+    action: Mapped[str] = mapped_column(index=True)
+    scope: Mapped[PermissionScope] = mapped_column(Enum(PermissionScope), index=True)
+    is_deny: Mapped[bool] = mapped_column(default=False)
     description: Mapped[str | None] = mapped_column()
+
+    def covers(self, other: Permission) -> bool:
+        if (self.resource != other.resource
+                or self.action != other.action
+                or self.scope < other.scope):
+            return False
+
+        return True
+
+    # TODO: assert that resource, action
+    @classmethod
+    def from_str(cls, perm_str: str) -> Self:
+        """
+        Creates an instance of the class based on a permission string. The permission
+        string is expected to follow the format `resource:action:scope`. The resource
+        and action are mandatory, while the scope is optional. If the scope is not
+        provided, it defaults to `PermissionScope.ANY`.
+
+        :param perm_str: A string representation of the permission in the
+            format `resource[.subresource]:action[:scope]`. The resource and action are required,
+            and the scope, if provided, represents the level of access.
+        :type perm_str: str
+        :raises ValueError: If the resource or action part of the string is empty.
+        :return: An instance of the class created based on the parsed permission string.
+        :rtype: Self
+        """
+        resource, action, raw_scope = [*perm_str.split(":") + [None] * 3][:3]
+
+        if not resource or not action:
+            raise ValueError("Permission resource and action cannot be empty.")
+
+        scope = PermissionScope.from_str(raw_scope) if raw_scope else PermissionScope.ANY
+
+        return cls(resource=resource,
+                   action=action,
+                   scope=scope)
+
+    def __str__(self):
+        return f"{self.resource}:{self.action}:{self.scope.value if self.scope else '*'}"
 
 
 class OAuth2Token(BaseModel):

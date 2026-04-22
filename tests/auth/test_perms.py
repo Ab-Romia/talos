@@ -1,9 +1,9 @@
-from backend.auth.perms import PermissionSet, Scope, ScopeContext, UserPermission
+from backend.auth.perms import PermissionSet, Scope, ScopeContext, Permission
 
 
-def perm(resource: str, action: str, scope: Scope, **context) -> UserPermission:
+def perm(resource: str, action: str, scope: Scope, **context) -> Permission:
     scope_context = ScopeContext(**context) if context else None
-    return UserPermission(
+    return Permission(
         resource=resource,
         action=action,
         scope=scope,
@@ -79,9 +79,8 @@ def test_permission_set_difference_removes_only_fully_covered_permissions():
 
 
 def test_from_str_defaults_scope_to_any():
-    parsed = UserPermission.from_str("message:send")
+    parsed = Permission.from_str("message:send")
 
     assert parsed.scope == Scope.ANY
     assert parsed.resource == "message"
     assert parsed.action == "send"
-

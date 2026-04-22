@@ -1,17 +1,16 @@
-from enum import Enum, auto
+import uuid
 from typing import Annotated, Self
 
 from fastapi import Depends
 from pydantic import BaseModel
-from sqlalchemy import select, func
-from sqlalchemy.sql.operators import in_op
+from sqlalchemy import select, or_
 
 from backend.auth.utils import errors
 from backend.auth.utils.session import SessionDep
 from model import DatabaseDep
 from model.identity import Permission, Role
 
-perms = {
+PERMISSIONS = {
     "workspace": {
         "actions": [
             "create",
@@ -94,141 +93,50 @@ perms = {
 #  - default roles (admin, moderator, everyone)
 
 class ScopeContext(BaseModel):
-    workspace_id: int = None
-    channel_id: int = None
-    message_id: int = None
-
-
-class Scope(Enum, int):
-    OWN = auto()
-    CHANNEL = auto()
-    WORKSPACE = auto()
-    ANY = auto()
-
-    def __cmp__(self, other):
-        if not isinstance(other, Scope):
-            return NotImplemented
-        return self.value - other.value
-
-
-class UserPermission(BaseModel):
-    resource: str
-    action: str
-    scope: Scope | None = None
-    scope_context: ScopeContext | None = None
-
-    @staticmethod
-    def context_specificity(scope_context: ScopeContext | None) -> int:
-        if scope_context is None:
-            return 0
-        return sum(
-            value is not None
-            for value in (
-                scope_context.workspace_id,
-                scope_context.channel_id,
-                scope_context.message_id,
-            )
-        )
-
-    @property
-    def normalized_scope(self) -> Scope:
-        return self.scope or Scope.ANY
-
-    def _context_covers(self, other: "UserPermission") -> bool:
-        # No context means global scope (covers all matching contexts).
-        if self.scope_context is None:
-            return True
-
-        # Context-bound permission cannot satisfy a context-agnostic requirement.
-        if other.scope_context is None:
-            return False
-
-        for field in ("workspace_id", "channel_id", "message_id"):
-            own_value = getattr(self.scope_context, field)
-            other_value = getattr(other.scope_context, field)
-
-            if own_value is None:
-                continue
-
-            if other_value is None or own_value != other_value:
-                return False
-
-        return True
-
-    def covers(self, other: "UserPermission") -> bool:
-        if self.resource != other.resource or self.action != other.action:
-            return False
-
-        if self.normalized_scope < other.normalized_scope:
-            return False
-
-        return self._context_covers(other)
-
-    def __le__(self, other: "UserPermission") -> bool:
-        return other.covers(self)
-
-    # TODO: assert that resource, action and scope are valid
-    @staticmethod
-    def from_str(perm_str: str) -> 'UserPermission':
-        chunks = [chunk.strip() for chunk in perm_str.split(":")]
-        if len(chunks) not in (2, 3):
-            raise ValueError(
-                "Invalid permission format. Expected 'resource:action[:scope]'."
-            )
-
-        resource, action = chunks[0], chunks[1]
-        if not resource or not action:
-            raise ValueError("Permission resource and action cannot be empty.")
-
-        scope = Scope.ANY
-        if len(chunks) == 3:
-            raw_scope = chunks[2]
-            try:
-                scope = Scope(raw_scope)
-            except ValueError as exc:
-                raise ValueError(f"Unknown scope '{raw_scope}'.") from exc
-
-        return UserPermission(resource=resource, action=action, scope=scope)
-
-    def __str__(self):
-        return f"{self.resource}:{self.action}:{self.scope.value if self.scope else '*'}"
+    workspace_id: uuid.UUID = None
+    channel_id: uuid.UUID = None
 
 
 class PermissionSet:
-    def __init__(self, permissions: set[UserPermission]):
+    def __init__(self, permissions: set[Permission]):
         self.permissions = self._normalize(permissions)
 
-    @staticmethod
-    def _sort_key(permission: UserPermission) -> tuple[int, int, str, str]:
-        return (
-            -permission.normalized_scope.value,
-            UserPermission.context_specificity(permission.scope_context),
-            permission.resource,
-            permission.action,
+    @classmethod
+    def _normalize(cls, permissions: set[Permission]) -> set[Permission]:
+        """
+        Remove redundant permissions from the set, keeping only the most general ones.
+        E.g. "messages:edit:*" covers "messages:edit:own", so the latter can be removed.
+        """
+        # TODO: priority, denies, overrides
+
+        # Asserts that permissions are sorted (most general first)
+        # Most likely sorted from the database query
+        sorted_permissions = sorted(
+            permissions,
+            key=lambda p: (-p.scope.value, p.priority, p.is_deny, p.id)
         )
 
-    @classmethod
-    def _normalize(cls, permissions: set[UserPermission]) -> set[UserPermission]:
-        normalized: set[UserPermission] = set()
-
-        for permission in sorted(permissions, key=cls._sort_key):
+        normalized: set[Permission] = set()
+        for permission in sorted_permissions:
             if any(existing.covers(permission) for existing in normalized):
                 continue
 
             normalized = {
-                existing for existing in normalized if not permission.covers(existing)
+                existing
+                for existing in normalized
+                if not permission.covers(existing)
             }
             normalized.add(permission)
 
         return normalized
 
-    def __contains__(self, item: UserPermission):
+    def __contains__(self, item: Permission):
         return any(permission.covers(item) for permission in self.permissions)
 
     def __le__(self, other: Self):
         return all(permission in other for permission in self.permissions)
 
-    def __add__(self, other: Self) -> Self:
+    def __or__(self, other: Self) -> Self:
         return PermissionSet(self.permissions | other.permissions)
 
     def __sub__(self, other: Self) -> Self:
@@ -245,17 +153,28 @@ class PermissionSet:
         return len(self.permissions)
 
 
+def context_getter(workspace_id: uuid.UUID, channel_id: uuid.UUID) -> ScopeContext:
+    return ScopeContext(workspace_id=workspace_id,
+                        channel_id=channel_id)
+
+
 def user_perms(
         scope_context: Annotated[ScopeContext, Depends(context_getter)],
         session: SessionDep,
         db: DatabaseDep) -> PermissionSet:
+    # TODO: caching, optimize query, prefetch permissions with roles
     user_permissions = db.scalars(
-        select(func.distinct(Permission.name))
+        select(Permission)
         .join(Role, Role.permissions)
-        .where(in_op(session.sub, Role.users))
+        .where(Role.users.any(id=session.sub))
+        .where(
+            or_(Role.workspace_id == scope_context.workspace_id, Role.workspace_id.is_(None)),
+            or_(Role.channel_id == scope_context.channel_id, Role.channel_id.is_(None))
+        )
+        .order_by(Permission.scope.desc(), Role.priority, Permission.is_deny, Permission.id)
     )
 
-    return PermissionSet({UserPermission.from_str(permission) for permission in user_permissions})
+    return PermissionSet(set(user_permissions))
 
 
 def require_perms(*required_permissions: str):
@@ -266,24 +185,17 @@ def require_perms(*required_permissions: str):
     the user satisfies permission prerequisites based on the given scope context.
 
     :param required_permissions: A variable list of permission strings that are required.
-    :param context_getter: A callable responsible for retrieving the current scope's context.
-    :param scope_validator: A function used to validate if a given permission is applicable
-        within the specified context.
+
     :return: A function that validates user permissions by asserting that the required
         permissions are present within the user’s permissions based on the context.
     """
 
-    required_perms = PermissionSet({UserPermission.from_str(p) for p in required_permissions})
+    required_perms = PermissionSet({Permission.from_str(p) for p in required_permissions})
 
-    # TODO:
-    #  - implement caching for user permissions
-    #  - scopes (messages:edit:own vs messages:edit:*)
+    # TODO: implement caching for user permissions
 
-    def assert_perms(user_permissions: UserPermsDep):
+    def assert_perms(user_permissions: Annotated[PermissionSet, Depends(user_perms)]):
         if not required_perms <= user_permissions:
             raise errors.Forbidden(missing_perms=required_perms - user_permissions)
 
     return assert_perms
-
-
-UserPermsDep = Annotated[PermissionSet, Depends(user_perms)]
