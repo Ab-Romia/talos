@@ -192,11 +192,26 @@ async def revoke_token(session_id: UUID, db: DatabaseDep):
 
 @router.get("/me")
 def get_current_user(user: UserDep):
+    roles = [
+        {"id": str(r.id), "name": r.name, "description": r.description}
+        for r in (user.roles or [])
+    ]
+    perms: dict[str, dict] = {}
+    for r in user.roles or []:
+        for p in r.permissions or []:
+            if p.name not in perms:
+                perms[p.name] = {
+                    "id": str(p.id),
+                    "name": p.name,
+                    "description": p.description,
+                }
     return {
         "id": str(user.id),
         "username": user.username,
         "name": user.name,
         "email": user.primary_email,
+        "roles": roles,
+        "permissions": list(perms.values()),
     }
 
 

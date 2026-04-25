@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { useSelector } from 'react-redux'
 import Button from '@mui/material/Button'
 import Chip from '@mui/material/Chip'
 import TextField from '@mui/material/TextField'
@@ -17,12 +18,28 @@ import TableCell from '@mui/material/TableCell'
 import TableContainer from '@mui/material/TableContainer'
 import TableHead from '@mui/material/TableHead'
 import TableRow from '@mui/material/TableRow'
-import { Plus, Search, Upload, Grid3X3, List, FileText, Filter } from 'lucide-react'
+import { Plus, Search, Upload, Grid3X3, List, FileText, Filter, RefreshCw, Download } from 'lucide-react'
+import CircularProgress from '@mui/material/CircularProgress'
 import { documentService } from '../../services/documents'
-import { chatService } from '../../services/chat'
 
 const typeColors = { PDF: '#C4462A', DOCX: '#2E6FC4', TXT: '#6B6966', MD: '#3D8C5C' }
-const statusMap = { indexed: 'success', processing: 'warning', error: 'error' }
+const statusMap = {
+  indexed: 'success',
+  processing: 'warning',
+  queued: 'default',
+  error: 'error',
+}
+const statusLabel = (s) =>
+  ({ indexed: 'Indexed', processing: 'Processing', queued: 'Queued', error: 'Failed' }[s] || s)
+
+function mapFileRow(f) {
+  const ps = f.processing_status
+  if (ps === 'indexed') return { status: 'indexed', chunks: f.chunk_count, errorText: null }
+  if (ps === 'failed') return { status: 'error', chunks: f.chunk_count, errorText: f.processing_error || 'Processing failed' }
+  if (ps === 'processing') return { status: 'processing', chunks: f.chunk_count, errorText: null }
+  return { status: 'queued', chunks: f.chunk_count, errorText: null }
+}
+
 const filterOptions = ['All types', 'PDF', 'DOCX', 'TXT', 'MD']
 
 function getFileExtension(fileName) {
@@ -45,34 +62,153 @@ export default function DocumentsPage() {
   const [filterAnchorEl, setFilterAnchorEl] = useState(null)
   const [selectedDoc, setSelectedDoc] = useState(null)
   const [snackbar, setSnackbar] = useState({ open: false, message: '' })
+  const [retryingId, setRetryingId] = useState(null)
   const [dragOver, setDragOver] = useState(false)
-  const [workspaceId, setWorkspaceId] = useState(null)
   const fileInputRef = useRef(null)
+  const loadGenRef = useRef(0)
+  const lastWorkspaceIdRef = useRef(null)
 
-  // Load workspace and files on mount
-  useEffect(() => {
-    async function init() {
-      try {
-        let workspaces = await chatService.getWorkspaces()
-        let ws = workspaces[0]
-        if (!ws) ws = await chatService.createWorkspace('My Workspace')
-        setWorkspaceId(ws.id)
+  const { activeWorkspaceId: workspaceId } = useSelector((s) => s.workspace)
 
-        const result = await documentService.list(ws.id)
-        const mapped = (result.files || []).map((f) => ({
-          id: f.id,
-          name: f.original_filename,
-          type: getFileExtension(f.original_filename),
-          size: formatFileSize(f.size_bytes),
-          chunks: f.chunk_count,
-          status: f.processing_status === 'indexed' ? 'indexed' : f.processing_status === 'failed' ? 'error' : 'processing',
-        }))
-        setDocs(mapped)
-      } catch (err) {
-        console.error('Documents init failed:', err)
+  const resolveThumbnail = useCallback(async (wsId, f) => {
+    if (!f?.content_type?.startsWith?.('image/')) return null
+    try {
+      const r = await documentService.getThumbnailUrl(wsId, f.id)
+      return r?.thumbnail_url ?? null
+    } catch {
+      return null
+    }
+  }, [])
+
+  const loadDocuments = useCallback(async () => {
+    if (!workspaceId) {
+      setDocs([])
+      lastWorkspaceIdRef.current = null
+      return
+    }
+    if (lastWorkspaceIdRef.current !== workspaceId) {
+      setDocs([])
+      lastWorkspaceIdRef.current = workspaceId
+    }
+    const gen = ++loadGenRef.current
+    try {
+      const result = await documentService.list(workspaceId, { limit: 100 })
+      if (loadGenRef.current !== gen) return
+      const files = result?.files || []
+      const rows = []
+      for (const f of files) {
+        try {
+          const m = mapFileRow(f)
+          let thumb = null
+          try {
+            thumb = await resolveThumbnail(workspaceId, f)
+          } catch {
+            thumb = null
+          }
+          if (loadGenRef.current !== gen) return
+          rows.push({
+            id: f.id,
+            name: f.original_filename,
+            contentType: f.content_type,
+            type: getFileExtension(f.original_filename),
+            size: formatFileSize(f.size_bytes ?? 0),
+            chunks: m.chunks,
+            status: m.status,
+            errorText: m.errorText,
+            thumbnail: thumb,
+          })
+        } catch (e) {
+          console.error('Document row build failed', e, f)
+        }
+      }
+      if (loadGenRef.current !== gen) return
+      setDocs(rows)
+    } catch (err) {
+      if (loadGenRef.current === gen) {
+        console.error('Documents load failed:', err)
       }
     }
-    init()
+  }, [workspaceId, resolveThumbnail])
+
+  useEffect(() => {
+    void loadDocuments()
+  }, [loadDocuments])
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === 'visible' && workspaceId) void loadDocuments()
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [workspaceId, loadDocuments])
+
+  const pollProcessing = useCallback((wsId, fileId, displayName) => {
+    let pollsWhileQueued = 0
+    const poll = setInterval(async () => {
+      try {
+        const status = await documentService.getStatus(wsId, fileId)
+        if (status.processing_status === 'indexed' || status.processing_status === 'failed') {
+          clearInterval(poll)
+          const isIndexed = status.processing_status === 'indexed'
+          const mapped = mapFileRow({
+            processing_status: status.processing_status,
+            chunk_count: status.chunk_count,
+            processing_error: status.processing_error,
+          })
+          let thumbnail = null
+          if (isIndexed) {
+            try {
+              const meta = await documentService.getMetadata(wsId, fileId)
+              thumbnail = await resolveThumbnail(wsId, meta)
+            } catch { /* thumbnails are best-effort */ }
+          }
+          setDocs((prev) =>
+            prev.map((d) =>
+              d.id === fileId
+                ? {
+                    ...d,
+                    status: mapped.status,
+                    chunks: status.chunk_count,
+                    errorText: mapped.errorText,
+                    thumbnail: thumbnail ?? d.thumbnail,
+                  }
+                : d,
+            ),
+          )
+          setSnackbar({
+            open: true,
+            message: isIndexed
+              ? `${displayName} indexed successfully`
+              : (mapped.errorText || `${displayName} failed to process`),
+          })
+          return
+        }
+        if (status.processing_status === 'uploaded') {
+          pollsWhileQueued += 1
+          if (pollsWhileQueued === 30) {
+            setSnackbar({
+              open: true,
+              message:
+                'Still waiting for the indexer. In a second terminal, run: uv run arq processing.worker.WorkerSettings (project root, same venv and Redis as the API).',
+            })
+            pollsWhileQueued = 31
+          }
+        } else {
+          pollsWhileQueued = 0
+        }
+        {
+          const row = mapFileRow({
+            processing_status: status.processing_status,
+            chunk_count: status.chunk_count,
+            processing_error: status.processing_error,
+          })
+          setDocs((prev) =>
+            prev.map((d) => (d.id === fileId ? { ...d, ...row, chunks: row.chunks } : d)),
+          )
+        }
+      } catch { clearInterval(poll) }
+    }, 3000)
+    return poll
   }, [])
 
   const handleFiles = useCallback(async (files) => {
@@ -85,33 +221,49 @@ export default function DocumentsPage() {
         const doc = {
           id: result.file_id,
           name: result.filename,
+          contentType: result.content_type,
           type: getFileExtension(result.filename),
           size: formatFileSize(result.size_bytes),
           chunks: null,
-          status: 'processing',
+          status: 'queued',
+          errorText: null,
+          thumbnail: null,
         }
         setDocs((prev) => [...prev, doc])
-
-        // Poll for processing status
-        const poll = setInterval(async () => {
-          try {
-            const status = await documentService.getStatus(workspaceId, result.file_id)
-            if (status.processing_status === 'indexed' || status.processing_status === 'failed') {
-              clearInterval(poll)
-              setDocs((prev) =>
-                prev.map((d) =>
-                  d.id === result.file_id
-                    ? { ...d, status: status.processing_status === 'indexed' ? 'indexed' : 'error', chunks: status.chunk_count }
-                    : d
-                )
-              )
-              setSnackbar({ open: true, message: status.processing_status === 'indexed' ? `${file.name} indexed successfully` : `${file.name} processing failed` })
-            }
-          } catch { clearInterval(poll) }
-        }, 3000)
+        pollProcessing(workspaceId, result.file_id, file.name)
       } catch (err) {
         setSnackbar({ open: true, message: `Failed to upload ${file.name}: ${err.detail || 'unknown error'}` })
       }
+    }
+    void loadDocuments()
+  }, [workspaceId, pollProcessing, loadDocuments])
+
+  const handleRetry = useCallback(async (docId) => {
+    if (!workspaceId || retryingId) return
+    const d = docs.find((x) => x.id === docId)
+    setRetryingId(docId)
+    try {
+      await documentService.retry(workspaceId, docId)
+      setDocs((prev) => prev.map((x) => (x.id === docId ? { ...x, status: 'queued', errorText: null, chunks: null } : x)))
+      if (selectedDoc?.id === docId) {
+        setSelectedDoc((s) => (s ? { ...s, status: 'queued', errorText: null, chunks: null } : s))
+      }
+      setSnackbar({ open: true, message: `Re-queued ${d?.name ?? 'file'}` })
+      pollProcessing(workspaceId, docId, d?.name ?? 'file')
+    } catch (err) {
+      setSnackbar({ open: true, message: err.detail || 'Could not retry processing' })
+    } finally {
+      setRetryingId(null)
+    }
+  }, [workspaceId, docs, pollProcessing, retryingId, selectedDoc?.id])
+
+  const handleDownload = useCallback(async (docId) => {
+    if (!workspaceId) return
+    try {
+      const r = await documentService.getDownloadUrl(workspaceId, docId)
+      if (r?.download_url) window.open(r.download_url, '_blank', 'noopener')
+    } catch (err) {
+      setSnackbar({ open: true, message: err.detail || 'Could not start download' })
     }
   }, [workspaceId])
 
@@ -277,8 +429,12 @@ export default function DocumentsPage() {
                 onClick={() => setSelectedDoc(doc)}
                 className="border border-[rgba(28,27,26,0.06)] rounded-lg overflow-hidden cursor-pointer hover:shadow-md hover:border-[rgba(28,27,26,0.10)] transition-all"
               >
-                <div className="h-[140px] bg-surface-2 flex items-center justify-center">
-                  <FileText size={40} style={{ color: typeColors[doc.type] || '#6B6966' }} />
+                <div className="h-[140px] bg-surface-2 flex items-center justify-center overflow-hidden">
+                  {doc.thumbnail ? (
+                    <img src={doc.thumbnail} alt={doc.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <FileText size={40} style={{ color: typeColors[doc.type] || '#6B6966' }} />
+                  )}
                 </div>
                 <div className="p-4">
                   <p className="text-sm font-medium text-ink truncate mb-1">{doc.name}</p>
@@ -286,12 +442,27 @@ export default function DocumentsPage() {
                     <span className="text-xs text-ink-tertiary">
                       {doc.type} · {doc.size}{doc.chunks ? ` · ${doc.chunks} chunks` : ''}
                     </span>
-                    <Chip
-                      label={doc.status.charAt(0).toUpperCase() + doc.status.slice(1)}
-                      color={statusMap[doc.status]}
-                      size="small"
-                      sx={{ height: 20, fontSize: 11 }}
-                    />
+                    <div className="flex items-center gap-1">
+                      {(doc.status === 'error' || doc.status === 'queued') && (
+                        <IconButton
+                          size="small"
+                          onClick={(e) => { e.stopPropagation(); handleRetry(doc.id) }}
+                          title="Re-queue for indexing"
+                          disabled={retryingId != null}
+                          sx={{ width: 24, height: 24 }}
+                        >
+                          {retryingId === doc.id
+                            ? <CircularProgress size={12} color="inherit" />
+                            : <RefreshCw size={13} />}
+                        </IconButton>
+                      )}
+                      <Chip
+                        label={statusLabel(doc.status)}
+                        color={statusMap[doc.status]}
+                        size="small"
+                        sx={{ height: 20, fontSize: 11 }}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -336,12 +507,27 @@ export default function DocumentsPage() {
                       <span className="text-xs text-ink-tertiary">{doc.chunks ?? '—'}</span>
                     </TableCell>
                     <TableCell>
-                      <Chip
-                        label={doc.status.charAt(0).toUpperCase() + doc.status.slice(1)}
-                        color={statusMap[doc.status]}
-                        size="small"
-                        sx={{ height: 20, fontSize: 11 }}
-                      />
+                      <div className="flex items-center gap-1">
+                        <Chip
+                          label={statusLabel(doc.status)}
+                          color={statusMap[doc.status]}
+                          size="small"
+                          sx={{ height: 20, fontSize: 11 }}
+                        />
+                        {(doc.status === 'error' || doc.status === 'queued') && (
+                          <IconButton
+                            size="small"
+                            onClick={(e) => { e.stopPropagation(); handleRetry(doc.id) }}
+                            title="Re-queue for indexing"
+                            disabled={retryingId != null}
+                            sx={{ width: 24, height: 24 }}
+                          >
+                            {retryingId === doc.id
+                              ? <CircularProgress size={12} color="inherit" />
+                              : <RefreshCw size={13} />}
+                          </IconButton>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -388,12 +574,27 @@ export default function DocumentsPage() {
                 <div className="flex justify-between text-sm items-center">
                   <span className="text-ink-tertiary">Status</span>
                   <Chip
-                    label={selectedDoc.status.charAt(0).toUpperCase() + selectedDoc.status.slice(1)}
+                    label={statusLabel(selectedDoc.status)}
                     color={statusMap[selectedDoc.status]}
                     size="small"
                     sx={{ height: 20, fontSize: 11 }}
                   />
                 </div>
+                {selectedDoc.status === 'queued' && (
+                  <p className="text-xs text-ink-tertiary leading-relaxed mt-1">
+                    Should switch to <strong>Processing</strong> shortly. If not, use <strong>Re-queue</strong> or check server logs.
+                  </p>
+                )}
+                {selectedDoc.status === 'processing' && (
+                  <p className="text-xs text-ink-tertiary leading-relaxed mt-1">
+                    Indexing in progress (extracting text, embedding, writing to the vector store).
+                  </p>
+                )}
+                {selectedDoc.status === 'error' && selectedDoc.errorText && (
+                  <p className="text-xs text-error mt-1 font-mono whitespace-pre-wrap break-words">
+                    {selectedDoc.errorText}
+                  </p>
+                )}
               </div>
             </DialogContent>
             <DialogActions>
@@ -402,6 +603,26 @@ export default function DocumentsPage() {
                 onClick={() => handleDeleteDoc(selectedDoc.id)}
               >
                 Delete
+              </Button>
+              {(selectedDoc.status === 'error' || selectedDoc.status === 'queued') && (
+                <Button
+                  color="primary"
+                  startIcon={
+                    retryingId === selectedDoc.id
+                      ? <CircularProgress size={14} color="inherit" />
+                      : <RefreshCw size={14} />
+                  }
+                  onClick={() => handleRetry(selectedDoc.id)}
+                  disabled={retryingId != null}
+                >
+                  {retryingId === selectedDoc.id ? 'Re-queuing…' : 'Re-queue'}
+                </Button>
+              )}
+              <Button
+                startIcon={<Download size={14} />}
+                onClick={() => handleDownload(selectedDoc.id)}
+              >
+                Download
               </Button>
               <Button onClick={() => setSelectedDoc(null)}>Close</Button>
             </DialogActions>

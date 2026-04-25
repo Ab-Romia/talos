@@ -68,6 +68,13 @@ async def process_file(ctx: dict, file_id: str):
                 raise ValueError(
                     f"No processor registered for MIME type {file_record.content_type}"
                 )
+                file_record.processing_status = ProcessingStatus.FAILED
+                file_record.processing_error = (
+                    f"No indexer for this file type: {file_record.content_type}"
+                )
+                file_record.chunk_count = 0
+                db.commit()
+                return
 
             file_record.processing_status = ProcessingStatus.INDEXED
             db.commit()

@@ -9,7 +9,7 @@ from langchain_core.runnables import (
 )
 
 from config import RAG_PROMPT
-from config import global_rag_config as global_rag_config, RagConfig
+from config import RagConfig, get_effective_rag_config
 
 __all__ = ["RAGChain"]
 
@@ -19,7 +19,7 @@ class RAGChain:
     def __init__(
         self,
         collection_name: str,
-        config: RagConfig = global_rag_config,
+        config: RagConfig | None = None,
         workspace_id: str | None = None,
         file_ids: list[str] | None = None,
     ):
@@ -34,6 +34,9 @@ class RAGChain:
             compression_retriever,
         )
 
+        c = config or get_effective_rag_config()
+        self.rag_config = c
+
         self.collection_name = collection_name
         self.workspace_id = workspace_id
         self.file_ids = file_ids
@@ -41,33 +44,37 @@ class RAGChain:
 
         self.last_query_info = {}
 
-        self.query_rewriter = get_query_rewriter()
-        self.hyde = get_hyde_embeddings()
+        self.query_rewriter = get_query_rewriter(c)
+        self.hyde = get_hyde_embeddings(c)
 
         if workspace_id:
-            self.vectorstore = get_workspace_vectorstore(embeddings=self.hyde)
+            self.vectorstore = get_workspace_vectorstore(
+                embeddings=self.hyde, config=c
+            )
             parts = [f'workspace_id == "{workspace_id}"']
             if file_ids:
                 ids_csv = ", ".join(f'"{fid}"' for fid in file_ids)
                 parts.append(f"file_id in [{ids_csv}]")
             extra_search_kwargs = {"expr": " && ".join(parts)}
         else:
-            self.vectorstore = get_vectorstore(collection_name, embeddings=self.hyde)
+            self.vectorstore = get_vectorstore(
+                collection_name, embeddings=self.hyde, config=c
+            )
             extra_search_kwargs = None
 
         self.retriever = get_retriever(
             vectorstore=self.vectorstore,
             documents=[],
-            config=config,
+            config=c,
             search_kwargs=extra_search_kwargs,
         )
 
         self.retriever = compression_retriever(
-            self.retriever, compression_type=config.compression_type
+            self.retriever, compression_type=c.compression_type
         )
 
-        self.llm = get_llm()
-        self.memory = get_memory(use_memory=config.conversation_memory_k > 0)
+        self.llm = get_llm(c)
+        self.memory = get_memory(use_memory=c.conversation_memory_k > 0)
         self.chain = (
                 RunnableParallel(
                     {

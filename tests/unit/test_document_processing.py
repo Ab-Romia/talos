@@ -176,8 +176,8 @@ class TestProcessDocument:
 
         mock_storage.download_file_to_path = AsyncMock(side_effect=fake_download)
 
-        await process_document(record, db, mock_storage)
-        assert record.chunk_count == 0
+        with pytest.raises(ValueError, match="No extractable text"):
+            await process_document(record, db, mock_storage)
 
     @pytest.mark.asyncio
     async def test_cleans_up_temp_file(self, mock_storage):

@@ -1,5 +1,10 @@
+import logging
 from collections.abc import Iterable
 from functools import lru_cache
+
+# Harmless extra keys (e.g. position_ids) still trigger a long WARNING "LOAD REPORT" in recent transformers;
+# keep it off stdout when the cross-encoder loads on first chat.
+logging.getLogger("transformers.utils.loading_report").setLevel(logging.ERROR)
 
 from langchain_classic.retrievers import (
     EnsembleRetriever,
@@ -11,8 +16,7 @@ from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
 from langchain_core.vectorstores import VectorStore
 
-from config import RagConfig
-from config import global_rag_config
+from config import RagConfig, get_effective_rag_config
 
 __all__ = ["get_retriever"]
 
@@ -31,9 +35,10 @@ def _get_cross_encoder(model_name: str = CROSS_ENCODER_MODEL) -> HuggingFaceCros
 def get_retriever(
         vectorstore: VectorStore,
         documents: Iterable[Document],
-        config: RagConfig = global_rag_config,
+        config: RagConfig | None = None,
         search_kwargs: dict | None = None,
 ):
+    config = config or get_effective_rag_config()
     base_search_kwargs = {"k": config.retrieval_top_k}
     if search_kwargs:
         base_search_kwargs.update(search_kwargs)

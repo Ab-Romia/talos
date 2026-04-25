@@ -3,7 +3,8 @@ name = "graduation-project"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.14"
+# spacy (via unstructured) has no cp314 wheels yet — use 3.13 until upstream adds support
+requires-python = ">=3.13, <3.14"
 dependencies = [
     "bcrypt>=5.0.0",
     "pyotp>=2.9.0",
@@ -40,10 +41,15 @@ dependencies = [
     "pillow>=12.2.0",
     "langchain-text-splitters>=1.1.1",
     "python-magic>=0.4.27",
+    # Ships bundled libmagic.dll for Windows — python-magic's Linux-style
+    # packaging otherwise fails with "failed to find libmagic".
+    "python-magic-bin>=0.4.14 ; sys_platform == 'win32'",
     "python-dotenv>=1.2.1",
     "sentence-transformers>=5.4.1",
     "torch>=2.11.0",
     "pydantic>=2.12.5",
+    "pypdf>=6.9.2",
+    "pymupdf>=1.27.2.3",
 ]
 
 [dependency-groups]

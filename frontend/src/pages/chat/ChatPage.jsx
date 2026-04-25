@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from 'react'
 import Avatar from '@mui/material/Avatar'
 import IconButton from '@mui/material/IconButton'
 import Chip from '@mui/material/Chip'
@@ -22,9 +22,14 @@ import {
   Search, Pin, Users, MoreHorizontal, Paperclip, Bold, Code, ArrowUp,
   Copy, RefreshCw, ThumbsUp, ThumbsDown, FileText, X,
 } from 'lucide-react'
+import CircularProgress from '@mui/material/CircularProgress'
 
 import { useSelector } from 'react-redux'
 import { chatService } from '../../services/chat'
+import { documentService } from '../../services/documents'
+import { MESSAGE_EVENTS_WS } from '../../constants/ApiRoutes'
+import { ChatMessageContent, attachmentKey, attachmentLabel } from '../../components/chat/ChatMessageContent'
+import { ChatComposerField } from '../../components/chat/ChatComposerField'
 
 const TEAM_MEMBERS = [
   'Abdelrahman Abouromia',
@@ -40,14 +45,23 @@ function getTimeString() {
   return new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
 
-function CitationMarker({ number }) {
-  return (
-    <Tooltip title={`Source ${number}`} arrow>
-      <span className="inline-flex items-center justify-center w-[18px] h-[18px] rounded bg-amber-subtle text-amber text-[11px] font-semibold font-mono cursor-pointer align-text-top mx-0.5 hover:bg-amber hover:text-white transition-colors">
-        {number}
-      </span>
-    </Tooltip>
-  )
+function messageMatchesQuery(msg, rawQuery) {
+  const s = rawQuery.trim().toLowerCase()
+  if (!s) return true
+  if ((msg.body || '').toLowerCase().includes(s)) return true
+  if ((msg.name || '').toLowerCase().includes(s)) return true
+  if (Array.isArray(msg.sources)) {
+    for (const x of msg.sources) {
+      if (String(x).toLowerCase().includes(s)) return true
+    }
+  }
+  if (Array.isArray(msg.attachments)) {
+    for (const a of msg.attachments) {
+      const label = typeof a === 'string' ? a : (a?.filename || a?.name || '')
+      if (label.toLowerCase().includes(s)) return true
+    }
+  }
+  return false
 }
 
 function SourceChip({ name, onClick }) {
@@ -72,50 +86,142 @@ export default function ChatPage() {
   const [usersAnchor, setUsersAnchor] = useState(null)
   const [sourceDialog, setSourceDialog] = useState({ open: false, name: '' })
   const [thumbsState, setThumbsState] = useState({})
-  const [streaming, setStreaming] = useState(false)
-  const [workspaceId, setWorkspaceId] = useState(null)
-  const [chatroomId, setChatroomId] = useState(null)
+  const [streamingId, setStreamingId] = useState(null)
+  const [attachments, setAttachments] = useState([])
+  const [uploading, setUploading] = useState(false)
+  const [workspaceName, setWorkspaceName] = useState('')
+  const [chatroomName, setChatroomName] = useState('')
 
   const user = useSelector((state) => state.auth.user)
+  const {
+    chatrooms,
+    activeWorkspaceId: workspaceId,
+    activeChatroomId: chatroomId,
+  } = useSelector((s) => s.workspace)
 
   const threadRef = useRef(null)
   const textareaRef = useRef(null)
+  const fileInputRef = useRef(null)
   const nextIdRef = useRef(1)
+  const firstSearchHitRef = useRef(null)
+  const lastScrolledFirstMatchId = useRef(null)
 
-  // Initialize: ensure workspace + chatroom exist, load messages
+  const displayMessages = useMemo(() => {
+    if (!searchOpen) return messages
+    const q = searchQuery.trim()
+    if (!q) return messages
+    return messages.filter((m) => messageMatchesQuery(m, q))
+  }, [messages, searchQuery, searchOpen])
+
+  useLayoutEffect(() => {
+    if (!searchOpen || !searchQuery.trim()) {
+      lastScrolledFirstMatchId.current = null
+      return
+    }
+    const first = displayMessages[0]
+    if (!first) {
+      lastScrolledFirstMatchId.current = null
+      return
+    }
+    if (lastScrolledFirstMatchId.current === first.id) return
+    lastScrolledFirstMatchId.current = first.id
+    requestAnimationFrame(() => {
+      firstSearchHitRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    })
+  }, [displayMessages, searchQuery, searchOpen])
+
   useEffect(() => {
-    async function init() {
+    if (!workspaceId) return
+    chatService.getWorkspace(workspaceId)
+      .then((full) => setWorkspaceName(full?.name || ''))
+      .catch(() => setWorkspaceName(''))
+  }, [workspaceId])
+
+  useEffect(() => {
+    const cr = chatrooms.find((c) => c.id === chatroomId)
+    setChatroomName(cr?.name || '')
+  }, [chatrooms, chatroomId])
+
+  useEffect(() => {
+    if (!workspaceId || !chatroomId) return
+    let cancelled = false
+    setMessages([])
+    setAttachments([])
+    ;(async () => {
       try {
-        let workspaces = await chatService.getWorkspaces()
-        let ws = workspaces[0]
-        if (!ws) {
-          ws = await chatService.createWorkspace('My Workspace')
+        const history = await chatService.getMessages(workspaceId, chatroomId)
+        if (cancelled) return
+        const list = Array.isArray(history) ? history : (history?.messages ?? [])
+        const normAttachments = (raw) => {
+          if (!raw || !Array.isArray(raw)) return []
+          return raw.map((a) => (typeof a === 'string' ? a : { file_id: a.file_id, filename: a.filename || a.name || '' }))
         }
-        setWorkspaceId(ws.id)
-
-        let chatrooms = await chatService.getChatrooms(ws.id)
-        let cr = chatrooms[0]
-        if (!cr) {
-          cr = await chatService.createChatroom(ws.id, 'general')
-        }
-        setChatroomId(cr.id)
-
-        const history = await chatService.getMessages(ws.id, cr.id)
-        const mapped = history.map((m) => ({
+        const mapped = list.map((m) => ({
           id: nextIdRef.current++,
+          serverId: m.id,
           role: m.role,
           name: m.role === 'ai' ? 'Talos' : (user?.name || 'You'),
           initials: m.role === 'user' ? (user?.name || 'U').split(' ').map(n => n[0]).join('').slice(0, 2) : undefined,
           time: m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '',
           body: m.content,
+          attachments: normAttachments(m.attachments),
         }))
         setMessages(mapped)
       } catch (err) {
-        console.error('Chat init failed:', err)
+        console.error('Load messages failed:', err)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [workspaceId, chatroomId, user])
+
+  useEffect(() => {
+    if (!workspaceId || !chatroomId) return
+    const url = MESSAGE_EVENTS_WS(workspaceId, chatroomId)
+    const ws = new WebSocket(url)
+    ws.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data)
+        if (data.type !== 'message.created' || !data.message) return
+        const m = data.message
+        setMessages((prev) => {
+          if (prev.some((x) => x.serverId === m.id)) return prev
+          if (m.role === 'user' && m.content) {
+            for (let i = prev.length - 1; i >= 0; i--) {
+              const x = prev[i]
+              if (x.role === 'user' && !x.serverId && x.body === m.content) {
+                const next = [...prev]
+                next[i] = { ...x, serverId: m.id }
+                return next
+              }
+            }
+          }
+          return [
+            ...prev,
+            {
+              id: nextIdRef.current++,
+              serverId: m.id,
+              role: m.role,
+              name: m.role === 'ai' ? 'Talos' : (user?.name || 'You'),
+              initials: m.role === 'user' ? (user?.name || 'U').split(' ').map(n => n[0]).join('').slice(0, 2) : undefined,
+              time: m.created_at
+                ? new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                : getTimeString(),
+              body: m.content,
+              attachments: (m.attachments || []).map((a) => (typeof a === 'string' ? a : { file_id: a.file_id, filename: a.filename || a.name })),
+              sources: null,
+            },
+          ]
+        })
+      } catch (e) {
+        console.error('WebSocket message error:', e)
       }
     }
-    init()
-  }, [user])
+    return () => {
+      try {
+        ws.close()
+      } catch { /* closed */ }
+    }
+  }, [workspaceId, chatroomId, user?.name])
 
   useEffect(() => {
     if (threadRef.current) {
@@ -132,20 +238,65 @@ export default function ChatPage() {
   }, [])
 
 
+  const handleAttachClick = useCallback(() => {
+    fileInputRef.current?.click()
+  }, [])
+
+  const handleAttachFiles = useCallback(async (files) => {
+    if (!workspaceId || !chatroomId) return
+    setUploading(true)
+    for (const file of Array.from(files)) {
+      const tempId = `tmp-${Date.now()}-${file.name}`
+      setAttachments((prev) => [...prev, { file_id: tempId, filename: file.name, status: 'uploading' }])
+      try {
+        const result = await documentService.upload(workspaceId, file, chatroomId)
+        setAttachments((prev) =>
+          prev.map((a) =>
+            a.file_id === tempId
+              ? { file_id: result.file_id, filename: result.filename, status: 'ready' }
+              : a,
+          ),
+        )
+      } catch (err) {
+        setAttachments((prev) => prev.filter((a) => a.file_id !== tempId))
+        showSnackbar(`Upload failed: ${err?.detail || file.name}`)
+      }
+    }
+    setUploading(false)
+  }, [workspaceId, chatroomId, showSnackbar])
+
+  const handleRemoveAttachment = useCallback((fileId) => {
+    setAttachments((prev) => prev.filter((a) => a.file_id !== fileId))
+  }, [])
+
+  const handleFileInputChange = useCallback((e) => {
+    if (e.target.files?.length) {
+      handleAttachFiles(e.target.files)
+      e.target.value = ''
+    }
+  }, [handleAttachFiles])
+
   const handleSend = useCallback(() => {
     const text = input.trim()
-    if (!text || streaming || !workspaceId || !chatroomId) return
+    if ((!text && attachments.length === 0) || streamingId != null || !workspaceId || !chatroomId) return
+    const readyFileIds = attachments
+      .filter((a) => a.status === 'ready')
+      .map((a) => a.file_id)
 
+    const localUserMsgId = nextIdRef.current++
     const userMsg = {
-      id: nextIdRef.current++,
+      id: localUserMsgId,
       role: 'user',
       name: user?.name || 'You',
       initials: (user?.name || 'U').split(' ').map(n => n[0]).join('').slice(0, 2),
       time: getTimeString(),
       body: text,
+      attachments: attachments.filter((a) => a.status === 'ready').map((a) => a.filename),
+      serverId: null,
     }
     setMessages((prev) => [...prev, userMsg])
     setInput('')
+    setAttachments([])
 
     const aiId = nextIdRef.current++
     const aiMsg = {
@@ -157,7 +308,7 @@ export default function ChatPage() {
       sources: null,
     }
     setMessages((prev) => [...prev, aiMsg])
-    setStreaming(true)
+    setStreamingId(aiId)
 
     chatService.sendMessage(
       workspaceId,
@@ -168,22 +319,65 @@ export default function ChatPage() {
           prev.map((m) => m.id === aiId ? { ...m, body: m.body + chunk } : m)
         )
       },
-      (sources) => {
+      (sources, aiMessageId) => {
         if (sources.length > 0) {
           setMessages((prev) =>
             prev.map((m) => m.id === aiId ? { ...m, sources: sources.map(s => s.filename) } : m)
           )
         }
-        setStreaming(false)
+        if (aiMessageId) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === aiId ? { ...m, serverId: aiMessageId } : m)),
+          )
+        }
+        setStreamingId(null)
       },
       (error) => {
         setMessages((prev) =>
           prev.map((m) => m.id === aiId ? { ...m, body: error } : m)
         )
-        setStreaming(false)
+        setStreamingId(null)
+      },
+      {
+        fileIds: readyFileIds.length ? readyFileIds : null,
+        onMessageId: (serverId) => {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === localUserMsgId ? { ...m, serverId } : m)),
+          )
+        },
       },
     )
-  }, [input, streaming, workspaceId, chatroomId, user])
+  }, [input, streamingId, workspaceId, chatroomId, user, attachments])
+
+  const handleAttachToMessage = useCallback(async (msg) => {
+    if (!msg.serverId || !workspaceId || !chatroomId) {
+      showSnackbar('Message not saved yet')
+      return
+    }
+    const picker = document.createElement('input')
+    picker.type = 'file'
+    picker.multiple = true
+    picker.accept = '.pdf,.docx,.txt,.md,image/*'
+    picker.onchange = async () => {
+      const files = Array.from(picker.files || [])
+      if (!files.length) return
+      try {
+        for (const file of files) {
+          const up = await documentService.upload(workspaceId, file, chatroomId)
+          await documentService.attachToMessage(workspaceId, chatroomId, msg.serverId, up.file_id)
+          setMessages((prev) =>
+            prev.map((m) => (m.id === msg.id
+              ? { ...m, attachments: [...(m.attachments || []), up.filename] }
+              : m)),
+          )
+        }
+        showSnackbar(`Attached ${files.length} file(s)`)
+      } catch (err) {
+        showSnackbar(err?.detail || 'Attach failed')
+      }
+    }
+    picker.click()
+  }, [workspaceId, chatroomId, showSnackbar])
 
   const handleKeyDown = useCallback((e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -195,7 +389,10 @@ export default function ChatPage() {
 
   const handleHeaderButton = useCallback((Icon, event) => {
     if (Icon === Search) {
-      setSearchOpen((prev) => !prev)
+      setSearchOpen((prev) => {
+        if (prev) setSearchQuery('')
+        return !prev
+      })
     } else if (Icon === Pin) {
       showSnackbar('No pinned messages yet')
     } else if (Icon === Users) {
@@ -221,9 +418,62 @@ export default function ChatPage() {
     })
   }, [showSnackbar])
 
-  const handleRegenerate = useCallback(() => {
-    showSnackbar('Regenerating response...')
-  }, [showSnackbar])
+  const handleRegenerate = useCallback((aiMsg) => {
+    if (streamingId != null || !workspaceId || !chatroomId) return
+    if (!aiMsg?.serverId || aiMsg.role !== 'ai') {
+      showSnackbar('This reply is not ready to regenerate yet')
+      return
+    }
+    const idx = messages.findIndex((m) => m.id === aiMsg.id)
+    if (idx < 0) return
+    let hasPrevUser = false
+    for (let i = idx - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        hasPrevUser = true
+        break
+      }
+    }
+    if (!hasPrevUser) {
+      showSnackbar('No earlier user message to reuse')
+      return
+    }
+    setStreamingId(aiMsg.id)
+    setMessages((prev) =>
+      prev.map((m) => (m.id === aiMsg.id ? { ...m, body: '', sources: null } : m)),
+    )
+    chatService.sendMessage(
+      workspaceId,
+      chatroomId,
+      '',
+      (chunk) => {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === aiMsg.id ? { ...m, body: m.body + chunk } : m)),
+        )
+      },
+      (sources, aiMessageId) => {
+        if (sources.length > 0) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === aiMsg.id ? { ...m, sources: sources.map((s) => s.filename) } : m,
+            ),
+          )
+        }
+        if (aiMessageId) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === aiMsg.id ? { ...m, serverId: aiMessageId } : m)),
+          )
+        }
+        setStreamingId(null)
+      },
+      (error) => {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === aiMsg.id ? { ...m, body: error } : m)),
+        )
+        setStreamingId(null)
+      },
+      { regenerateForAiMessageId: aiMsg.serverId },
+    )
+  }, [streamingId, workspaceId, chatroomId, messages, showSnackbar])
 
   const handleThumb = useCallback((msgId, direction) => {
     setThumbsState((prev) => {
@@ -238,7 +488,7 @@ export default function ChatPage() {
 
   const handleToolbar = useCallback((Icon) => {
     if (Icon === Paperclip) {
-      showSnackbar('File upload coming soon')
+      handleAttachClick()
       return
     }
 
@@ -276,7 +526,7 @@ export default function ChatPage() {
         textarea.setSelectionRange(cursorPos, cursorPos)
       }, 0)
     }
-  }, [input, showSnackbar])
+  }, [input, showSnackbar, handleAttachClick])
 
 
   const handleSourceClick = useCallback((name) => {
@@ -286,9 +536,16 @@ export default function ChatPage() {
 
   const renderMessageActions = (msg) => {
     const thumbState = thumbsState[msg.id]
+    const regenBusy = msg.role === 'ai' && streamingId === msg.id
     const actions = [
       { Icon: Copy, handler: () => handleCopy(msg), tooltip: 'Copy' },
-      { Icon: RefreshCw, handler: handleRegenerate, tooltip: 'Regenerate' },
+      {
+        Icon: RefreshCw,
+        handler: () => handleRegenerate(msg),
+        tooltip: 'Regenerate',
+        disabled: streamingId != null,
+        busy: regenBusy,
+      },
       {
         Icon: ThumbsUp,
         handler: () => handleThumb(msg.id, 'up'),
@@ -304,20 +561,31 @@ export default function ChatPage() {
     ]
     return (
       <div className="flex gap-0.5 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
-        {actions.map(({ Icon, handler, tooltip, filled }) => (
-          <Tooltip key={tooltip} title={tooltip} arrow>
-            <IconButton
-              size="small"
-              onClick={handler}
-              sx={{
-                width: 28,
-                height: 28,
-                color: filled ? 'primary.main' : 'text.disabled',
-                '&:hover': { color: 'text.secondary', bgcolor: 'rgba(28,27,26,0.04)' },
-              }}
-            >
-              <Icon size={13} fill={filled ? 'currentColor' : 'none'} />
-            </IconButton>
+        {actions.map(({ Icon, handler, tooltip, filled, disabled: actionDisabled, busy }) => (
+          <Tooltip
+            key={tooltip}
+            title={busy ? 'Regenerating…' : tooltip}
+            arrow
+          >
+            <span>
+              <IconButton
+                size="small"
+                onClick={handler}
+                disabled={actionDisabled}
+                sx={{
+                  width: 28,
+                  height: 28,
+                  color: filled ? 'primary.main' : 'text.disabled',
+                  '&:hover': { color: 'text.secondary', bgcolor: 'rgba(28,27,26,0.04)' },
+                }}
+              >
+                {busy ? (
+                  <CircularProgress size={12} thickness={5} color="inherit" />
+                ) : (
+                  <Icon size={13} fill={filled ? 'currentColor' : 'none'} />
+                )}
+              </IconButton>
+            </span>
           </Tooltip>
         ))}
       </div>
@@ -336,8 +604,13 @@ export default function ChatPage() {
       <header className="h-14 bg-surface-1 border-b border-[rgba(28,27,26,0.08)] flex items-center justify-between px-5 shrink-0">
         <div className="flex items-center gap-2.5">
           <span className="w-2 h-2 bg-success rounded-full" />
-          <span className="text-[15px] font-semibold text-ink">Talos AI</span>
+          <span className="text-[15px] font-semibold text-ink">
+            {chatroomName ? `# ${chatroomName}` : 'Talos AI'}
+          </span>
           <Chip label="AI" color="primary" size="small" sx={{ height: 20, fontSize: 10 }} />
+          {workspaceName && (
+            <span className="text-[12px] text-ink-tertiary">· {workspaceName}</span>
+          )}
         </div>
         <div className="flex items-center gap-0.5">
           {headerIcons.map((Icon, i) => (
@@ -358,17 +631,31 @@ export default function ChatPage() {
         <div className="bg-surface-1 border-b border-[rgba(28,27,26,0.08)] px-5 py-2 flex items-center gap-2 shrink-0">
           <TextField
             size="small"
-            placeholder="Search messages..."
+            placeholder="Search this conversation…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setSearchOpen(false)
+                setSearchQuery('')
+              }
+            }}
             autoFocus
             fullWidth
             sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
           />
+          {searchQuery.trim() ? (
+            <span className="text-xs text-ink-tertiary tabular-nums shrink-0 w-[4.5rem] text-right">
+              {displayMessages.length}
+              {' '}
+              {displayMessages.length === 1 ? 'match' : 'matches'}
+            </span>
+          ) : null}
           <IconButton
             size="small"
             onClick={() => { setSearchOpen(false); setSearchQuery('') }}
             sx={{ color: 'text.secondary' }}
+            title="Close search"
           >
             <X size={16} />
           </IconButton>
@@ -385,8 +672,24 @@ export default function ChatPage() {
             <span className="flex-1 h-px bg-[rgba(28,27,26,0.06)]" />
           </div>
 
-          {messages.map((msg) => (
-            <div key={msg.id} className="flex gap-3 mb-6 group">
+          {searchOpen && searchQuery.trim() && displayMessages.length === 0 && messages.length > 0 && (
+            <p className="text-center text-sm text-ink-tertiary py-10 px-4">
+              No messages match in this thread. Try different words, or check spelling.
+            </p>
+          )}
+
+          {searchOpen && searchQuery.trim() && displayMessages.length === 0 && messages.length === 0 && (
+            <p className="text-center text-sm text-ink-tertiary py-10 px-4">
+              No messages to search yet.
+            </p>
+          )}
+
+          {displayMessages.map((msg, i) => (
+            <div
+              key={msg.id}
+              ref={i === 0 && searchOpen && searchQuery.trim() ? firstSearchHitRef : undefined}
+              className="flex gap-3 mb-6 group"
+            >
               <div className="pt-0.5">
                 {msg.role === 'ai' ? (
                   <Avatar sx={{ width: 34, height: 34, bgcolor: 'primary.light', color: 'primary.main', fontSize: 14, fontWeight: 700, border: '1.5px solid', borderColor: 'rgba(196,145,58,0.3)', flexShrink: 0 }}>T</Avatar>
@@ -401,7 +704,34 @@ export default function ChatPage() {
                   <span className="text-[12px] text-ink-muted">{msg.time}</span>
                 </div>
 
-                <p className="text-[14px] text-ink leading-relaxed whitespace-pre-wrap">{msg.body}{msg.role === 'ai' && streaming && messages[messages.length - 1]?.id === msg.id ? '▍' : ''}</p>
+                <ChatMessageContent
+                  content={msg.body || ''}
+                  renderCursor={msg.role === 'ai' && streamingId != null && streamingId === msg.id}
+                />
+
+                {msg.attachments && msg.attachments.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {msg.attachments.map((a, i) => (
+                      <Chip
+                        key={attachmentKey(a, i)}
+                        label={attachmentLabel(a)}
+                        size="small"
+                        icon={<FileText size={12} />}
+                        sx={{ maxWidth: 240 }}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {msg.role === 'user' && msg.serverId && (
+                  <div className="mt-2">
+                    <Tooltip title="Attach more files to this message" arrow>
+                      <IconButton size="small" onClick={() => handleAttachToMessage(msg)}>
+                        <Paperclip size={14} />
+                      </IconButton>
+                    </Tooltip>
+                  </div>
+                )}
 
                 {msg.sources && (
                   <div className="mt-4 pt-3 border-t border-[rgba(28,27,26,0.06)]">
@@ -421,44 +751,72 @@ export default function ChatPage() {
         </div>
       </div>
 
+      {/* Hidden file input for chat attachments */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept=".pdf,.docx,.txt,.md,image/*"
+        onChange={handleFileInputChange}
+        style={{ display: 'none' }}
+      />
+
       {/* Input */}
       <div className="border-t border-[rgba(28,27,26,0.06)] bg-surface-1">
         <div className="max-w-[680px] mx-auto px-5 py-4">
-          <div className="bg-base border border-[rgba(28,27,26,0.10)] rounded-2xl p-3 px-4 flex items-end gap-3 focus-within:border-amber focus-within:shadow-[0_0_0_3px_rgba(196,145,58,0.12)] transition-all">
-            <div className="flex-1 flex flex-col">
-              <div className="flex items-center gap-1 pb-2 mb-2 border-b border-[rgba(28,27,26,0.06)]">
-                {toolbarIcons.map((Icon, i) => (
-                  <IconButton
-                    key={i}
+          <div className="bg-base border border-[rgba(28,27,26,0.10)] rounded-2xl p-3 px-4 flex flex-col gap-0 focus-within:border-amber focus-within:shadow-[0_0_0_3px_rgba(196,145,58,0.12)] transition-all">
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pb-2 mb-2 border-b border-[rgba(28,27,26,0.06)] -mx-1 px-1">
+                {attachments.map((a) => (
+                  <Chip
+                    key={a.file_id}
+                    label={a.filename}
                     size="small"
-                    onClick={() => handleToolbar(Icon)}
-                    sx={{ width: 28, height: 28, color: 'text.disabled', '&:hover': { color: 'text.secondary' } }}
-                  >
-                    <Icon size={15} />
-                  </IconButton>
+                    icon={
+                      a.status === 'uploading'
+                        ? <CircularProgress size={12} sx={{ ml: 0.5 }} />
+                        : <FileText size={12} />
+                    }
+                    onDelete={a.status === 'ready' ? () => handleRemoveAttachment(a.file_id) : undefined}
+                    sx={{ maxWidth: 240 }}
+                  />
                 ))}
               </div>
-              <textarea
-                ref={textareaRef}
-                rows={1}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Message Talos..."
-                className="bg-transparent border-none text-[14px] text-ink outline-none resize-none min-h-[24px] max-h-[200px] leading-relaxed placeholder:text-ink-muted"
-              />
+            )}
+            <div className="flex items-end gap-3 min-w-0">
+              <div className="flex-1 flex flex-col min-w-0">
+                <div className="flex items-center gap-1 pb-2 mb-2 border-b border-[rgba(28,27,26,0.06)]">
+                  {toolbarIcons.map((Icon, i) => (
+                    <IconButton
+                      key={i}
+                      size="small"
+                      onClick={() => handleToolbar(Icon)}
+                      sx={{ width: 28, height: 28, color: 'text.disabled', '&:hover': { color: 'text.secondary' } }}
+                    >
+                      <Icon size={15} />
+                    </IconButton>
+                  ))}
+                </div>
+                <ChatComposerField
+                  inputRef={textareaRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Message #channel — use **markdown**, `code`, and…"
+                />
+              </div>
+              <button
+                onClick={handleSend}
+                className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-all ${
+                  input.trim() || attachments.some((a) => a.status === 'ready')
+                    ? 'bg-amber text-white shadow-sm hover:bg-amber-hover hover:shadow-md'
+                    : 'bg-surface-3 text-ink-muted cursor-default'
+                }`}
+                disabled={(!input.trim() && !attachments.some((a) => a.status === 'ready')) || streamingId != null || uploading}
+              >
+                <ArrowUp size={16} strokeWidth={2.5} />
+              </button>
             </div>
-            <button
-              onClick={handleSend}
-              className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-all ${
-                input.trim()
-                  ? 'bg-amber text-white shadow-sm hover:bg-amber-hover hover:shadow-md'
-                  : 'bg-surface-3 text-ink-muted cursor-default'
-              }`}
-              disabled={!input.trim() || streaming}
-            >
-              <ArrowUp size={16} strokeWidth={2.5} />
-            </button>
           </div>
         </div>
       </div>

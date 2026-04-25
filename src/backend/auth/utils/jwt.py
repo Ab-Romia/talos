@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
-from typing import TypeVar, Type
+from typing import Literal, TypeVar, Type
 
 from joserfc import jwe, jwt
 from joserfc.errors import JoseError, ExpiredTokenError
@@ -27,6 +28,11 @@ def now():
     return datetime.now(timezone.utc)
 
 
+class OAuthHandoffClaims(BaseJWTClaims):
+    sub: UUID
+    typ: Literal["oauth_handoff"] = "oauth_handoff"
+
+
 @lru_cache
 def _key():
     from joserfc import jwk
@@ -51,14 +57,26 @@ def create_token(claims: BaseJWTClaims) -> str:
     )
 
 
+def create_oauth_handoff_token(user_id: uuid.UUID) -> str:
+    now = datetime.now(timezone.utc)
+    return create_token(
+        OAuthHandoffClaims(
+            sub=user_id,
+            exp=now + timedelta(minutes=5),
+        )
+    )
+
+
+def verify_oauth_handoff_token(jwe: str) -> OAuthHandoffClaims:
+    if not jwe or not jwe.strip():
+        raise errors.InvalidToken()
+    return verify_token(jwe, return_model=OAuthHandoffClaims)
+
+
 T = TypeVar("T", bound=BaseJWTClaims)
 
 
 def verify_token(token: str, sub: uuid.UUID = None, return_model: Type[T] = BaseJWTClaims) -> T:
-    """
-    :raises InvalidTokenException:
-    """
-
     claims_request = jwt.JWTClaimsRegistry(
         **{"sub": {"essential": True, "value": sub.hex}} if sub else {},
         iss={"essential": True, "value": cfg().app_host},

@@ -57,12 +57,16 @@ def password_authenticate(
         .where(IdentityProvider.issuer == Issuer.totp)
     )
 
-    db.merge(DBSession(id=session.jti, user_id=user.id))
+    # Create or refresh DB session record so active_user can find it.
+    # Using merge() keeps re-login idempotent when the browser still has a
+    # valid cookie from a previous session — db.add() would collide on the
+    # existing sessions.id primary key.
+    db.merge(DBSession(id=session.jti, user_id=user.id, expires_at=session.exp))
     db.commit()
 
     session.sub = user.id
     if requires_otp:
-        session.requires_totp = True
+        session.requires_otp = True
 
 
 class ForgotPasswordClaims(BaseJWTClaims):

@@ -17,21 +17,42 @@ export const documentService = {
     return res.json()
   },
 
-  list(workspaceId, cursor = null, limit = 20) {
-    let url = `/api/workspaces/${workspaceId}/files?limit=${limit}`
-    if (cursor) url += `&cursor=${cursor}`
-    return api.get(url)
+  list(workspaceId, { cursor = null, limit = 20, chatroomId = null, contentType = null } = {}) {
+    const params = new URLSearchParams()
+    params.set('limit', String(limit))
+    if (cursor) params.set('cursor', cursor)
+    if (chatroomId) params.set('chatroom_id', chatroomId)
+    if (contentType) params.set('content_type', contentType)
+    return api.get(`/api/workspaces/${workspaceId}/files?${params.toString()}`)
+  },
+
+  getMetadata(workspaceId, fileId) {
+    return api.get(`/api/workspaces/${workspaceId}/files/${fileId}`)
   },
 
   getStatus(workspaceId, fileId) {
     return api.get(`/api/workspaces/${workspaceId}/files/${fileId}/status`)
   },
 
+  getDownloadUrl(workspaceId, fileId) {
+    return api.get(`/api/workspaces/${workspaceId}/files/${fileId}/download`)
+  },
+
+  getThumbnailUrl(workspaceId, fileId) {
+    return api.get(`/api/workspaces/${workspaceId}/files/${fileId}/thumbnail`)
+  },
+
+  retry(workspaceId, fileId) {
+    return api.post(`/api/workspaces/${workspaceId}/files/${fileId}/retry`)
+  },
+
   delete(workspaceId, fileId) {
     return api.delete(`/api/workspaces/${workspaceId}/files/${fileId}`)
   },
 
-  getDownloadUrl(workspaceId, fileId) {
-    return api.get(`/api/workspaces/${workspaceId}/files/${fileId}/download`)
+  attachToMessage(workspaceId, chatroomId, messageId, fileId) {
+    return api.post(
+      `/api/workspaces/${workspaceId}/chatrooms/${chatroomId}/messages/${messageId}/files?file_id=${fileId}`,
+    )
   },
 }

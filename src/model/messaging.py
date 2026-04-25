@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, func, Uuid
+from sqlalchemy import DateTime, ForeignKey, func, Uuid, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 
 from files.model import FileAttachment
@@ -50,6 +51,14 @@ class Message(Base):
     channel_id: Mapped[uuid.UUID] = mapped_column(ForeignKey(Channel.id, ondelete="CASCADE"))
     sender_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     content: Mapped[str] = mapped_column()
+    # Forward-compatible payload (tool calls, structured model output, etc.)
+    message_extra: Mapped[dict] = mapped_column(
+        "message_extra",
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+        default=dict,
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
 

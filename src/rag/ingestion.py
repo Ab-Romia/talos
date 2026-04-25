@@ -9,7 +9,7 @@ from langchain_text_splitters import (
 )
 from langchain_unstructured import UnstructuredLoader
 
-from config import global_rag_config
+from config import get_effective_rag_config
 
 __all__ = ["load_documents", "document_splitter", "format_citations", "ingest_file_chunks"]
 
@@ -50,20 +50,21 @@ def document_splitter(document: str) -> str:
 
 # add config
 def document_splitter_(strategy: str | None = None):
+    cfg = get_effective_rag_config()
     if strategy is None:
-        strategy = global_rag_config.chunking_strategy
+        strategy = cfg.chunking_strategy
 
     if strategy == "recursive":
         return RecursiveCharacterTextSplitter(
-            chunk_size=global_rag_config.chunk_size,
-            chunk_overlap=global_rag_config.chunk_overlap,
+            chunk_size=cfg.chunk_size,
+            chunk_overlap=cfg.chunk_overlap,
             separators=["\n\n", "\n", ". ", " ", ""],
         )
 
     elif strategy == "markdown":
         return MarkdownTextSplitter(
-            chunk_size=global_rag_config.chunk_size,
-            chunk_overlap=global_rag_config.chunk_overlap,
+            chunk_size=cfg.chunk_size,
+            chunk_overlap=cfg.chunk_overlap,
         )
 
     else:

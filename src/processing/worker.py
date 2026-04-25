@@ -48,6 +48,45 @@ def recover_stuck_processing(session_factory) -> int:
     return recovered
 
 
+def reconcile_indexed_with_zero_document_chunks(session_factory) -> int:
+    """Mark inconsistent rows as failed: document types indexed with no chunks (legacy bug).
+
+    Lets users use Re-queue after deploy; RAG has nothing to retrieve for 0-chunk "indexed" files.
+    """
+    from sqlalchemy import or_, select
+
+    from files.constants import DOCUMENT_MIME_TYPES
+    from files.models import FileAttachment, ProcessingStatus
+
+    fixed = 0
+    with session_factory() as db:
+        rows = db.scalars(
+            select(FileAttachment).where(
+                FileAttachment.processing_status == ProcessingStatus.INDEXED,
+                FileAttachment.deleted_at.is_(None),
+                FileAttachment.content_type.in_(DOCUMENT_MIME_TYPES),
+                or_(
+                    FileAttachment.chunk_count.is_(None),
+                    FileAttachment.chunk_count == 0,
+                ),
+            )
+        ).all()
+        for row in rows:
+            row.processing_status = ProcessingStatus.FAILED
+            row.processing_error = (
+                "This file was marked indexed but has no searchable text chunks. "
+                "Click Re-queue to try again, or re-upload if it keeps failing."
+            )[:2048]
+            fixed += 1
+        if fixed:
+            db.commit()
+            logger.warning(
+                "Reconciled document rows that were indexed with zero chunks",
+                rows_fixed=fixed,
+            )
+    return fixed
+
+
 async def on_startup(ctx):
     """Initialize DB session factory and MinIO storage for the worker."""
     from model import SessionLocal
@@ -67,6 +106,7 @@ async def on_startup(ctx):
     )
 
     recover_stuck_processing(SessionLocal)
+    reconcile_indexed_with_zero_document_chunks(SessionLocal)
 
 
 async def on_shutdown(ctx):

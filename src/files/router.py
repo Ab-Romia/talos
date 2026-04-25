@@ -17,6 +17,7 @@ from files.schemas import (
     FileThumbnailResponse,
     FileUploadResponse,
 )
+from config import cfg
 from files.service import FileService
 from files.storage import MinIOStorage
 from model import DatabaseDep
@@ -25,6 +26,26 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 router = APIRouter()
+
+
+async def _schedule_file_processing(request: Request, file_id: uuid.UUID) -> None:
+    """By default, index in the API process. Optionally use Redis + ARQ worker instead."""
+    if cfg().inline_file_processing:
+        from processing.inline import schedule_process_file
+
+        schedule_process_file(request.app, file_id)
+        return
+    arq_pool = getattr(request.app.state, "arq_pool", None)
+    try:
+        await FileService.enqueue_processing(arq_pool, file_id)
+    except RuntimeError:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "File processing queue unavailable; enable INLINE_FILE_PROCESSING or start Redis and an ARQ worker",
+        ) from None
+
+
+# --- Upload ---
 
 
 @router.post(
@@ -56,15 +77,7 @@ async def upload_file(
     except ValueError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
 
-    # Enqueue background processing
-    arq_pool = getattr(request.app.state, "arq_pool", None)
-    try:
-        await FileService.enqueue_processing(arq_pool, db_file.id)
-    except RuntimeError:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "File processing queue unavailable; try again later",
-        )
+    await _schedule_file_processing(request, db_file.id)
 
     return FileUploadResponse(
         file_id=db_file.id,
@@ -144,14 +157,7 @@ async def retry_file_processing(request: Request, file_id: uuid.UUID, db: Databa
     if file is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found")
 
-    arq_pool = getattr(request.app.state, "arq_pool", None)
-    try:
-        await FileService.enqueue_processing(arq_pool, file.id)
-    except RuntimeError:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "File processing queue unavailable; try again later",
-        )
+    await _schedule_file_processing(request, file.id)
 
     return FileMetadata.model_validate(file)
 

@@ -180,9 +180,41 @@ def revoke_by_uid(user_id: uuid.UUID, db: DatabaseDep, except_id: uuid.UUID = No
 
 
 def get_by_uid(user_id: uuid.UUID, db: DatabaseDep):
-    sessions = db.scalars(
-        select(Session.id, Session.last_used_at, Session.user_agent)
+    rows = db.execute(
+        select(Session.id, Session.created_at, Session.last_used_at, Session.user_agent)
         .where(Session.user_id == user_id)
-    )
+    ).all()
 
-    return sessions
+    return [
+        {
+            "id": str(r.id),
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "last_used_at": r.last_used_at.isoformat() if r.last_used_at else None,
+            "user_agent": r.user_agent,
+        }
+        for r in rows
+    ]
+
+
+def get_all_sessions(db: DatabaseDep, user_id: uuid.UUID):
+    return db.scalars(
+        select(Session.id)
+        .where(Session.user_id == user_id)
+    ).all()
+
+
+def get_sessions_by_uid(uid, db):
+    rows = db.execute(
+        select(Session.id, Session.created_at, Session.last_used_at, Session.user_agent)
+        .where(Session.user_id == uid)
+    ).all()
+
+    return [
+        {
+            "id": str(r.id),
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "last_used_at": r.last_used_at.isoformat() if r.last_used_at else None,
+            "user_agent": r.user_agent,
+        }
+        for r in rows
+    ]

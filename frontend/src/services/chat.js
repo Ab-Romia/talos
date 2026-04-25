@@ -9,6 +9,10 @@ export const chatService = {
     return api.post('/api/workspaces', { name })
   },
 
+  getWorkspace(workspaceId) {
+    return api.get(`/api/workspaces/${workspaceId}`)
+  },
+
   getChatrooms(workspaceId) {
     return api.get(`/api/workspaces/${workspaceId}/chatrooms`)
   },
@@ -17,16 +21,31 @@ export const chatService = {
     return api.post(`/api/workspaces/${workspaceId}/chatrooms`, { name })
   },
 
-  getMessages(workspaceId, chatroomId, limit = 50) {
-    return api.get(`/api/workspaces/${workspaceId}/chatrooms/${chatroomId}/messages?limit=${limit}`)
+  getMessages(workspaceId, chatroomId, options = {}) {
+    const { limit = 50, offset = 0, beforeId, afterId } = options
+    const q = new URLSearchParams()
+    q.set('limit', String(limit))
+    q.set('offset', String(offset))
+    if (beforeId) q.set('before_id', beforeId)
+    if (afterId) q.set('after_id', afterId)
+    return api.get(
+      `/api/workspaces/${workspaceId}/chatrooms/${chatroomId}/messages?${q.toString()}`,
+    )
   },
 
-  async sendMessage(workspaceId, chatroomId, content, onChunk, onDone, onError) {
+  async sendMessage(workspaceId, chatroomId, content, onChunk, onDone, onError, options = {}) {
+    const { fileIds = null, onMessageId = null, regenerateForAiMessageId = null } = options
+    const body = { content: content ?? '' }
+    if (fileIds && fileIds.length) body.file_ids = fileIds
+    if (regenerateForAiMessageId) {
+      body.regenerate_for_ai_message_id = regenerateForAiMessageId
+    }
+
     const res = await fetch(`/api/workspaces/${workspaceId}/chatrooms/${chatroomId}/messages`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify(body),
     })
 
     if (!res.ok) {
@@ -34,6 +53,9 @@ export const chatService = {
       onError?.(err.detail || 'Failed to send message')
       return
     }
+
+    const userMessageId = res.headers.get('X-User-Message-Id')
+    if (userMessageId) onMessageId?.(userMessageId)
 
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
@@ -54,13 +76,11 @@ export const chatService = {
           if (event.type === 'chunk') {
             onChunk?.(event.content)
           } else if (event.type === 'done') {
-            onDone?.(event.sources || [])
+            onDone?.(event.sources || [], event.ai_message_id)
           } else if (event.type === 'error') {
             onError?.(event.content)
           }
-        } catch {
-          // ignore parse errors
-        }
+        } catch {}
       }
     }
   },

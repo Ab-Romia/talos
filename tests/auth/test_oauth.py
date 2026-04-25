@@ -192,7 +192,7 @@ class TestOAuthCallback:
                               headers={"Accept": "text/html"})
 
         assert response.status_code == status.HTTP_303_SEE_OTHER
-        assert "user_session" in response.cookies
+        assert "oauth_handoff" in (response.headers.get("location") or "")
 
         identity = get_oauth_identity(db_session, test_user.id)
         assert identity is not None
@@ -220,7 +220,7 @@ class TestOAuthCallback:
                               headers={"Accept": "text/html"})
 
         assert response.status_code == status.HTTP_303_SEE_OTHER
-        assert "user_session" in response.cookies
+        assert "oauth_handoff" in (response.headers.get("location") or "")
 
         identities = db_session.scalars(
             select(IdentityProvider).where(

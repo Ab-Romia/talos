@@ -1,5 +1,7 @@
 from datetime import datetime, timezone, timedelta
+import re
 from typing import Annotated
+from urllib.parse import quote
 
 import httpx
 from authlib.integrations.base_client import OAuthError
@@ -12,7 +14,10 @@ from starlette.responses import RedirectResponse
 from backend.auth.model import IdentityProvider, Issuer, User, ProviderToken
 from backend.auth.utils.session import UnverifiedSessionDep, NewSessionDep
 from model import DatabaseDep
-from src.config import cfg
+from model.identity import Session as DBSession
+from config import cfg
+from backend.auth.utils import errors
+from backend.auth.utils.jwt import create_oauth_handoff_token, verify_oauth_handoff_token
 
 router = APIRouter()
 oauth = OAuth()
@@ -56,11 +61,76 @@ def check_provider(provider: str):
 ProviderParam = Annotated[str, AfterValidator(check_provider)]
 
 
+def _oauth_api_public_base() -> str:
+    b = (cfg().oauth_callback_base or "").strip()
+    if b:
+        return b.rstrip("/")
+    return f"http://{cfg().app_host}:{cfg().app_port}"
+
+
+def _oauth_callback_uri(provider: str) -> str:
+    return f"{_oauth_api_public_base()}/api/auth/oauth/{provider}/callback"
+
+
+def _post_oauth_redirect_url(handoff: str) -> str:
+    base = str(cfg().frontend_origin).rstrip("/")
+    path = (cfg().frontend_post_oauth_path or "/").strip() or "/"
+    if not path.startswith("/"):
+        path = "/" + path
+    q = f"oauth_handoff={quote(handoff, safe='')}"
+    return f"{base}{path}{'&' if '?' in path else '?'}{q}"
+
+
+class OAuthHandoffIn(BaseModel):
+    token: str
+
+
+def _unique_username_from_profile(db, email: str, name: str | None, oauth_sub: str) -> str:
+    local = ""
+    if email and "@" in email:
+        local = email.split("@", 1)[0]
+    base = re.sub(r"[^a-z0-9._-]+", "-", (local or name or f"u-{oauth_sub}").lower())
+    base = re.sub(r"-{2,}", "-", base).strip("-_")[:40] or f"u-{oauth_sub[:20]}"
+    candidate = base[:100]
+    n = 0
+    while True:
+        q = select(User).where(User.username == candidate, User.deleted_at.is_(None))
+        if db.scalar(q) is None:
+            return candidate
+        n += 1
+        candidate = f"{base[:32]}-{n}"[:100]
+
+
+@router.post("/handoff", status_code=status.HTTP_204_NO_CONTENT)
+def oauth_session_handoff(
+    body: OAuthHandoffIn,
+    session: UnverifiedSessionDep,
+    db: DatabaseDep,
+):
+    try:
+        claims = verify_oauth_handoff_token(body.token)
+    except errors.InvalidToken:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired OAuth handoff token",
+        )
+    user_id = claims.sub
+    db.merge(
+        DBSession(
+            id=session.jti,
+            user_id=user_id,
+            expires_at=session.exp,
+        )
+    )
+    db.commit()
+    session.sub = user_id
+
+
 @router.get("/{provider}")
 async def oauth_login(provider: ProviderParam, request: Request, session: UnverifiedSessionDep):
     client = oauth.create_client(provider)
 
-    redirect_uri = request.url_for("oauth_callback", provider=provider)
+    redirect_uri = _oauth_callback_uri(provider)
     try:
         request.scope["session"] = {}  # authlib expects a session dict in the scope
         res = await client.authorize_redirect(request, redirect_uri)
@@ -125,10 +195,16 @@ async def oauth_callback(provider: ProviderParam,
         )
 
         if user is None:
+            # New user
+            # TODO: handle account creation -> redirect to first time profile customizations
+            uname = _unique_username_from_profile(
+                db, user_info.email, user_info.name, user_info.sub
+            )
             user = User(
                 primary_email=user_info.email,
                 name=user_info.name,
-                username=user_info.name.replace(" ", "-").lower(),
+                username=uname,
+                email_verified=bool(user_info.email_verified),
                 data={"avatar_url": user_info.picture} if user_info.picture else {},
                 roles=[],
             )
@@ -156,7 +232,11 @@ async def oauth_callback(provider: ProviderParam,
 
     _persist_provider_token(db, user.id, provider, token)
 
-    return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+    handoff = create_oauth_handoff_token(identity.user_id)
+    return RedirectResponse(
+        url=_post_oauth_redirect_url(handoff),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 def _persist_provider_token(db, user_id, provider: str, token: dict):

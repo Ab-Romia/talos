@@ -8,7 +8,7 @@ from langchain_core.retrievers import BaseRetriever
 from langchain_openai import ChatOpenAI
 
 from config import QUERY_REWRITE_PROMPT
-from config import global_rag_config
+from config import RagConfig, get_effective_rag_config
 from ..generation import get_llm
 from ..vector_store import get_embeddings
 
@@ -38,24 +38,27 @@ class VerboseMultiQueryRetriever(MultiQueryRetriever):
         return unique_docs
 
 
-def get_multiquery_retriever(base_retriever: BaseRetriever):
-    return VerboseMultiQueryRetriever.from_llm(retriever=base_retriever, llm=get_llm())
+def get_multiquery_retriever(base_retriever: BaseRetriever, config: RagConfig | None = None):
+    c = config or get_effective_rag_config()
+    return VerboseMultiQueryRetriever.from_llm(retriever=base_retriever, llm=get_llm(c))
 
 
 # TODO: differentiate between query rewriter for retrieval vs generation
 #  Use different llm/configs
-def get_query_rewriter():
-    llm = get_llm()
+def get_query_rewriter(config: RagConfig | None = None):
+    c = config or get_effective_rag_config()
+    llm = get_llm(c)
     return QUERY_REWRITE_PROMPT | llm
 
 
-def get_hyde_embeddings():
-    base_embeddings = get_embeddings()
+def get_hyde_embeddings(config: RagConfig | None = None):
+    c = config or get_effective_rag_config()
+    base_embeddings = get_embeddings(config=c)
     hyde_llm = ChatOpenAI(
-        model="gpt-3.5-turbo",
+        model=c.openai_model,
         temperature=0.0,
         max_completion_tokens=150,
-        api_key=global_rag_config.openai_api_key,
+        api_key=c.openai_api_key,
     )
     return HypotheticalDocumentEmbedder.from_llm(
         llm=hyde_llm, base_embeddings=base_embeddings, prompt_key="web_search"

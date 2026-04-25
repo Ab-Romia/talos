@@ -7,21 +7,26 @@ from langchain_core.chat_history import (
 from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
 
-from config import global_rag_config
+from config import RagConfig, get_effective_rag_config
 
 __all__ = ["get_llm", "get_memory"]
 
 
-def get_llm(provider: str = "openai", streaming: bool | None = None):
+def get_llm(
+    config: RagConfig | None = None,
+    provider: str = "openai",
+    streaming: bool | None = None,
+):
+    c = config or get_effective_rag_config()
     if streaming is None:
-        streaming = global_rag_config.llm_streaming
+        streaming = c.llm_streaming
 
     if provider == "openai":
         return ChatOpenAI(
-            model=global_rag_config.openai_model,
-            temperature=global_rag_config.llm_temperature,
+            model=c.openai_model,
+            temperature=c.llm_temperature,
             streaming=streaming,
-            api_key=global_rag_config.openai_api_key,
+            api_key=c.openai_api_key,
         )
     else:
         raise ValueError(f"Unknown LLM provider: {provider}")

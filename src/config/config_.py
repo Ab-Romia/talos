@@ -98,6 +98,14 @@ class Config(BaseSettings):
     app_name: str = "Talos"
     app_host: str
     app_port: int
+    # Where the browser should land after OAuth (Vite default in dev)
+    frontend_origin: str = "http://localhost:5173"
+    # Path on the SPA (App.jsx redirects / → /chat; /chat is fine for a direct “home”)
+    frontend_post_oauth_path: str = "/chat"
+    # Must match the authorized redirect origin in Google/GitHub (e.g. http://localhost:8000).
+    # If empty, defaults to http://{app_host}:{app_port} so local IdP configs keep working
+    # without console changes.
+    oauth_callback_base: str = ""
 
     database_url: str
     cache_backend: str = "memory://"
@@ -106,6 +114,10 @@ class Config(BaseSettings):
     minio: MinIOConfig = MinIOConfig()
     redis: RedisConfig = None
     files: FilesConfig = FilesConfig()
+    # When True (default), run document embedding/indexing inside the API process so a
+    # separate `arq` worker is not required for local dev. Set False in production when
+    # using dedicated worker processes.
+    inline_file_processing: bool = True
 
     model_config = SettingsConfigDict(
         env_file='.env',
