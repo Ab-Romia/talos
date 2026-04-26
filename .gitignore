@@ -78,3 +78,11 @@ temp/
 *.cast
 
 node_modules
+
+# Editor / IDE
+.idea/
+.vscode/
+
+# Local agent / assistant scratch
+CLAUDE.md
+.claude/
