@@ -8,10 +8,13 @@ from pydantic import AfterValidator, BaseModel, PydanticUserError
 from sqlalchemy import select
 from starlette.responses import RedirectResponse
 
+from datetime import datetime, timezone, timedelta
+
 from model import DatabaseDep
-from model.identity import IdentityProvider, User, Issuer
+from model.identity import IdentityProvider, ProviderToken, User, Issuer
 from config import cfg
 from backend.auth.utils.session import UnverifiedSessionDep
+from sqlalchemy import select as _select
 
 
 class OIDC(BaseModel):
@@ -149,6 +152,55 @@ async def oauth_callback(provider: ProviderParam,
         db.add(identity)
         db.commit()
 
+    _persist_provider_token(db, identity.user_id, provider, token)
+
     session.sub = identity.user_id
 
     return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+
+
+def _persist_provider_token(db, user_id, provider: str, token: dict) -> None:
+    """Upsert the OAuth access/refresh token returned by the provider.
+
+    Only stores tokens we'll actually call APIs with (currently: google).
+    A missing refresh_token on a re-auth is preserved from the existing row
+    so we don't lose offline access if the provider only sends it on first
+    consent.
+    """
+    if provider != "google":
+        return
+
+    access_token = token.get("access_token")
+    if not access_token:
+        return
+
+    expires_at = None
+    if token.get("expires_at"):
+        expires_at = datetime.fromtimestamp(token["expires_at"], tz=timezone.utc)
+    elif token.get("expires_in"):
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(token["expires_in"]))
+
+    existing = db.scalar(
+        _select(ProviderToken).where(
+            ProviderToken.user_id == user_id,
+            ProviderToken.provider == provider,
+        )
+    )
+    refresh_token = token.get("refresh_token") or (existing.refresh_token if existing else None)
+
+    if existing is None:
+        db.add(ProviderToken(
+            user_id=user_id,
+            provider=provider,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_at=expires_at,
+            scope=token.get("scope"),
+        ))
+    else:
+        existing.access_token = access_token
+        existing.refresh_token = refresh_token
+        if expires_at is not None:
+            existing.expires_at = expires_at
+        existing.scope = token.get("scope") or existing.scope
+    db.commit()

@@ -14,6 +14,7 @@ from config import cfg
 from files.models import FileAttachment, message_files  # noqa: F401 — register with Base.metadata
 from files.router import router as files_router
 from files.storage import MinIOStorage
+from integrations.drive import drive_router
 from model import Base, engine
 
 templates = Jinja2Templates(directory="frontend/templates")
@@ -67,6 +68,7 @@ app = FastAPI(title='Temp', lifespan=lifespan)
 app.include_router(auth_router, prefix="/api/auth")
 app.include_router(chat_router, prefix="/api")
 app.include_router(files_router, prefix="/api")
+app.include_router(drive_router, prefix="/api")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
