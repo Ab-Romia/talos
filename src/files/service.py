@@ -1,6 +1,7 @@
 """Business logic for file operations."""
 
 import hashlib
+import io
 import os
 import uuid
 from datetime import datetime
@@ -55,13 +56,24 @@ class FileService:
             if chatroom is None:
                 raise ValueError(f"Chatroom {chatroom_id} not found in workspace {workspace_id}")
 
-        # 2. Get actual file size
-        file.file.seek(0, os.SEEK_END)
-        file_size = file.file.tell()
-        file.file.seek(0)
-
-        if file_size > MAX_FILE_SIZE:
-            raise FileTooLarge(file_size, MAX_FILE_SIZE)
+        # 2. Stream the body once into a bounded buffer, computing size + checksum.
+        # Stops at MAX_FILE_SIZE + 1 so a client lying about Content-Length cannot
+        # force the server to buffer the entire upload before we refuse it.
+        hasher = hashlib.sha256()
+        buffer = io.BytesIO()
+        file_size = 0
+        chunk_size = 1024 * 1024  # 1 MiB
+        while True:
+            chunk = await file.read(chunk_size)
+            if not chunk:
+                break
+            file_size += len(chunk)
+            if file_size > MAX_FILE_SIZE:
+                raise FileTooLarge(file_size, MAX_FILE_SIZE)
+            hasher.update(chunk)
+            buffer.write(chunk)
+        buffer.seek(0)
+        checksum = hasher.hexdigest()
 
         # 3. Generate storage key
         file_id = uuid.uuid4()
@@ -74,14 +86,10 @@ class FileService:
             ext=ext,
         )
 
-        # 4. Compute checksum
-        checksum = hashlib.file_digest(file.file, "sha256").hexdigest()
-        file.file.seek(0)
-
         # 5. Upload to MinIO
         await self.storage.upload_file(
             storage_key=storage_key,
-            data=file.file,
+            data=buffer,
             size=file_size,
             content_type=detected_mime,
         )
@@ -202,21 +210,32 @@ class FileService:
         file_id: uuid.UUID,
         workspace_id: uuid.UUID,
     ) -> FileAttachment | None:
-        """Soft-delete a file. Returns the file or None if not found."""
+        """Soft-delete a file. Returns the file or None if not found.
+
+        Vector chunks are removed before the row is marked deleted so a
+        failure to clean Milvus does not leave orphaned, queryable chunks
+        behind a tombstoned file. Only INDEXED files have chunks to delete;
+        other states are skipped.
+        """
         file = self.get_file(file_id, workspace_id)
         if file is None:
             return None
 
+        if file.processing_status == ProcessingStatus.INDEXED:
+            from rag.vector_store import delete_file_chunks
+            try:
+                delete_file_chunks(str(file_id), workspace_id=str(workspace_id))
+            except Exception as e:
+                logger.error(
+                    "Failed to delete file chunks from vector store; aborting soft-delete",
+                    file_id=str(file_id),
+                    error=str(e),
+                )
+                raise
+
         file.deleted_at = utcnow()
         self.db.commit()
         self.db.refresh(file)
-
-        # Remove vector chunks from Milvus
-        try:
-            from rag.vector_store import delete_file_chunks
-            delete_file_chunks(str(file_id), workspace_id=str(workspace_id))
-        except Exception:
-            logger.warning("Failed to delete file chunks from vector store", file_id=str(file_id))
 
         logger.info("File soft-deleted", file_id=str(file_id))
         return file
@@ -244,15 +263,26 @@ class FileService:
     ) -> FileAttachment | None:
         """Reset a file so it can be reprocessed.
 
-        Returns the file with status flipped back to UPLOADED, or None if
-        the file is missing. Raises ValueError if the file is in a state
-        that cannot be retried (currently PROCESSING or INDEXED).
+        Returns the file flipped back to UPLOADED, or None if missing.
+        Raises ValueError when the file is INDEXED (nothing to retry) or
+        when it is genuinely still being processed by a live worker
+        (PROCESSING with a recent updated_at). PROCESSING rows whose
+        updated_at is older than the stuck threshold are treated as
+        crashed-worker leftovers and reclaimed by this call so the user
+        does not have to wait for the periodic sweep.
         """
+        from processing.worker import STUCK_AGE
+        from utils.datetime import utcnow
+
         file = self.get_file(file_id, workspace_id)
         if file is None:
             return None
-        if file.processing_status in (ProcessingStatus.PROCESSING, ProcessingStatus.INDEXED):
-            raise ValueError(f"Cannot retry file in {file.processing_status.value} state")
+        if file.processing_status == ProcessingStatus.INDEXED:
+            raise ValueError("Cannot retry file in indexed state")
+        if file.processing_status == ProcessingStatus.PROCESSING:
+            age = utcnow() - file.updated_at
+            if age < STUCK_AGE:
+                raise ValueError("Cannot retry file in processing state")
 
         file.processing_status = ProcessingStatus.UPLOADED
         file.processing_error = None
@@ -281,18 +311,26 @@ class FileService:
         file_id: uuid.UUID,
         message_id: uuid.UUID,
         workspace_id: uuid.UUID,
+        chatroom_id: uuid.UUID | None = None,
     ) -> bool:
-        """Attach an existing file to a message. Returns True on success."""
+        """Attach an existing file to a message. Returns True on success.
+
+        When chatroom_id is provided, the message must belong to that
+        chatroom — otherwise a caller could pass any chatroom in the URL
+        and have it accepted.
+        """
         file = self.get_file(file_id, workspace_id)
         if file is None:
             return False
 
-        msg = self.db.scalar(
-            select(Message).where(
-                Message.id == message_id,
-                Message.workspace_id == workspace_id,
-            )
+        msg_query = select(Message).where(
+            Message.id == message_id,
+            Message.workspace_id == workspace_id,
         )
+        if chatroom_id is not None:
+            msg_query = msg_query.where(Message.chatroom_id == chatroom_id)
+
+        msg = self.db.scalar(msg_query)
         if msg is None:
             return False
 

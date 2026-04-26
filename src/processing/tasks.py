@@ -2,6 +2,8 @@
 
 import uuid
 
+from sqlalchemy import update as sa_update
+
 from files.constants import DOCUMENT_MIME_TYPES, IMAGE_MIME_TYPES
 from files.models import FileAttachment, ProcessingStatus
 from utils.logger import get_logger
@@ -14,20 +16,41 @@ async def process_file(ctx: dict, file_id: str):
     db_factory = ctx["db_session_factory"]
     storage = ctx["minio_storage"]
 
+    fid = uuid.UUID(file_id)
     with db_factory() as db:
-        file_record = db.get(FileAttachment, uuid.UUID(file_id))
-        if file_record is None:
-            logger.warning("File not found for processing", file_id=file_id)
-            return
-
-        # Idempotent: skip if already processed
-        if file_record.processing_status == ProcessingStatus.INDEXED:
-            logger.info("File already indexed, skipping", file_id=file_id)
-            return
-
-        # Mark as processing
-        file_record.processing_status = ProcessingStatus.PROCESSING
+        # Atomically claim the file: flip status to PROCESSING only when the
+        # current state is workable (UPLOADED or FAILED). rowcount == 0 means
+        # another worker already owns it, it is already INDEXED, or the row is
+        # gone — all safe to skip.
+        result = db.execute(
+            sa_update(FileAttachment)
+            .where(
+                FileAttachment.id == fid,
+                FileAttachment.processing_status.in_([
+                    ProcessingStatus.UPLOADED,
+                    ProcessingStatus.FAILED,
+                ])
+            )
+            .values(processing_status=ProcessingStatus.PROCESSING)
+        )
         db.commit()
+
+        if result.rowcount == 0:
+            file_record = db.get(FileAttachment, fid)
+            if file_record is None:
+                logger.warning("File not found for processing", file_id=file_id)
+            else:
+                logger.info(
+                    "File not in processable state, skipping",
+                    file_id=file_id,
+                    status=file_record.processing_status.value,
+                )
+            return
+
+        file_record = db.get(FileAttachment, fid)
+        if file_record is None:
+            logger.warning("File row vanished after claim", file_id=file_id)
+            return
 
         try:
             if file_record.content_type in DOCUMENT_MIME_TYPES:
@@ -39,10 +62,8 @@ async def process_file(ctx: dict, file_id: str):
                 await process_image(file_record, db, storage)
 
             else:
-                logger.warning(
-                    "No processor for MIME type",
-                    file_id=file_id,
-                    mime=file_record.content_type,
+                raise ValueError(
+                    f"No processor registered for MIME type {file_record.content_type}"
                 )
 
             file_record.processing_status = ProcessingStatus.INDEXED
@@ -51,11 +72,16 @@ async def process_file(ctx: dict, file_id: str):
 
         except Exception as e:
             logger.exception("File processing failed", file_id=file_id)
-            # Re-fetch in case session is dirty
             db.rollback()
-            file_record = db.get(FileAttachment, uuid.UUID(file_id))
-            if file_record:
-                file_record.processing_status = ProcessingStatus.FAILED
-                file_record.processing_error = str(e)[:2048]
-                db.commit()
-            raise  # Let ARQ handle retry
+            file_record = db.get(FileAttachment, fid)
+            if file_record is None:
+                logger.error(
+                    "File row disappeared during processing",
+                    file_id=file_id,
+                    underlying_error=str(e)[:500],
+                )
+                return
+            file_record.processing_status = ProcessingStatus.FAILED
+            file_record.processing_error = str(e)[:2048]
+            db.commit()
+            raise

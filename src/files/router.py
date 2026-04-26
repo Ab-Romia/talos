@@ -20,6 +20,9 @@ from files.storage import MinIOStorage
 from model import DatabaseDep
 from model.identity import User
 from model.messaging import Workspace
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -249,7 +252,14 @@ def delete_file(
 ):
     """Soft-delete a file (sets deleted_at)."""
     svc = FileService(db, storage=None)
-    file = svc.soft_delete(file_id, workspace_id)
+    try:
+        file = svc.soft_delete(file_id, workspace_id)
+    except Exception:
+        logger.exception("soft_delete failed", file_id=str(file_id))
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Vector store unavailable; file not deleted",
+        )
     if file is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found")
     return FileMetadata.model_validate(file)
@@ -272,7 +282,7 @@ def attach_file_to_message(
 ):
     """Attach an existing file to a message."""
     svc = FileService(db, storage=None)
-    success = svc.attach_to_message(file_id, message_id, workspace_id)
+    success = svc.attach_to_message(file_id, message_id, workspace_id, chatroom_id)
     if not success:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "File or message not found")
     return {"status": "attached", "file_id": str(file_id), "message_id": str(message_id)}

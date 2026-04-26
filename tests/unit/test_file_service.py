@@ -13,14 +13,29 @@ from files.service import FileService
 
 
 def _make_upload_file(content: bytes = b"hello world", filename: str = "test.txt"):
-    """Create a mock UploadFile."""
+    """Create a mock UploadFile that streams `content` chunk-by-chunk.
+
+    The first read returns up to 2048 bytes (so magic-byte sniffing sees
+    real content), then seek(0) rewinds the underlying buffer so the
+    service can stream the full body via subsequent reads. Returns b""
+    on EOF, mirroring the real Starlette UploadFile behaviour.
+    """
     mock = AsyncMock()
     mock.filename = filename
 
     buf = BytesIO(content)
     mock.file = buf
-    mock.read = AsyncMock(return_value=content[:2048])
-    mock.seek = AsyncMock(side_effect=lambda pos: buf.seek(pos))
+
+    async def _read(size: int = -1) -> bytes:
+        if size is None or size < 0:
+            return buf.read()
+        return buf.read(size)
+
+    async def _seek(pos: int) -> None:
+        buf.seek(pos)
+
+    mock.read = _read
+    mock.seek = _seek
 
     return mock
 
@@ -53,17 +68,9 @@ class TestFileServiceUpload:
     async def test_upload_rejects_oversized_file(self, mock_magic, mock_storage):
         db = MagicMock()
         svc = FileService(db, mock_storage)
-        # Create a file object whose seek-to-end reports > MAX_FILE_SIZE
-        big_buf = BytesIO(b"x")
-        big_buf.seek = lambda offset, whence=0: MAX_FILE_SIZE + 1 if whence == 2 else 0
-        big_buf.tell = lambda: MAX_FILE_SIZE + 1
-        big_buf.read = lambda size=-1: b""
-
-        upload = AsyncMock()
-        upload.filename = "big.txt"
-        upload.file = big_buf
-        upload.read = AsyncMock(return_value=b"x" * 2048)
-        upload.seek = AsyncMock()
+        # Streaming size cap: bytes are counted as they're read, so we hit
+        # FileTooLarge before the full body lands in memory.
+        upload = _make_upload_file(content=b"x" * (MAX_FILE_SIZE + 100), filename="big.txt")
 
         with pytest.raises(FileTooLarge):
             await svc.upload(upload, uuid.uuid4(), uuid.uuid4())
@@ -174,11 +181,11 @@ class TestFileServiceDelete:
         db = MagicMock()
         file_record = MagicMock(spec=FileAttachment)
         file_record.deleted_at = None
+        file_record.processing_status = ProcessingStatus.UPLOADED  # no chunks to delete
         db.scalar.return_value = file_record
         svc = FileService(db, storage=None)
 
-        with patch("files.service.delete_file_chunks", create=True):
-            svc.soft_delete(uuid.uuid4(), uuid.uuid4())
+        svc.soft_delete(uuid.uuid4(), uuid.uuid4())
 
         assert file_record.deleted_at is not None
         db.commit.assert_called()
@@ -187,6 +194,7 @@ class TestFileServiceDelete:
         db = MagicMock()
         file_record = MagicMock(spec=FileAttachment)
         file_record.deleted_at = None
+        file_record.processing_status = ProcessingStatus.INDEXED
         db.scalar.return_value = file_record
         svc = FileService(db, storage=None)
 
@@ -198,19 +206,22 @@ class TestFileServiceDelete:
             svc.soft_delete(file_id, workspace_id)
         mock_del.assert_called_once_with(str(file_id), workspace_id=str(workspace_id))
 
-    def test_soft_delete_tolerates_vector_failure(self):
+    def test_soft_delete_aborts_on_vector_failure(self):
+        """Audit fix: vector cleanup must succeed before the row is tombstoned,
+        otherwise we leave orphaned chunks queryable in Milvus."""
         db = MagicMock()
         file_record = MagicMock(spec=FileAttachment)
         file_record.deleted_at = None
+        file_record.processing_status = ProcessingStatus.INDEXED
         db.scalar.return_value = file_record
         svc = FileService(db, storage=None)
 
         mock_rag_vs = MagicMock(delete_file_chunks=MagicMock(side_effect=Exception("milvus down")))
         with patch.dict("sys.modules", {"rag": MagicMock(), "rag.vector_store": mock_rag_vs}):
-            result = svc.soft_delete(uuid.uuid4(), uuid.uuid4())
+            with pytest.raises(Exception, match="milvus down"):
+                svc.soft_delete(uuid.uuid4(), uuid.uuid4())
 
-        # Should not raise, should return the file
-        assert result is not None
+        assert file_record.deleted_at is None  # not tombstoned
 
     def test_attach_idempotent(self):
         db = MagicMock()
