@@ -3,10 +3,7 @@ from typing import List, Optional, Dict, Any, Type
 
 from sqlalchemy.orm import Session
 
-from modules.model.notifications import (
-    Notification,
-    NotificationsType,
-)
+from modules.model.notifications import Notification,NotificationsType
 from modules.model.notifications import NotificationsChannel
 from modules.queue.rabbitmq import publish_message
 

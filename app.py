@@ -32,6 +32,7 @@ app = FastAPI(title='Temp', lifespan=lifespan)
 app.add_middleware(SessionMiddleware,secret_key="any string")
 
 app.include_router(auth_router)
+app.include_router(websocket_router)
 
 @app.get('/', response_class=HTMLResponse)
 async def root():
