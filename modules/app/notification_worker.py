@@ -5,6 +5,9 @@ from sqlalchemy.orm import Session
 from modules.queue.rabbitmq import QUEUE_NAME
 from modules.model.base import SessionLocal
 
+from modules.websocket.manager import manager
+import asyncio
+
 from modules.model.notifications import (
     Notification,
     NotificationDelivery,
@@ -46,6 +49,8 @@ def process_notification(payload: dict):
                 f"Sent {channel_name} notification "
                 f"for {notification.id}"
             )
+            notify_user(notification)
+
 
         db.commit()
 
@@ -56,6 +61,18 @@ def process_notification(payload: dict):
     finally:
         db.close()
 
+def notify_user(notification):
+    asyncio.run(
+        manager.send_to_user(
+            str(notification.user_id),
+            {
+                "id": str(notification.id),
+                "title": notification.title,
+                "body": notification.body,
+                "type": notification.type.value
+            }
+        )
+    )
 
 def callback(ch, method, properties, body):
 
