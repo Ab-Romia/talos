@@ -15,15 +15,12 @@ from model.identity import User, Session
 
 
 # TODO:
-#  forgot password,
 #  backup codes for totp
 #  email verification,
 #  multiple account support
-#  sudo mode (re-auth for sensitive actions)
 #  remember me functionality
 #  device recognition (e.g. for risk-based authentication)
 #  exception handling
-#  use starlette middleware session
 #  prevent re-signin, and invalidate prev session on resignin
 
 
@@ -74,6 +71,7 @@ def optional_active_user(request: Request, db: DatabaseDep):
 
 
 def sudo(session: SessionDep):
+    """Dependency to require sudo mode for sensitive actions. Sudo mode is activated by re-authenticating the user and is valid for a short period of time."""
     if session.sudo_exp is None or session.sudo_exp < datetime.now(timezone.utc):
         raise errors.SudoRequired()
 

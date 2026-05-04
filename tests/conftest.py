@@ -18,12 +18,7 @@ from model.identity import User, Session as UserSession, IdentityProvider, Issue
 
 @pytest.fixture(scope="session")
 def engine():
-    """Create a single SQLAlchemy engine for the whole test session.
-
-    - Ensures citext extension exists
-    - Creates all tables at session start
-    - Drops all tables at session end to delete everything in the DB
-    """
+    """Create a single SQLAlchemy engine for the whole test session."""
     from model import Base as ModelBase
 
     engine = sqlalchemy.create_engine(
@@ -154,16 +149,5 @@ def sudo_auth_token(test_user: User, test_session: SessionClaims) -> str:
         jti=test_session.jti,
         exp=datetime.now(timezone.utc) + timedelta(minutes=15),
         sudo_exp=datetime.now(timezone.utc) + timedelta(minutes=15),
-    )
-    return create_token(claims)
-
-
-@pytest.fixture
-def expired_token(test_user: User, test_session: SessionClaims) -> str:
-    from datetime import timezone, datetime
-    claims = SessionClaims(
-        sub=test_user.id,
-        jti=test_session.jti,
-        exp=datetime.now(timezone.utc) - timedelta(hours=1),
     )
     return create_token(claims)

@@ -22,6 +22,11 @@ class BaseJWTClaims(BaseModel):
     # nbf: datetime | None = None
 
 
+def now():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc)
+
+
 @lru_cache
 def _key():
     from joserfc import jwk
@@ -72,5 +77,5 @@ def verify_token(token: str, sub: uuid.UUID = None, return_model: Type[T] = Base
         return return_model.model_validate(claims)
     except ExpiredTokenError as e:
         raise errors.ExpiredToken() from e
-    except JoseError as e:
+    except (JoseError, ValueError) as e:
         raise errors.InvalidCredentials() from e

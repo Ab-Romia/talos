@@ -24,6 +24,7 @@ class SessionExpired(AuthException):
 
 
 class SudoRequired(AuthException):
+    status_code = status.HTTP_403_FORBIDDEN
     detail = "Sudo mode required to access this resource"
 
 

@@ -138,7 +138,7 @@ class TestChangePassword:
         response = client.put(
             path(change_password),
             headers={"Authorization": f"Bearer {sudo_auth_token}"},
-            params={"new_password": new_password},
+            data={"new_password": new_password},
         )
 
         assert response.status_code == status.HTTP_200_OK
@@ -163,10 +163,10 @@ class TestChangePassword:
         response = client.put(
             path(change_password),
             headers={"Authorization": f"Bearer {auth_token}"},
-            params={"new_password": new_password},
+            data={"new_password": new_password},
         )
 
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.status_code == status.HTTP_403_FORBIDDEN
 
     def test_clears_sessions(self, client, path, db_session, test_user_with_password, sudo_auth_token):
         user, _ = test_user_with_password
@@ -180,7 +180,7 @@ class TestChangePassword:
         response = client.put(
             path(change_password),
             headers={"Authorization": f"Bearer {sudo_auth_token}"},
-            params={"new_password": "NewPassword456!"},
+            data={"new_password": "NewPassword456!"},
         )
 
         assert response.status_code == status.HTTP_200_OK

@@ -25,6 +25,8 @@ class AuthConfig(BaseModel):
     sudo_max_age: timedelta = timedelta(minutes=10)
     session_max_age: timedelta = timedelta(days=30)
     session_refresh_threshold: timedelta = timedelta(minutes=10)
+    password_reset_token_expiry: timedelta = timedelta(hours=1)
+
     session_cookie_key: str = "user_session"
 
     model_config = SettingsConfigDict(

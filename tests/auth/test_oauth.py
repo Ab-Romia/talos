@@ -230,34 +230,26 @@ class TestOAuthCallback:
         ).all()
         assert len(identities) == 1
 
-    @patch("backend.auth.oauth.httpx.get")
     @patch("backend.auth.oauth.oauth")
-    def test_github_callback_creates_user(self, mock_oauth, mock_httpx_get, client, path, db_session):
-        # Mock OAuth client to return access token
-        mock_client = Mock()
+    def test_github_callback_creates_user(self, mock_oauth, client, path, db_session):
+        # Mock OAuth client to return access token and GitHub user profile
+        mock_client = AsyncMock()
         mock_client.authorize_access_token = AsyncMock(return_value={"access_token": "gh-token-123"})
-        mock_oauth.create_client.return_value = mock_client
-
-        # Mock GitHub API response
-        github_user_data = {
+        mock_response = Mock()
+        mock_response.json.return_value = {
             "id": 987654,
             "email": "github-user@example.com",
             "name": "GitHub User",
             "avatar_url": "https://github.com/avatar.jpg",
         }
-        mock_response = Mock()
-        mock_response.json.return_value = github_user_data
-        mock_httpx_get.return_value = mock_response
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_oauth.create_client.return_value = mock_client
 
         response = client.get(path(oauth_callback, provider="github"), follow_redirects=False)
 
         assert response.status_code == status.HTTP_303_SEE_OTHER
 
-        # Verify httpx.get was called with correct headers
-        mock_httpx_get.assert_called_once_with(
-            'https://api.github.com/user',
-            headers={"Authorization": "Bearer gh-token-123"}
-        )
+        mock_client.get.assert_called_once_with("/user", token={"access_token": "gh-token-123"})
 
         # Verify user created
         user = db_session.scalar(select(User).where(User.primary_email == "github-user@example.com"))

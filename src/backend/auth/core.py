@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status, Form, HTTPException
+from fastapi import APIRouter, Depends, status, Form, HTTPException, Body
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete
@@ -57,39 +57,41 @@ async def initiate_signup(email: Annotated[str, Form()], db: DatabaseDep):
 
 
 class PasswordAuth(BaseModel):
-    auth_type: Literal["password"]
+    auth_type: Literal["password"] = "password"
     password: str
 
 
 class PasskeyAuth(BaseModel):
-    auth_type: Literal["passkey"]
+    auth_type: Literal["passkey"] = "passkey"
     # TODO: Add specific passkey fields if needed
     passkey: str
 
 
 class OtpAuth(BaseModel):
-    auth_type: Literal["otp"]
+    auth_type: Literal["otp"] = "otp"
     otp: str
 
 
 AuthInfo = Annotated[PasswordAuth | PasskeyAuth | OtpAuth, Field(discriminator="auth_type")]
 
 
-class SignupRequest(BaseModel):
-    email_token: str
-    username: str
-    name: str | None = None
-
-    auth_info: list[AuthInfo]
-
-
-@router.post("/signup/complete")
-def complete_signup(signup_info: Annotated[SignupRequest, Form()], session: NewSessionDep, db: DatabaseDep):
+@router.post("/signup/complete", responses={
+    302: {"description": "Redirect to complete signup"},
+    401: {"description": "Invalid or expired token"},
+})
+def complete_signup(
+        email_token: Annotated[str, Body()],
+        username: Annotated[str, Body()],
+        auth_info: Annotated[list[AuthInfo], Body()],
+        session: NewSessionDep,
+        db: DatabaseDep,
+        name: Annotated[str | None, Body()] = None,
+):
     # TODO:
     #  - Rate limit
-    claims = jwt.verify_token(signup_info.email_token, return_model=InitSignupClaims)
+    claims = jwt.verify_token(email_token, return_model=InitSignupClaims)
 
-    for auth_method in signup_info.auth_info:
+    for auth_method in auth_info:
         match auth_method:
             case PasswordAuth(password=password):
                 if len(password) < 12:
@@ -102,8 +104,9 @@ def complete_signup(signup_info: Annotated[SignupRequest, Form()], session: NewS
 
     try:
         user = User(
-            username=signup_info.username,
+            username=username,
             primary_email=claims.email,
+            name=name or username,
             # TODO: rest of info
         )
         db.add(user)
@@ -124,7 +127,7 @@ def complete_signup(signup_info: Annotated[SignupRequest, Form()], session: NewS
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                                 detail=f"Invalid input: {err}")
 
-    for auth_method in signup_info.auth_info:
+    for auth_method in auth_info:
         match auth_method:
             case PasswordAuth(password=password):
                 _ = create_password_identity(user.id, hash_password(password), db)
@@ -159,7 +162,7 @@ class SudoRequest(BaseModel):
 
 @router.post("/sudo")
 async def activate_sudo(session: SessionDep,
-                        login_credentials: Annotated[SudoRequest | None, Form()]):
+                        login_credentials: Annotated[SudoRequest | None, Body()]):
     # TODO: implement different sudo methods (password, otp, passkey)
 
     session.sudo_exp = datetime.now(timezone.utc) + cfg().auth.sudo_max_age

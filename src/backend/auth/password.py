@@ -2,15 +2,18 @@ import uuid
 from typing import Annotated
 
 import bcrypt
-from fastapi import Depends, APIRouter
+from fastapi import Depends, APIRouter, Form
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select, or_, update
 
-from backend.auth.utils import errors
+from backend.auth.utils import errors, jwt
 from backend.auth.utils.helpers import sudo
+from backend.auth.utils.jwt import BaseJWTClaims
 from backend.auth.utils.session import revoke_by_uid, SessionDep, NewSessionDep
+from config import cfg
 from model import DatabaseDep
 from model.identity import User, IdentityProvider, Issuer
+from utils.email import send_email
 
 router = APIRouter()
 
@@ -59,9 +62,55 @@ def password_authenticate(
         session.requires_totp = True
 
 
+class ForgotPasswordClaims(BaseJWTClaims):
+    requires_totp: bool
+    identity_provider_id: uuid.UUID
+
+
+@router.post("/forgot")
+def forgot_password_request(email: Annotated[str, Form()], db: DatabaseDep):
+    identity = db.execute(
+        select(IdentityProvider)
+        .where(IdentityProvider.issuer == Issuer.password)
+        .where(IdentityProvider.user.has(primary_email=email))
+    ).scalar_one_or_none()
+
+    if identity is None:
+        # Don't reveal whether the email exists or not
+        return
+
+    claims = ForgotPasswordClaims(
+        sub=identity.user_id,
+        identity_provider_id=identity.id,
+        requires_totp=db.scalar(
+            select(IdentityProvider)
+            .where(IdentityProvider.user_id == identity.user_id)
+            .where(IdentityProvider.issuer == Issuer.totp)
+        ) is not None,
+        exp=jwt.now() + cfg().auth.password_reset_token_expiry
+    )
+
+    token = jwt.create_token(claims)
+
+    send_email(email, "Password Reset {{token}}", token=token)
+
+
+@router.put("/reset")
+def forgot_password(reset_token: Annotated[str, Form()],
+                    reset_password: Annotated[str, Form()],
+                    db: DatabaseDep):
+    claims = jwt.verify_token(reset_token, return_model=ForgotPasswordClaims)
+
+    db.execute(
+        update(IdentityProvider)
+        .where(IdentityProvider.id == claims.identity_provider_id)
+        .values(data={"hash": hash_password(reset_password)})
+    )
+
+
 @router.put("/change", dependencies=[Depends(sudo)])
 def change_password(
-        new_password: str,
+        new_password: Annotated[str, Form()],
         db: DatabaseDep,
         session: SessionDep
 ):

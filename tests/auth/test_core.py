@@ -18,25 +18,31 @@ class TestSignup:
         email_data = {"email": f"{suffix}@example.com"}
 
         response = client.post(path(initiate_signup), data=email_data)
-        
+
         if response.status_code != 202:
             print("ERROR", response.json())
 
         assert response.status_code == status.HTTP_202_ACCEPTED
 
+        # TODO: fix:
+        #  Extract token from printed output (since send_email is mocked to print the email content)
         stdout = capsys.readouterr().out
         match = re.search(r"token=([^\n]+)", stdout)
         assert match is not None
         verify_token_value = match.group(1).strip()
-        
+
         user_data = {
-            "email_token": verify_token_value,
+            "email_token": str(verify_token_value),
             "username": f"test-{suffix}",
-            "auth_type": "password",
-            "password": "TestPassword123!",
+            "auth_info": [{
+                "auth_type": "password",
+                "password": "TestPassword123!",
+            }],
         }
 
-        verify_response = client.post(path(complete_signup), data=user_data, follow_redirects=False)
+        verify_response = client.post(path(complete_signup),
+                                      json=user_data,
+                                      follow_redirects=False)
         assert verify_response.status_code == status.HTTP_302_FOUND
 
         user = db_session.scalar(
@@ -87,14 +93,37 @@ class TestSignup:
 
         verify_response = client.post(
             path(complete_signup),
-            data={
-                "email_token": verify_token_value,
+            json={
+                "email_token": str(verify_token_value),
                 "username": "new-user-for-verify",
-                "auth_type": "password",
-                "password": "Password123!"
+                "auth_info": [{
+                    "auth_type": "password",
+                    "password": "TestPassword123!",
+                }],
             }
         )
         assert verify_response.status_code == status.HTTP_409_CONFLICT
+
+    def test_invalid_auth_info_returns_validation_error(self, client, path, capsys):
+        suffix = uuid.uuid4().hex
+        response = client.post(path(initiate_signup), data={"email": f"{suffix}@example.com"})
+        assert response.status_code == status.HTTP_202_ACCEPTED
+
+        stdout = capsys.readouterr().out
+        match = re.search(r"token=([^\n]+)", stdout)
+        assert match is not None
+        verify_token_value = match.group(1).strip()
+
+        verify_response = client.post(
+            path(complete_signup),
+            data={
+                "email_token": str(verify_token_value),
+                "username": f"test-{suffix}",
+                "auth_info": "not-json",
+            },
+        )
+
+        assert verify_response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 class TestLogout:
@@ -129,12 +158,13 @@ class TestSudo:
         response = client.post(
             path(activate_sudo),
             headers={"Authorization": f"Bearer {auth_token}"},
-            json={"password": "test"},  # TODO: Implementation needed
+            json={"auth_info": {
+                "auth_type": "password",
+                "password": "TestPassword123!",
+            }},
         )
 
         assert response.status_code == status.HTTP_200_OK
-        # Implementation returns the token in the cookie by default when Accept header is not application/json
-        # and response body is empty.
         token = response.cookies.get("user_session")
         if token is None:
             token = response.headers.get("X-Session-Token")
@@ -145,7 +175,7 @@ class TestSudo:
         claims = verify_token(token, return_model=SessionClaims)
         assert claims.sudo_exp is not None
 
-        # Verify short sudo expiration
+        # Verify a short sudo expiration
         from datetime import timezone, datetime
         sudo_delta = claims.sudo_exp - datetime.now(timezone.utc)
         assert sudo_delta < timedelta(minutes=20)  # Should be ~15 minutes
@@ -181,4 +211,4 @@ class TestRevokeToken:
             headers={"Authorization": f"Bearer {auth_token}"},
         )
 
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.status_code == status.HTTP_403_FORBIDDEN
