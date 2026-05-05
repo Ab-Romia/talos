@@ -1,14 +1,17 @@
 import uuid
-from typing import Annotated, Self
+from typing import Annotated, Self, Iterable, Callable
 
-from fastapi import Depends
-from pydantic import BaseModel
+from bidict import bidict
+from cachetools import cached, LRUCache, TTLCache
+from fastapi import Depends, Path
 from sqlalchemy import select, or_
 
 from backend.auth.utils import errors
 from backend.auth.utils.session import SessionDep
-from model import DatabaseDep
-from model.identity import Permission, Role
+from model import DatabaseDep, get_db
+from model.identity import Permission, Role, ChannelRoleOverride, PermissionScope
+
+EVERYONE_ID = uuid.UUID(int=0)
 
 PERMISSIONS = {
     "workspace": {
@@ -83,101 +86,230 @@ PERMISSIONS = {
     },
 }
 
+default_perm_cache = TTLCache(ttl=60, maxsize=1)
+perm_cache = LRUCache(maxsize=2 ** 16)
 
-# TODO: plan:::
-#  - perms dict -> binary bitmask
-#    - scopes
-#    - sub-resources
-#  - set operations (union, intersection, difference)
-#  - overrides (w/ allow/deny)
-#  - default roles (admin, moderator, everyone)
 
-class ScopeContext(BaseModel):
-    workspace_id: uuid.UUID = None
-    channel_id: uuid.UUID = None
+class PermissionRegistry:
+    _permission_registry = bidict()
+    _scope_mask_cache = dict()
+    _global_instance = None
+
+    def __init__(self, db: DatabaseDep = None):
+        self.db = db or next(get_db())
+
+    @classmethod
+    def get_instance(cls) -> Self:
+        if cls._global_instance is None:
+            cls._global_instance = cls()
+
+        return cls._global_instance
+
+    @cached(cache=_permission_registry.inverse)
+    def bit_offset(self, key: Permission) -> int | None:
+        perm_id: int = self.db.scalar(
+            select(Permission.bit_offset)
+            .where(Permission.resource == key.resource)
+            .where(Permission.action == key.action)
+            .where(Permission.scope == key.scope)
+        )
+        return perm_id
+
+    @cached(cache=_permission_registry)
+    def permission(self, key: int) -> Permission | None:
+        resource, action, scope = self.db.scalar(
+            select(Permission.resource, Permission.action, Permission.scope)
+            .where(Permission.bit_offset == key)
+        ).one_or_none()
+        return Permission(resource=resource, action=action, scope=scope)
+
+    def permission_mask(self, required_perm: Permission) -> int:
+        """Computes a bitmask for the given permission string, considering both the resource-action pair and the scope."""
+
+        scope_bits = self.scope_mask(required_perm.scope)
+        resource_action_bits = 0
+        bit_offsets = self.db.scalars(
+            select(Permission.bit_offset)
+            .where(Permission.resource == required_perm.resource)
+            .where(Permission.action == required_perm.action)
+        )
+
+        for bit_offset in bit_offsets:
+            resource_action_bits |= (1 << bit_offset)
+
+        return resource_action_bits & scope_bits
+
+    @cached(cache=_scope_mask_cache)
+    def scope_mask(self, scope: PermissionScope) -> int:
+        """Computes a bitmask for the given scope string."""
+        if scope == PermissionScope.ANY:
+            bit_offsets = self.db.scalars(select(Permission.bit_offset))
+        else:
+            bit_offsets = self.db.scalars(
+                select(Permission.bit_offset)
+                .where(Permission.scope == scope)
+            )
+
+        mask = 0
+        for offset in bit_offsets:
+            mask |= (1 << offset)
+
+        return mask
 
 
 class PermissionSet:
-    def __init__(self, permissions: set[Permission]):
-        self.permissions = self._normalize(permissions)
+    """
+    Represents a bitmask-based permission set.
+    """
+
+    def __init__(self, registry: PermissionRegistry = None):
+        self.mask = 0
+        self.registry = registry or PermissionRegistry.get_instance()
 
     @classmethod
-    def _normalize(cls, permissions: set[Permission]) -> set[Permission]:
+    def from_mask(cls, mask: int) -> Self:
+        """Creates a PermissionSet instance from a given bitmask integer."""
+        instance = cls()
+        instance.mask = mask
+        return instance
+
+    @classmethod
+    def from_permission_list(cls, perms: Iterable[Permission]) -> Self:
+        """Creates a PermissionSet instance from a list of Permission objects."""
+        instance = cls()
+        for perm in perms:
+            instance[perm] = True
+        return instance
+
+    def collapse_scope(self) -> Self:
         """
-        Remove redundant permissions from the set, keeping only the most general ones.
-        E.g. "messages:edit:*" covers "messages:edit:own", so the latter can be removed.
+        Sets the ANY scope bit for a resource-action pair iff the user has that permission in any scope.
+        Clears other bits.
+
+        NOTE: Assumes this bit order follows the order of PermissionScope
         """
-        # TODO: priority, denies, overrides
+        new_set = PermissionSet()
+        for i, scope in enumerate(reversed(PermissionScope)):
+            scope_mask = self.registry.scope_mask(scope)
+            new_set.mask |= (self.mask & scope_mask) >> i
 
-        # Asserts that permissions are sorted (most general first)
-        # Most likely sorted from the database query
-        sorted_permissions = sorted(
-            permissions,
-            key=lambda p: (-p.scope.value, p.priority, p.is_deny, p.id)
-        )
+        return new_set
 
-        normalized: set[Permission] = set()
-        for permission in sorted_permissions:
-            if any(existing.covers(permission) for existing in normalized):
-                continue
+    def __setitem__(self, key: Permission, value: bool):
+        bit_pos = self.registry.bit_offset(key)
+        if bit_pos is None:
+            raise ValueError(f"Permission {key} cannot be represented")
 
-            normalized = {
-                existing
-                for existing in normalized
-                if not permission.covers(existing)
-            }
-            normalized.add(permission)
+        if value:
+            self.mask |= (1 << bit_pos)
+        else:
+            self.mask &= ~(1 << bit_pos)
 
-        return normalized
+    def __contains__(self, item: Permission) -> bool:
+        bit_pos = self.registry.bit_offset(item)
+        if bit_pos is None:
+            return False
 
-    def __contains__(self, item: Permission):
-        return any(permission.covers(item) for permission in self.permissions)
+        return bool(self.mask & (1 << bit_pos))
 
-    def __le__(self, other: Self):
-        return all(permission in other for permission in self.permissions)
+    def __or__(self, other: PermissionSet):
+        return self.from_mask(self.mask | other.mask)
 
-    def __or__(self, other: Self) -> Self:
-        return PermissionSet(self.permissions | other.permissions)
+    def __and__(self, other: PermissionSet):
+        return self.from_mask(self.mask & other.mask)
 
-    def __sub__(self, other: Self) -> Self:
-        return PermissionSet({
-            permission
-            for permission in self.permissions
-            if permission not in other
-        })
+    def __sub__(self, other: PermissionSet):
+        return self.from_mask(self.mask & ~other.mask)
 
     def __iter__(self):
-        return iter(self.permissions)
+        mask = self.mask
+        bit_pos = 0
+
+        while mask:
+            if mask & 1:
+                perm = self.registry.permission(bit_pos)
+                if perm:
+                    yield perm
+            mask >>= 1
+            bit_pos += 1
 
     def __len__(self) -> int:
-        return len(self.permissions)
+        return bin(self.mask).count("1")
 
 
-def context_getter(workspace_id: uuid.UUID, channel_id: uuid.UUID) -> ScopeContext:
-    return ScopeContext(workspace_id=workspace_id,
-                        channel_id=channel_id)
+registry = PermissionRegistry()
+
+
+def default_base_permissions(db: DatabaseDep) -> PermissionSet:
+    @cached(default_perm_cache)
+    def helper():
+        allow = db.scalar(
+            select(Role.allow_mask)
+            .where(Role.id == EVERYONE_ID)
+        )
+        assert allow is not None
+
+        return PermissionSet.from_mask(allow)
+
+    return helper()
+
+
+def base_permissions(workspace_id: uuid.UUID, db: DatabaseDep) -> PermissionSet:
+    @cached(perm_cache)
+    def helper(wsid):
+        default = default_base_permissions(db)
+        if wsid is None:
+            return default
+
+        allow = db.scalar(
+            select(Role.allow_mask)
+            .where(Role.workspace_id == wsid)
+            .where(Role.id == wsid)
+        )
+
+        if allow is None:
+            return default
+
+        return PermissionSet.from_mask(allow)
+
+    return helper(workspace_id)
 
 
 def user_perms(
-        scope_context: Annotated[ScopeContext, Depends(context_getter)],
+        workspace_id: Annotated[uuid.UUID | None, Path(default=None)],
+        channel_id: Annotated[uuid.UUID | None, Path(default=None)],
         session: SessionDep,
-        db: DatabaseDep) -> PermissionSet:
-    # TODO: caching, optimize query, prefetch permissions with roles
-    user_permissions = db.scalars(
-        select(Permission)
-        .join(Role, Role.permissions)
-        .where(Role.users.any(id=session.sub))
-        .where(
-            or_(Role.workspace_id == scope_context.workspace_id, Role.workspace_id.is_(None)),
-            or_(Role.channel_id == scope_context.channel_id, Role.channel_id.is_(None))
-        )
-        .order_by(Permission.scope.desc(), Role.priority, Permission.is_deny, Permission.id)
-    )
+        db: DatabaseDep):
+    @cached(perm_cache)
+    def helper(wid, cid, uid):
+        permissions = base_permissions(wid, db)
+        deny_overrides = PermissionSet()
+        allow_overrides = PermissionSet()
 
-    return PermissionSet(set(user_permissions))
+        roles_and_overrides = db.scalars(
+            select(Role, ChannelRoleOverride)
+            .join(ChannelRoleOverride, Role.id == ChannelRoleOverride.role_id, isouter=True)
+            .where(Role.users.any(id=uid))
+            .where(Role.workspace_id == cid)
+            .where(or_(ChannelRoleOverride.channel_id.is_(None), ChannelRoleOverride.channel_id == channel_id))
+        ).all()
+
+        for r, o in roles_and_overrides:
+            permissions |= r.allow_mask
+            if o is not None:
+                deny_overrides |= o.deny_mask
+                allow_overrides |= o.allow_mask
+
+        permissions -= deny_overrides
+        permissions |= allow_overrides
+
+        return permissions
+
+    return helper(workspace_id, channel_id, session.sub)
 
 
-def require_perms(*required_permissions: str):
+def require_perms(*required_permissions: str,
+                  is_owner: Callable[..., bool] = lambda: False):
     """
     Processes permission requirements for a specific context to validate that the user has the
     necessary permissions. This function defines a permission validation system by combining
@@ -185,17 +317,26 @@ def require_perms(*required_permissions: str):
     the user satisfies permission prerequisites based on the given scope context.
 
     :param required_permissions: A variable list of permission strings that are required.
+    :param is_owner: A function that checks if the user is the owner of the resource in question,
+                     which can be used to grant permissions based on ownership.
 
     :return: A function that validates user permissions by asserting that the required
         permissions are present within the user’s permissions based on the context.
     """
 
-    required_perms = PermissionSet({Permission.from_str(p) for p in required_permissions})
+    required_perms = PermissionSet.from_permission_list((Permission.from_str(p) for p in required_permissions))
 
     # TODO: implement caching for user permissions
+    # TODO: special case for `permission:edit`: user must have the permission to grant/revoke it
 
-    def assert_perms(user_permissions: Annotated[PermissionSet, Depends(user_perms)]):
+    def assert_perms(user_permissions: Annotated[PermissionSet, Depends(user_perms)],
+                     is_owner: Annotated[bool, Depends(is_owner)]):
+        if not is_owner:
+            # Clear OWN scope permissions if the user is not the owner
+            user_permissions -= PermissionSet.from_mask(registry.scope_mask(PermissionScope.OWN))
+
+        user_permissions = user_permissions.collapse_scope()
         if not required_perms <= user_permissions:
-            raise errors.Forbidden(missing_perms=required_perms - user_permissions)
+            raise errors.Forbidden(required_perms - user_permissions)
 
     return assert_perms

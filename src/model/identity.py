@@ -4,58 +4,14 @@ from datetime import datetime
 from enum import Enum as PyEnum, auto
 from typing import Any, Self
 
-from pydantic import BaseModel, Field
-from sqlalchemy import DateTime, Table, Column, ForeignKey, Enum, Uuid, func, CheckConstraint, text
-from sqlalchemy.dialects.postgresql import CITEXT
+import sqlalchemy as sql
+from sqlalchemy import UniqueConstraint
+from sqlalchemy.dialects.postgresql import CITEXT, BIT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from config import cfg
 from model import Base
-
-users_platform_roles = Table(
-    "users_platform_roles", Base.metadata,
-    Column("user_id", ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
-    Column("platform_role_id", ForeignKey("platform_roles.id", ondelete="CASCADE"), primary_key=True),
-)
-
-
-class User(Base):
-    __tablename__ = "users"
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    username: Mapped[str] = mapped_column(CITEXT(32), unique=True, index=True)
-    primary_email: Mapped[str] = mapped_column(CITEXT(), unique=True, index=True)
-    # TODO remove email_verified: users are only added to the database after verification
-    signup_complete: Mapped[bool] = mapped_column(default=False, index=True)
-    name: Mapped[str | None] = mapped_column()
-
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
-    deleted_at: Mapped[datetime | None] = mapped_column()
-
-    data: Mapped[dict[str, Any]] = mapped_column(default={})
-    roles: Mapped[list["Role"]] = relationship("Role",
-                                               secondary="users_platform_roles",
-                                               back_populates="users")
-
-    __table_args__ = (
-        # Ensure that the emails and usernames are partitioned
-        # Emails must contain an @, and usernames cannot contain @
-        # no string can be both
-        CheckConstraint(
-            func.regexp_like(username, r"^[a-zA-Z][a-zA-Z0-9-]{3,}$"),
-            name="username_format"
-        ),
-        CheckConstraint(
-            text("primary_email LIKE '%@%'"),
-            name="email_format"
-        )
-    )
-
-
-class OTP(Base):
-    __tablename__ = "otp"
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    verified_at: Mapped[datetime | None] = mapped_column(DateTime(), default=None)
-    code: Mapped[str] = mapped_column()
+from model.messaging import Workspace, Channel
 
 
 class Issuer(PyEnum):
@@ -65,57 +21,30 @@ class Issuer(PyEnum):
     passkey = "/api/auth/passkey"
 
 
-class TokenType(PyEnum):
-    bearer = "Bearer"
+users_roles = sql.Table(
+    "users_roles", Base.metadata,
+    sql.Column("user_id", sql.ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    sql.Column("role_id", sql.ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
+)
 
+role_permissions = sql.Table(
+    "role_permissions", Base.metadata,
+    sql.Column("role_id", sql.ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
+    sql.Column("permission_id", sql.ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True),
+)
 
-class IdentityProvider(Base):
-    __tablename__ = "identity_providers"
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    issuer: Mapped[Issuer] = mapped_column(Enum(Issuer), index=True)
-    data: Mapped[dict[str, Any]] = mapped_column(default={})
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(), default=None)
-
-
-platform_roles_permissions = Table(
-    "platform_role_permissions", Base.metadata,
-    Column("platform_role_id", ForeignKey("platform_roles.id", ondelete="CASCADE"), primary_key=True),
-    Column("permission_id", ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True),
+override_permissions = sql.Table(
+    "override_permissions", Base.metadata,
+    sql.Column("role_id", sql.ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
+    sql.Column("channel_id", sql.ForeignKey("channels.id", ondelete="CASCADE"), primary_key=True),
+    sql.Column("permission_id", sql.ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True),
+    sql.ForeignKeyConstraint(("role_id", "channel_id"),
+                             ("role_overrides.role_id", "role_overrides.channel_id"))
 )
 
 
-class Session(Base):
-    __tablename__ = "sessions"
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
-    last_used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
-    user_agent: Mapped[str | None] = mapped_column()
-
-
-class Role(Base):
-    __tablename__ = "platform_roles"
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    name: Mapped[str] = mapped_column(unique=True, index=True)
-    description: Mapped[str | None] = mapped_column()
-    permissions: Mapped[list["Permission"]] = relationship(secondary="platform_role_permissions")
-    workspace_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True,
-                                                           default=None)
-    priority: Mapped[int] = mapped_column(index=True, default=0)
-    channel_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("channels.id", ondelete="CASCADE"), index=True,
-                                                         default=None)
-
-    users: Mapped[list["User"]] = relationship(
-        "User",
-        secondary="users_platform_roles",
-        back_populates="roles"
-    )
-
-
 @functools.total_ordering
-class PermissionScope(PyEnum, int):
+class PermissionScope(PyEnum):
     OWN = auto()
     CHANNEL = auto()
     WORKSPACE = auto()
@@ -134,19 +63,83 @@ class PermissionScope(PyEnum, int):
         return cls[raw_scope.upper()]
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, primary_key=True, default=uuid.uuid4)
+    username: Mapped[str] = mapped_column(CITEXT(32), unique=True, index=True)
+    primary_email: Mapped[str] = mapped_column(CITEXT(), unique=True, index=True)
+    # TODO remove email_verified: users are only added to the database after verification
+    signup_complete: Mapped[bool] = mapped_column(default=False, index=True)
+    name: Mapped[str | None] = mapped_column()
+
+    created_at: Mapped[datetime] = mapped_column(sql.DateTime(timezone=True), default=sql.func.now())
+    deleted_at: Mapped[datetime | None] = mapped_column()
+
+    data: Mapped[dict[str, Any]] = mapped_column(default={})
+    roles: Mapped[list["Role"]] = relationship(secondary=users_roles, back_populates=__tablename__)
+
+    __table_args__ = (
+        # Ensure that the emails and usernames are partitioned
+        # Emails must contain an @, and usernames cannot contain @
+        # no string can be both
+        sql.CheckConstraint(
+            sql.func.regexp_like(username, r"^[a-zA-Z][a-zA-Z0-9-]{3,}$"),
+            name="username_format"
+        ),
+        sql.CheckConstraint(
+            sql.text("primary_email LIKE '%@%'"),
+            name="email_format"
+        )
+    )
+
+
+class OTP(Base):
+    __tablename__ = "otp"
+    user_id: Mapped[uuid.UUID] = mapped_column(sql.ForeignKey(User.id, ondelete="CASCADE"), primary_key=True)
+    verified_at: Mapped[datetime | None] = mapped_column(sql.DateTime(), default=None)
+    code: Mapped[str] = mapped_column()
+
+
+class IdentityProvider(Base):
+    __tablename__ = "identity_providers"
+    id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(sql.ForeignKey(User.id, ondelete="CASCADE"), index=True)
+    issuer: Mapped[Issuer] = mapped_column(sql.Enum(Issuer), index=True)
+    data: Mapped[dict[str, Any]] = mapped_column(default={})
+    created_at: Mapped[datetime] = mapped_column(sql.DateTime(timezone=True), default=sql.func.now())
+    deleted_at: Mapped[datetime | None] = mapped_column(sql.DateTime(), default=None)
+
+    user = relationship("User", backref="identity_providers")
+
+
+class Session(Base):
+    __tablename__ = "sessions"
+    id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(sql.ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(sql.DateTime(timezone=True), default=sql.func.now())
+    last_used_at: Mapped[datetime] = mapped_column(sql.DateTime(timezone=True), default=sql.func.now())
+    user_agent: Mapped[str | None] = mapped_column()
+
+
 class Permission(Base):
     __tablename__ = "permissions"
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, primary_key=True, default=uuid.uuid4)
     resource: Mapped[str] = mapped_column(index=True)
     action: Mapped[str] = mapped_column(index=True)
-    scope: Mapped[PermissionScope] = mapped_column(Enum(PermissionScope), index=True)
+    scope: Mapped[PermissionScope] = mapped_column(sql.Enum(PermissionScope), index=True)
     is_deny: Mapped[bool] = mapped_column(default=False)
     description: Mapped[str | None] = mapped_column()
+    bit_offset: Mapped[int] = mapped_column(default=0, name="bit_offset_0")
 
-    def covers(self, other: Permission) -> bool:
-        if (self.resource != other.resource
+    def covers(self, other: Permission, check_deny=True) -> bool:
+        if (
+                self.resource != other.resource
                 or self.action != other.action
-                or self.scope < other.scope):
+                or self.scope < other.scope
+                or (check_deny and self.is_deny and not other.is_deny)
+
+        ):
             return False
 
         return True
@@ -163,10 +156,8 @@ class Permission(Base):
         :param perm_str: A string representation of the permission in the
             format `resource[.subresource]:action[:scope]`. The resource and action are required,
             and the scope, if provided, represents the level of access.
-        :type perm_str: str
         :raises ValueError: If the resource or action part of the string is empty.
-        :return: An instance of the class created based on the parsed permission string.
-        :rtype: Self
+        :return: An instance of `Permission` from the parsed string.
         """
         resource, action, raw_scope = [*perm_str.split(":") + [None] * 3][:3]
 
@@ -183,8 +174,43 @@ class Permission(Base):
         return f"{self.resource}:{self.action}:{self.scope.value if self.scope else '*'}"
 
 
-class OAuth2Token(BaseModel):
-    token_type: TokenType
-    access_token: str = Field(..., max_length=512)
-    refresh_token: str = Field(..., max_length=512)
-    expires_at: datetime
+class Role(Base):
+    __tablename__ = "roles"
+    id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(unique=True, index=True)
+    description: Mapped[str | None] = mapped_column()
+
+    # `workspace_id` == None: a global role, applies to the entire app
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(sql.ForeignKey(Workspace.id, ondelete="CASCADE"), index=True,
+                                                           default=None)
+
+    priority: Mapped[int] = mapped_column(index=True, default=0)
+
+    # PERF: Precomputed bitmasks, recomputed on permission or role changes
+    allow_mask: Mapped[int] = mapped_column(BIT(cfg().auth.permission_bitstring_length),
+                                            name=f"allow_mask_{cfg().auth.permission_bitstring_version}",
+                                            default=0)
+
+    users = relationship("User", secondary=users_roles, back_populates="roles")
+    permissions = relationship("Permission", secondary=role_permissions, backref="roles")
+
+    __table_args__ = (
+        UniqueConstraint(workspace_id, name),
+    )
+
+
+class ChannelRoleOverride(Base):
+    __tablename__ = "role_overrides"
+
+    role_id: Mapped[uuid.UUID] = mapped_column(sql.ForeignKey(Role.id, ondelete="CASCADE"), primary_key=True)
+    channel_id: Mapped[uuid.UUID] = mapped_column(sql.ForeignKey(Channel.id, ondelete="CASCADE"), primary_key=True)
+
+    permissions = relationship("Permission", secondary=override_permissions)
+
+    # PERF: Precomputed bitmasks, recomputed on permission or role changes
+    allow_mask: Mapped[int] = mapped_column(BIT(cfg().auth.permission_bitstring_length),
+                                            name=f"allow_mask_{cfg().auth.permission_bitstring_version}",
+                                            default=0)
+    deny_mask: Mapped[int] = mapped_column(BIT(cfg().auth.permission_bitstring_length),
+                                           name=f"deny_mask_{cfg().auth.permission_bitstring_version}",
+                                           default=0)

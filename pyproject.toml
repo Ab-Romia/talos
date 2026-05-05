@@ -25,6 +25,8 @@ dependencies = [
     "joserfc>=1.6.3",
     "black>=26.3.1",
     "limits>=5.8.0",
+    "cachetools>=7.1.0",
+    "bidict>=0.23.1",
 ]
 
 [dependency-groups]
