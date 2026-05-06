@@ -1,14 +1,9 @@
 from sqlalchemy.orm import Session
-from typing import List
 
-from modules.model.notifications import (
-    UserNotificationPreference,
-    NotificationsChannel
-)
+from notifications.model import UserNotificationPreference
 
 
 class PreferencesService:
-
 
     @staticmethod
     def get_preferences(db: Session, user_id):
@@ -21,9 +16,9 @@ class PreferencesService:
 
     @staticmethod
     def update_preferences(
-        db: Session,
-        user_id,
-        preferences
+            db: Session,
+            user_id,
+            preferences
     ):
 
         existing = db.query(UserNotificationPreference).filter(

@@ -1,5 +1,6 @@
-import pika
 import json
+
+import pika
 
 RABBITMQ_HOST = "localhost"
 QUEUE_NAME = "notifications"

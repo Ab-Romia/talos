@@ -1,26 +1,16 @@
 import json
+
 import pika
 from sqlalchemy.orm import Session
 
-from modules.queue.rabbitmq import QUEUE_NAME
-from modules.model.base import SessionLocal
-
-from modules.websocket.manager import manager
-import asyncio
-
-from modules.model.notifications import (
-    Notification,
-    NotificationDelivery,
-    NotificationsChannel
-)
-
+from model import SessionLocal
 
 RABBITMQ_HOST = "localhost"
+
 
 # TODO: REPLACE DICT WITH OTHER OBJECT, no broad exceptions(be specific)
 
 def process_notification(payload: dict):
-
     db: Session = SessionLocal()
 
     try:
@@ -36,7 +26,6 @@ def process_notification(payload: dict):
             return
 
         for channel_name in channels:
-
             delivery = NotificationDelivery(
                 notification_id=notification.id,
                 channel=NotificationsChannel(channel_name),
@@ -51,7 +40,6 @@ def process_notification(payload: dict):
             )
             notify_user(notification)
 
-
         db.commit()
 
     except Exception as e:
@@ -60,6 +48,7 @@ def process_notification(payload: dict):
 
     finally:
         db.close()
+
 
 def notify_user(notification):
     asyncio.run(
@@ -74,8 +63,8 @@ def notify_user(notification):
         )
     )
 
-def callback(ch, method, properties, body):
 
+def callback(ch, method, properties, body):
     payload = json.loads(body)
 
     process_notification(payload)
@@ -84,7 +73,6 @@ def callback(ch, method, properties, body):
 
 
 def start_worker():
-
     connection = pika.BlockingConnection(
         pika.ConnectionParameters(host=RABBITMQ_HOST)
     )
@@ -95,7 +83,6 @@ def start_worker():
         queue=QUEUE_NAME,
         durable=True
     )
-
 
     channel.basic_qos(prefetch_count=1)
 
@@ -108,7 +95,8 @@ def start_worker():
 
     channel.start_consuming()
 
-#TODO: CREATE WORKER AS BACKGROUND TASK IN FASTAPI
+
+# TODO: CREATE WORKER AS BACKGROUND TASK IN FASTAPI
 
 if __name__ == "__main__":
     start_worker()

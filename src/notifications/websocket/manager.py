@@ -1,11 +1,11 @@
-from fastapi import WebSocket
 from typing import Dict, List
-import uuid
+
+from fastapi import WebSocket
 
 
 class ConnectionManager:
     def __init__(self):
-        #user_id → list of connections
+        # user_id → list of connections
         self.active_connections: Dict[str, List[WebSocket]] = {}
 
     async def connect(self, user_id: str, websocket: WebSocket):

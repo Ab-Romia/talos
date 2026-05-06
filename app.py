@@ -1,26 +1,24 @@
 from contextlib import asynccontextmanager
 
-from backend.auth.utils.session import SessionMiddleware
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from files.router import router as files_router
-from files.storage import MinIOStorage
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-from starlette.middleware.sessions import SessionMiddleware
 
 from backend.auth import auth_router
+from backend.auth.utils.session import SessionMiddleware
 from backend.chat import chat_router
 from config import cfg
+from files.router import router as files_router
+from files.storage import MinIOStorage
 from integrations.drive import drive_router
 from model import Base, engine
-from modules.app.preferences import router as preferences_router
-from modules.app.websocket import router as websocket_router
+from notifications.app.preferences import router as preferences_router
+from notifications.app.websocket import router as websocket_router
 
 templates = Jinja2Templates(directory="frontend/templates")
-
 
 
 def _get_minio_storage() -> MinIOStorage:
@@ -67,8 +65,9 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title='Temp', lifespan=lifespan)
-app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.add_middleware(SessionMiddleware)
+
+app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(auth_router, prefix="/api/auth")
 app.include_router(chat_router, prefix="/api")
 app.include_router(files_router, prefix="/api")
@@ -80,7 +79,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(SessionMiddleware)
 
 app.include_router(auth_router)
 app.include_router(websocket_router)
