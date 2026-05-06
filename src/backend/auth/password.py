@@ -6,13 +6,13 @@ from fastapi import Depends, APIRouter, Form
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select, or_, update
 
+from backend.auth.model import User, IdentityProvider, Issuer
 from backend.auth.utils import errors, jwt
 from backend.auth.utils.helpers import sudo
 from backend.auth.utils.jwt import BaseJWTClaims
 from backend.auth.utils.session import revoke_by_uid, SessionDep, NewSessionDep
 from config import cfg
 from model import DatabaseDep
-from model.identity import User, IdentityProvider, Issuer
 from utils.email import send_email
 
 router = APIRouter()

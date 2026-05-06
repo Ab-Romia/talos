@@ -4,8 +4,8 @@ import pytest
 from fastapi import status
 from sqlalchemy import select
 
+from backend.auth.model import IdentityProvider, Issuer, User
 from backend.auth.oauth import OIDC, oauth_callback, oauth_login
-from model.identity import IdentityProvider, Issuer, User
 
 
 class TestOIDC:

@@ -29,7 +29,6 @@ class AuthConfig(BaseModel):
 
     session_cookie_key: str = "user_session"
 
-    permission_bitstring_version: int = 0
     permission_bitstring_length: int = 64
 
     model_config = SettingsConfigDict(

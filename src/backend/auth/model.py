@@ -32,7 +32,7 @@ class User(Base):
     deleted_at: Mapped[datetime | None] = mapped_column()
 
     data: Mapped[dict[str, Any]] = mapped_column(default={})
-    roles: Mapped[list["Role"]] = relationship(secondary=users_roles, back_populates=__tablename__)
+    roles: Mapped[list[Role]] = relationship(secondary=users_roles, back_populates=__tablename__)
 
     __table_args__ = (
         # Ensure that the emails and usernames are partitioned

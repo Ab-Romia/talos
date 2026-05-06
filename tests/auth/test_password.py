@@ -1,8 +1,9 @@
 from fastapi import status
 from sqlalchemy import select
 
+from backend.auth.model import IdentityProvider, Issuer
 from backend.auth.password import hash_password, verify_password, password_authenticate, change_password
-from model.identity import IdentityProvider, Issuer, Session as UserSession
+from backend.auth.utils.session import Session as UserSession
 
 
 class TestPasswordHashing:

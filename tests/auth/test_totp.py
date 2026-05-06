@@ -1,14 +1,14 @@
 from datetime import timedelta
 
+from fastapi import status
 from jinja2.utils import url_quote
 from sqlalchemy import select
-from fastapi import status
 
+from backend.auth.model import IdentityProvider, Issuer
 from backend.auth.totp import create_totp_helper, TotpSetupClaims, delete_totp, register_totp, verify_totp, \
     generate_totp
 from backend.auth.utils.jwt import create_token, verify_token
 from backend.auth.utils.session import SessionClaims
-from model.identity import IdentityProvider, Issuer
 
 
 class TestTOTP:

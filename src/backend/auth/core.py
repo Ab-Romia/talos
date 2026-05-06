@@ -7,18 +7,17 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status, Form, HTTPException, Body
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 
 from config import cfg
 from model import DatabaseDep
-from model.identity import User, Session
 from utils.email import send_email
 from utils.ratelimit import email_ratelimit
+from .model import User
 from .password import create_password_identity, hash_password
 from .utils import jwt
+from .utils import session as s
 from .utils.helpers import sudo, UserDep
-from .utils.session import revoke, get_by_uid, revoke_by_uid, NewSessionDep, SessionDep
 
 router = APIRouter()
 
@@ -83,7 +82,7 @@ def complete_signup(
         email_token: Annotated[str, Body()],
         username: Annotated[str, Body()],
         auth_info: Annotated[list[AuthInfo], Body()],
-        session: NewSessionDep,
+        session: s.NewSessionDep,
         db: DatabaseDep,
         name: Annotated[str | None, Body()] = None,
 ):
@@ -144,12 +143,8 @@ def complete_signup(
 
 
 @router.post("/logout")
-async def logout(db: DatabaseDep, session: SessionDep):
-    db.execute(
-        delete(Session)
-        .where(Session.id == session.jti)
-    )
-    db.commit()
+async def logout(db: DatabaseDep, session: s.SessionDep):
+    s.revoke(session.jti, db)
 
     session.clear()
 
@@ -161,7 +156,7 @@ class SudoRequest(BaseModel):
 
 
 @router.post("/sudo")
-async def activate_sudo(session: SessionDep,
+async def activate_sudo(session: s.SessionDep,
                         login_credentials: Annotated[SudoRequest | None, Body()]):
     # TODO: implement different sudo methods (password, otp, passkey)
 
@@ -170,17 +165,17 @@ async def activate_sudo(session: SessionDep,
 
 @router.get("/sessions", dependencies=[Depends(sudo)])
 async def get_session(user: UserDep, db: DatabaseDep):
-    get_by_uid(user.id, db)
+    s.get_by_uid(user.id, db)
 
 
 @router.delete("/sessions", dependencies=[Depends(sudo)])
 async def revoke_current_token(user: UserDep, db: DatabaseDep):
-    revoke_by_uid(user.id, db, except_id=None)
+    s.revoke_by_uid(user.id, db, except_id=None)
 
 
 @router.get("/sessions/{session_id}", dependencies=[Depends(sudo)])
 async def get_session_by_id(session_id: UUID, user: UserDep, db: DatabaseDep):
-    sessions = get_by_uid(user.id, db)
+    sessions = s.get_by_uid(user.id, db)
 
     for session in sessions:
         if session.id == session_id:
@@ -192,4 +187,4 @@ async def get_session_by_id(session_id: UUID, user: UserDep, db: DatabaseDep):
 
 @router.delete("/session/{session_id}", dependencies=[Depends(sudo)])
 async def revoke_token(session_id: UUID, db: DatabaseDep):
-    revoke(session_id, db)
+    s.revoke(session_id, db)

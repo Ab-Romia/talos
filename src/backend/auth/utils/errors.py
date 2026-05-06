@@ -1,8 +1,6 @@
 from fastapi import HTTPException
 from starlette import status
 
-from backend.auth.perms import PermissionSet
-
 
 class AuthException(HTTPException):
     status_code = status.HTTP_401_UNAUTHORIZED
@@ -50,6 +48,7 @@ class ExpiredToken(AuthException):
 
 
 class Forbidden(AuthException):
+    from backend.auth.permissions.model import PermissionSet
     status_code = status.HTTP_403_FORBIDDEN
     detail = "Forbidden"
 

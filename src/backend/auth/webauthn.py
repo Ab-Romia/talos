@@ -15,7 +15,7 @@ from backend.auth.utils.jwt import create_token, verify_token, BaseJWTClaims
 from backend.auth.utils.session import NewSessionDep
 from config import cfg
 from model import DatabaseDep
-from model.identity import Issuer, IdentityProvider
+from .model import Issuer, IdentityProvider
 
 router = APIRouter()
 

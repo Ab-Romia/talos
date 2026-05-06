@@ -8,10 +8,10 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
 
+from backend.auth.model import User
 from backend.auth.utils import errors
-from backend.auth.utils.session import SessionDep, auth_token, unverified_session, UnverifiedSessionDep
+from backend.auth.utils.session import SessionDep, auth_token, unverified_session, UnverifiedSessionDep, Session
 from model import DatabaseDep
-from model.identity import User, Session
 
 
 # TODO:
