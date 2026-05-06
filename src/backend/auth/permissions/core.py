@@ -8,6 +8,7 @@ from sqlalchemy import select, or_
 from backend.auth.utils import errors
 from backend.auth.utils.session import SessionDep
 from model import DatabaseDep
+from model.messaging import Workspace
 from .model import PermissionRegistry, PermissionSet, default_perm_cache, EVERYONE_ID, \
     perm_cache, Role, ChannelRoleOverride, Permission, PermissionScope
 
@@ -56,6 +57,11 @@ def user_perms(
         db: DatabaseDep):
     @cached(perm_cache)
     def helper(wid, cid, uid):
+        # Validate that the user is a member of the workspace (if workspace_id is provided)
+        wid = db.scalar(select(Workspace.id)
+                        .where(Workspace.id == wid)
+                        .where(Workspace.members.any(id=uid))
+                        )
         permissions = base_permissions(wid, db)
         deny_overrides = PermissionSet()
         allow_overrides = PermissionSet()
@@ -64,7 +70,7 @@ def user_perms(
             select(Role, ChannelRoleOverride)
             .join(ChannelRoleOverride, Role.id == ChannelRoleOverride.role_id, isouter=True)
             .where(Role.users.any(id=uid))
-            .where(Role.workspace_id == cid)
+            .where(Role.workspace_id == wid)
             .where(or_(ChannelRoleOverride.channel_id.is_(None), ChannelRoleOverride.channel_id == channel_id))
         ).all()
 

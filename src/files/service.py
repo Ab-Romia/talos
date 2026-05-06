@@ -1,5 +1,7 @@
 """Business logic for file operations."""
 
+import hashlib
+import io
 import os
 import uuid
 from datetime import datetime
@@ -10,22 +12,21 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from config import cfg
-from files.exceptions import FileTooLarge, UnsupportedFileType
-from files.models import FileAttachment, ProcessingStatus, message_files
+from files.exceptions import FileTooLarge, StorageError
+from files.model import FileAttachment, ProcessingStatus, message_files
 from files.storage import MinIOStorage
 from files.streaming import HashingReader
 from model.messaging import Message
 from utils.datetime import utcnow
 from utils.logger import get_logger
 
+logger = get_logger(__name__)
+
 MAX_FILE_SIZE = cfg().files.max_size
 ALLOWED_MIME_TYPES = cfg().files.allowed_mime_types
 DOCUMENT_MIME_TYPES = cfg().files.document_mime_types
 IMAGE_MIME_TYPES = cfg().files.image_mime_types
 THUMBNAIL_SIZE = cfg().files.thumbnail_size
-STORAGE_KEY_TEMPLATE = cfg().files.storage_key_template
-
-logger = get_logger(__name__)
 
 
 class FileService:
@@ -33,36 +34,71 @@ class FileService:
         self.db = db
         self.storage = storage
 
-    async def upload(
-            self,
-            file: UploadFile,
-            workspace_id: uuid.UUID,
-            uploader_id: uuid.UUID,
-            channel_id: uuid.UUID | None = None,
-    ) -> FileAttachment:
-        """Validate, upload to MinIO, persist metadata, return FileAttachment."""
-        # 1. MIME detection via magic bytes
-        header = await file.read(2048)
-        await file.seek(0)
-        detected_mime = magic.from_buffer(header, mime=True)
+    async def upload(self,
+                     file: UploadFile,
+                     uploader_id: uuid.UUID,
+                     workspace_id: uuid.UUID | None = None,
+                     channel_id: uuid.UUID | None = None
+                     ) -> FileAttachment:
+        """
+            Upload a file and persist metadata.
+            Channel-scoped if channel_id is provided (ignores workspace_id).
+            Otherwise, workspace-scoped and channel_id is ignored (but workspace_id is required).
+        """
+        if workspace_id is None and channel_id is None:
+            raise ValueError("Either workspace_id or channel_id must be provided")
+
+        detected_mime = await self._validate_mime_type(file)
+
+        if detected_mime is None:
+            raise ValueError("Unsupported MIME type")
+
+        db_file = FileAttachment(
+            channel_id=channel_id,
+            uploader_id=uploader_id,
+            original_filename=file.filename or "unnamed",
+            content_type=detected_mime,
+            size_bytes=0,
+            checksum="",
+            processing_status=ProcessingStatus.UPLOADED,
+        )
+        self.db.add(db_file)
+        self.db.flush()
+
+        try:
+            file_size, checksum = await self._upload(file, db_file.id.hex, detected_mime)
+        except FileTooLarge, StorageError:
+            self.db.rollback()
+            raise
+
+        db_file.size_bytes = file_size
+        db_file.checksum = checksum
+
+        self.db.commit()
+
+        logger.info("File uploaded",
+                    file_id=str(db_file.id),
+                    filename=db_file.original_filename,
+                    content_type=db_file.content_type,
+                    size_bytes=db_file.size_bytes)
+        return db_file
+
+    @staticmethod
+    async def _validate_mime_type(file: UploadFile) -> str | None:
+        """
+        Detect MIME type from the file header and validate against allowed types.
+        """
+        detected_mime = magic.from_descriptor(file.file.fileno(), mime=True)
 
         if detected_mime not in ALLOWED_MIME_TYPES:
-            raise UnsupportedFileType(detected_mime)
+            return None
 
-        # 1b. Validate channel belongs to workspace
-        if channel_id is not None:
-            from model.messaging import Channel
-            channel = self.db.scalar(
-                select(Channel).where(
-                    Channel.id == channel_id,
-                    Channel.workspace_id == workspace_id,
-                    Channel.deleted_at.is_(None),
-                )
-            )
-            if channel is None:
-                raise ValueError(f"Channel {channel_id} not found in workspace {workspace_id}")
+        return detected_mime
 
-        # 2. Size from the spooled body. Starlette has fully received the
+    async def _upload(self, file: UploadFile, key: str, mime: str) -> tuple[int, str]:
+        """Upload file bytes to object storage under a precomputed key."""
+        # TODO: Verify this:
+        # Size from the spooled body. Starlette has fully received the
         # multipart body into UploadFile.file before this handler runs,
         # so seek/tell is authoritative.
         underlying = file.file
@@ -72,67 +108,22 @@ class FileService:
         if file_size > MAX_FILE_SIZE:
             raise FileTooLarge(file_size, MAX_FILE_SIZE)
 
-        # 3. Generate storage key
-        file_id = uuid.uuid4()
-        ext = os.path.splitext(file.filename or "")[1].lower()
-        channel_part = str(channel_id) if channel_id else "general"
-        storage_key = STORAGE_KEY_TEMPLATE.format(
-            workspace_id=workspace_id,
-            channel_id=channel_part,
-            file_id=file_id,
-            ext=ext,
-        )
-
-        # 4. Stream to MinIO. minio-py reads part_size chunks at a time and
-        # the wrapper hashes each chunk inline, so peak RAM is bounded by
-        # part_size and we avoid a second pass over the body for SHA-256.
         reader = HashingReader(underlying)
         await self.storage.upload_file(
-            storage_key=storage_key,
+            storage_key=key,
             data=reader,
             size=file_size,
-            content_type=detected_mime,
+            content_type=mime,
         )
 
-        # 5. Persist metadata
-        db_file = FileAttachment(
-            id=file_id,
-            workspace_id=workspace_id,
-            channel_id=channel_id,
-            uploader_id=uploader_id,
-            original_filename=file.filename or "unnamed",
-            content_type=detected_mime,
-            size_bytes=file_size,
-            storage_key=storage_key,
-            checksum=reader.checksum,
-            processing_status=ProcessingStatus.UPLOADED,
-        )
-        self.db.add(db_file)
-        self.db.commit()
-        self.db.refresh(db_file)
+        return file_size, reader.checksum
 
-        logger.info(
-            "File uploaded",
-            file_id=str(file_id),
-            workspace_id=str(workspace_id),
-            size=file_size,
-            mime=detected_mime,
-        )
-
-        return db_file
-
-    def get_file(
-            self,
-            file_id: uuid.UUID,
-            workspace_id: uuid.UUID,
-    ) -> FileAttachment | None:
+    def get_file(self, file_id: uuid.UUID) -> FileAttachment | None:
         """Retrieve file metadata, scoped to workspace. Returns None if not found or deleted."""
         return self.db.scalar(
-            select(FileAttachment).where(
-                FileAttachment.id == file_id,
-                FileAttachment.workspace_id == workspace_id,
-                FileAttachment.deleted_at.is_(None),
-            )
+            select(FileAttachment)
+            .where(FileAttachment.id == file_id,
+                   FileAttachment.deleted_at.is_(None))
         )
 
     async def get_download_url(
@@ -141,12 +132,12 @@ class FileService:
             workspace_id: uuid.UUID,
     ) -> tuple[str, str] | None:
         """Return (download_url, filename) or None if file not found."""
-        file = self.get_file(file_id, workspace_id)
+        file = self.get_file(file_id)
         if file is None:
             return None
 
         url = await self.storage.generate_presigned_download_url(
-            storage_key=file.storage_key,
+            storage_key=file.id.hex,
             original_filename=file.original_filename,
         )
         return url, file.original_filename
@@ -205,11 +196,7 @@ class FileService:
 
         return results, next_cursor
 
-    def soft_delete(
-            self,
-            file_id: uuid.UUID,
-            workspace_id: uuid.UUID,
-    ) -> FileAttachment | None:
+    def soft_delete(self, file_id: uuid.UUID, workspace_id: uuid.UUID) -> FileAttachment | None:
         """Soft-delete a file. Returns the file or None if not found.
 
         Vector chunks are removed before the row is marked deleted so a
@@ -217,7 +204,7 @@ class FileService:
         behind a tombstoned file. Only INDEXED files have chunks to delete;
         other states are skipped.
         """
-        file = self.get_file(file_id, workspace_id)
+        file = self.get_file(file_id)
         if file is None:
             return None
 
@@ -256,11 +243,7 @@ class FileService:
             _job_id=f"process_{file_id}",
         )
 
-    def reset_for_retry(
-            self,
-            file_id: uuid.UUID,
-            workspace_id: uuid.UUID,
-    ) -> FileAttachment | None:
+    def reset_for_retry(self, file_id: uuid.UUID) -> FileAttachment | None:
         """Reset a file so it can be reprocessed.
 
         Returns the file flipped back to UPLOADED, or None if missing.
@@ -274,7 +257,7 @@ class FileService:
         from processing.worker import STUCK_AGE
         from utils.datetime import utcnow
 
-        file = self.get_file(file_id, workspace_id)
+        file = self.get_file(file_id)
         if file is None:
             return None
         if file.processing_status == ProcessingStatus.INDEXED:
@@ -291,58 +274,36 @@ class FileService:
         self.db.refresh(file)
         return file
 
-    async def get_thumbnail_url(
-            self,
-            file_id: uuid.UUID,
-            workspace_id: uuid.UUID,
-    ) -> str | None:
+    async def get_thumbnail_url(self, file_id: uuid.UUID) -> str | None:
         """Return a presigned URL to the thumbnail, or None if there isn't one."""
-        file = self.get_file(file_id, workspace_id)
-        if file is None or not file.thumbnail_storage_key:
+        file = self.get_file(file_id)
+        if file is None:
             return None
 
         return await self.storage.generate_presigned_download_url(
-            storage_key=file.thumbnail_storage_key,
+            storage_key=file.id.hex,
             original_filename=f"thumb_{file.original_filename}.jpg",
         )
 
-    def attach_to_message(
-            self,
-            file_id: uuid.UUID,
-            message_id: uuid.UUID,
-            workspace_id: uuid.UUID,
-            channel_id: uuid.UUID | None = None,
-    ) -> bool:
+    def attach_to_message(self, file_id: uuid.UUID, message_id: uuid.UUID, ) -> bool:
         """Attach an existing file to a message. Returns True on success.
 
         When channel_id is provided, the message must belong to that
         channel — otherwise a caller could pass any channel in the URL
         and have it accepted.
         """
-        file = self.get_file(file_id, workspace_id)
+        file = self.get_file(file_id)
         if file is None:
             return False
 
-        msg_query = select(Message).where(
-            Message.id == message_id,
-            Message.workspace_id == workspace_id,
-        )
-        if channel_id is not None:
-            msg_query = msg_query.where(Message.channel_id == channel_id)
+        msg = self.db.get(Message, message_id)
 
-        msg = self.db.scalar(msg_query)
         if msg is None:
             return False
 
-        # Check if already attached
-        existing = self.db.execute(
-            select(message_files).where(
-                message_files.c.message_id == message_id,
-                message_files.c.file_id == file_id,
-            )
-        ).first()
-        if existing is not None:
-            return True  # already attached, idempotent
+        # Check if already attached (idempotent)
+        if self.db.get(message_files, (message_id, file_id)) is not None:
+            return True
 
         self.db.execute(
             message_files.insert().values(message_id=message_id, file_id=file_id)
@@ -350,4 +311,5 @@ class FileService:
         self.db.commit()
 
         logger.info("File attached to message", file_id=str(file_id), message_id=str(message_id))
+
         return True

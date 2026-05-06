@@ -17,7 +17,7 @@ from backend.auth.model import User, IdentityProvider, Issuer
 from backend.auth.password import hash_password
 from backend.auth.utils.jwt import create_token
 from backend.auth.utils.session import SessionClaims, Session as UserSession
-from files.models import FileAttachment, ProcessingStatus
+from files.model import FileAttachment, ProcessingStatus
 from files.storage import MinIOStorage
 
 
@@ -214,7 +214,6 @@ def sample_file_record():
         original_filename="test.pdf",
         content_type="application/pdf",
         size_bytes=1024,
-        storage_key=f"workspaces/{workspace_id}/channels/general/{file_id}.pdf",
         checksum="abc123def456",
         processing_status=ProcessingStatus.UPLOADED,
     )

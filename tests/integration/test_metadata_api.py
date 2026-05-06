@@ -2,21 +2,21 @@ import uuid
 
 import pytest
 
-from files.models import ProcessingStatus
+from files.model import ProcessingStatus
 
 
 @pytest.mark.integration
 class TestMetadataAPI:
     def test_get_metadata_200(self, client, test_workspace, make_file):
         f = make_file(test_workspace.id)
-        resp = client.get(f"/api/workspaces/{test_workspace.id}/files/{f.id}")
+        resp = client.get(f"/api/workspaces/{test_workspace.id}/files/{f.id}/metadata")
         assert resp.status_code == 200
         data = resp.json()
         assert data["id"] == str(f.id)
         assert data["original_filename"] == f.original_filename
 
     def test_get_metadata_404(self, client, test_workspace):
-        resp = client.get(f"/api/workspaces/{test_workspace.id}/files/{uuid.uuid4()}")
+        resp = client.get(f"/api/workspaces/{test_workspace.id}/files/{uuid.uuid4()}/metadata")
         assert resp.status_code == 404
 
     def test_get_status_fields(self, client, test_workspace, make_file):
@@ -73,7 +73,6 @@ class TestMetadataAPI:
         f = make_file(
             test_workspace.id,
             content_type="image/png",
-            thumbnail_storage_key="workspaces/x/thumb.jpg",
         )
         resp = client.get(f"/api/workspaces/{test_workspace.id}/files/{f.id}/thumbnail")
         assert resp.status_code == 200

@@ -90,15 +90,14 @@ class TestImportFileGuards:
 
         captured = {}
 
-        async def _fake_upload(self_, upload_file, workspace_id, uploader_id, channel_id=None):
+        async def _fake_upload_workspace(self_, upload_file, workspace_id, uploader_id):
             captured["filename"] = upload_file.filename
             captured["content_type"] = upload_file.content_type
             captured["workspace_id"] = workspace_id
             captured["uploader_id"] = uploader_id
-            captured["channel_id"] = channel_id
             return MagicMock(id=uuid.uuid4(), original_filename=upload_file.filename)
 
-        with patch("integrations.drive.service.FileService.upload", new=_fake_upload):
+        with patch("integrations.drive.service.FileService.upload", new=_fake_upload_workspace):
             await svc.import_file("drive-1", ws_id)
 
         assert captured["filename"] == "doc.docx"
@@ -107,4 +106,40 @@ class TestImportFileGuards:
         )
         assert captured["workspace_id"] == ws_id
         assert captured["uploader_id"] == user_id
-        assert captured["channel_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_happy_path_uses_channel_upload_when_channel_provided(self, mock_storage):
+        ws_id = uuid.uuid4()
+        channel_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        svc = DriveImportService(MagicMock(), mock_storage, user_id)
+        svc.client = MagicMock()
+        svc.client.get_metadata = AsyncMock(return_value={
+            "id": "drive-1",
+            "name": "doc",
+            "mimeType": "application/vnd.google-apps.document",
+        })
+        svc.client.download = AsyncMock(
+            return_value=(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ".docx",
+                b"PK\x03\x04docx-content",
+            )
+        )
+
+        captured = {}
+
+        async def _fake_upload_channel(self_, upload_file, channel_id_arg, uploader_id):
+            captured["filename"] = upload_file.filename
+            captured["content_type"] = upload_file.content_type
+            captured["channel_id"] = channel_id_arg
+            captured["uploader_id"] = uploader_id
+            return MagicMock(id=uuid.uuid4(), original_filename=upload_file.filename)
+
+        with patch("integrations.drive.service.FileService.upload_workspace") as mock_workspace, \
+                patch("integrations.drive.service.FileService.upload_channel", new=_fake_upload_channel):
+            await svc.import_file("drive-1", ws_id, channel_id)
+
+        mock_workspace.assert_not_called()
+        assert captured["channel_id"] == channel_id
+        assert captured["uploader_id"] == user_id

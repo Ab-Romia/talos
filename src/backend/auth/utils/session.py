@@ -122,6 +122,10 @@ def unverified_session(request: Request, auth_token: Annotated[str, Depends(auth
 
 
 def verified_session(claims: UnverifiedSessionDep, db: DatabaseDep):
+    """
+    Verify that the session is valid (exists in DB and not expired).
+    Updates last_used_at to implement sliding expiration.
+     """
     session = db.scalar(
         select(Session)
         .where(Session.id == claims.jti,

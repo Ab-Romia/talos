@@ -2,11 +2,11 @@ import enum
 import uuid
 from datetime import datetime
 
+import sqlalchemy as sql
 from sqlalchemy import (
     DateTime, UUID, ForeignKey, String, BigInteger,
-    Index, Table, Column, text, func,
+    Index, Table, Column, text, func, event, DDL,
 )
-from sqlalchemy.dialects.postgresql import ENUM
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from model import Base
@@ -32,37 +32,21 @@ message_files = Table(
 class FileAttachment(Base):
     __tablename__ = "file_attachments"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    workspace_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("workspaces.id", ondelete="CASCADE"),
-        nullable=False, index=True,
-    )
-    channel_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("channels.id", ondelete="SET NULL"),
-        nullable=True, index=True,
-    )
-    uploader_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-    )
+    id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, ForeignKey("workspaces.id", ondelete="CASCADE"),
+                                                    index=True)
+    channel_id: Mapped[uuid.UUID | None] = mapped_column(sql.Uuid, ForeignKey("channels.id", ondelete="SET NULL"),
+                                                         index=True)
+    uploader_id: Mapped[uuid.UUID | None] = mapped_column(sql.Uuid, ForeignKey("users.id", ondelete="SET NULL"), )
 
     original_filename: Mapped[str] = mapped_column(String(512), nullable=False)
     content_type: Mapped[str] = mapped_column(String(255), nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    storage_key: Mapped[str] = mapped_column(String(1024), nullable=False, unique=True)
     checksum: Mapped[str] = mapped_column(String(64), nullable=False)
 
-    processing_status: Mapped[ProcessingStatus] = mapped_column(
-        ENUM(ProcessingStatus, name="processing_status_enum", create_type=True),
-        nullable=False, default=ProcessingStatus.UPLOADED,
-    )
+    processing_status: Mapped[ProcessingStatus] = mapped_column(sql.Enum(ProcessingStatus),
+                                                                default=ProcessingStatus.UPLOADED)
     processing_error: Mapped[str | None] = mapped_column(String(2048), nullable=True)
-    thumbnail_storage_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     chunk_count: Mapped[int | None] = mapped_column(nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -81,3 +65,37 @@ class FileAttachment(Base):
         Index("ix_file_active", "workspace_id", "created_at",
               postgresql_where=text("deleted_at IS NULL")),
     )
+
+
+# --- Database trigger to populate workspace_id from channel_id on insert ---
+# We create a PL/pgSQL function and a trigger so the logic runs inside the DB.
+# Attach function creation to the table before_create and trigger creation to after_create
+# so it is available when the trigger is defined.
+
+# Ensure the function exists before we attempt to create the trigger
+event.listen(FileAttachment.__table__, "before_create", DDL(
+    """
+    CREATE OR REPLACE FUNCTION set_file_workspace_from_channel()
+        RETURNS trigger AS
+    $$
+    BEGIN
+        SELECT workspace_id
+        INTO STRICT NEW.workspace_id
+        FROM channels
+        WHERE id = NEW.channel_id;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    """
+))
+event.listen(FileAttachment.__table__, "after_create", DDL(
+    """
+    CREATE TRIGGER trg_set_file_workspace_from_channel
+        BEFORE INSERT
+        ON file_attachments
+        FOR EACH ROW
+        WHEN (NEW.channel_id IS NOT NULL)
+    EXECUTE FUNCTION set_file_workspace_from_channel();
+    """
+))

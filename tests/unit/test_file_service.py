@@ -8,7 +8,7 @@ import pytest
 
 from config import cfg
 from files.exceptions import FileTooLarge, UnsupportedFileType
-from files.models import FileAttachment, ProcessingStatus
+from files.model import FileAttachment, ProcessingStatus
 from files.service import FileService
 from files.streaming import HashingReader
 
@@ -78,28 +78,8 @@ class TestFileServiceUpload:
 
     @pytest.mark.asyncio
     @patch("files.service.magic.from_buffer", return_value="text/plain")
-    async def test_upload_generates_key_with_channel(self, mock_magic, mock_storage):
-        db = MagicMock()
-        svc = FileService(db, mock_storage)
-        upload = _make_upload_file(filename="doc.txt")
-        channel_id = uuid.uuid4()
-
-        result = await svc.upload(upload, uuid.uuid4(), uuid.uuid4(), channel_id)
-        assert str(channel_id) in result.storage_key
-
-    @pytest.mark.asyncio
-    @patch("files.service.magic.from_buffer", return_value="text/plain")
-    async def test_upload_generates_key_general_without_channel(self, mock_magic, mock_storage):
-        db = MagicMock()
-        svc = FileService(db, mock_storage)
-        upload = _make_upload_file(filename="doc.txt")
-
-        result = await svc.upload(upload, uuid.uuid4(), uuid.uuid4(), None)
-        assert "general" in result.storage_key
-
-    @pytest.mark.asyncio
-    @patch("files.service.magic.from_buffer", return_value="text/plain")
     async def test_upload_computes_sha256(self, mock_magic, mock_storage):
+        # TODO: this is dumb, better test pls
         content = b"checksum test content"
         db = MagicMock()
         svc = FileService(db, mock_storage)
@@ -164,7 +144,7 @@ class TestFileServiceQueries:
         db.scalar.return_value = None
         svc = FileService(db, storage=None)
 
-        result = svc.get_file(uuid.uuid4(), uuid.uuid4())
+        result = svc.get_file(uuid.uuid4())
         assert result is None
 
     @pytest.mark.asyncio
@@ -180,7 +160,6 @@ class TestFileServiceQueries:
     async def test_get_download_url_returns_tuple(self, mock_storage):
         db = MagicMock()
         file_record = MagicMock()
-        file_record.storage_key = "key"
         file_record.original_filename = "test.pdf"
         db.scalar.return_value = file_record
         svc = FileService(db, mock_storage)
@@ -260,19 +239,6 @@ class TestFileServiceDelete:
 
         result = svc.attach_to_message(uuid.uuid4(), uuid.uuid4(), uuid.uuid4())
         assert result is False
-
-
-@pytest.mark.unit
-class TestFileServiceUploadEdgeCases:
-    @pytest.mark.asyncio
-    @patch("files.service.magic.from_buffer", return_value="text/plain")
-    async def test_upload_handles_no_extension(self, mock_magic, mock_storage):
-        db = MagicMock()
-        svc = FileService(db, mock_storage)
-        upload = _make_upload_file(filename="README")
-
-        result = await svc.upload(upload, uuid.uuid4(), uuid.uuid4())
-        assert not result.storage_key.endswith(".")
 
 
 @pytest.mark.unit

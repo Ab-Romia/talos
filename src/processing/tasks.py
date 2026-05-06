@@ -5,7 +5,7 @@ import uuid
 from sqlalchemy import update as sa_update
 
 from config import cfg
-from files.models import FileAttachment, ProcessingStatus
+from files.model import FileAttachment, ProcessingStatus
 from utils.logger import get_logger
 
 DOCUMENT_MIME_TYPES = cfg().files.document_mime_types

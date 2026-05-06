@@ -3,7 +3,6 @@
 from datetime import timedelta
 
 from arq import func
-from arq.connections import RedisSettings
 
 from config import cfg
 from utils.datetime import utcnow
@@ -19,23 +18,6 @@ JOB_TIMEOUT_SECONDS = 600  # 10 minutes for large documents
 STUCK_AGE = timedelta(seconds=JOB_TIMEOUT_SECONDS * 2)
 
 
-def get_redis_settings() -> RedisSettings:
-    """Parse redis URL into ARQ RedisSettings."""
-    app_cfg = cfg()
-    redis_url = app_cfg.redis.url if app_cfg.redis else "redis://localhost:6379"
-
-    # Parse redis://host:port/db format
-    from urllib.parse import urlparse
-    parsed = urlparse(redis_url)
-    return RedisSettings(
-        host=parsed.hostname or "localhost",
-        port=parsed.port or 6379,
-        database=int(parsed.path.lstrip("/") or 0),
-        password=parsed.password,
-        username=parsed.username,
-    )
-
-
 def recover_stuck_processing(session_factory) -> int:
     """Mark any file stuck in PROCESSING past STUCK_AGE as FAILED.
 
@@ -45,7 +27,7 @@ def recover_stuck_processing(session_factory) -> int:
     so they are not candidates.
     """
     from sqlalchemy import select
-    from files.models import FileAttachment, ProcessingStatus
+    from files.model import FileAttachment, ProcessingStatus
 
     cutoff = utcnow() - STUCK_AGE
     recovered = 0
@@ -96,7 +78,7 @@ class WorkerSettings:
     """ARQ worker settings."""
 
     functions = [func("processing.tasks.process_file", name="process_file", max_tries=3)]
-    redis_settings = get_redis_settings()
+    redis_settings = cfg().redis.to_redis_settings()
     on_startup = on_startup
     on_shutdown = on_shutdown
     max_jobs = 5

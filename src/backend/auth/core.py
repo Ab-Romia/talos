@@ -8,11 +8,11 @@ from fastapi import APIRouter, Depends, status, Form, HTTPException, Body
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
-from utils.email import send_email
-from utils.ratelimit import email_ratelimit
 
 from config import cfg
 from model import DatabaseDep
+from utils.email import send_email
+from utils.ratelimit import email_ratelimit
 from .model import User
 from .password import create_password_identity, hash_password
 from .utils import jwt
@@ -198,3 +198,9 @@ def get_current_user(user: UserDep):
         "name": user.name,
         "email": user.primary_email,
     }
+
+
+@router.delete("/me", dependencies=[Depends(sudo)])
+def delete_current_user(user: UserDep, db: DatabaseDep):
+    user.deleted_at = datetime.now(timezone.utc)
+    s.revoke_by_uid(user.id, db)

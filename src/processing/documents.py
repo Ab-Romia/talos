@@ -8,7 +8,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sqlalchemy.orm import Session
 
 from config import global_rag_config
-from files.models import FileAttachment
+from files.model import FileAttachment
 from files.storage import MinIOStorage
 from utils.logger import get_logger
 
@@ -16,9 +16,9 @@ logger = get_logger(__name__)
 
 
 async def process_document(
-    file_record: FileAttachment,
-    db: Session,
-    storage: MinIOStorage,
+        file_record: FileAttachment,
+        db: Session,
+        storage: MinIOStorage,
 ):
     """Download file from MinIO, extract text, chunk, and ingest into Milvus."""
     ext = os.path.splitext(file_record.original_filename)[1].lower()
@@ -28,7 +28,7 @@ async def process_document(
 
     try:
         # Download from MinIO
-        await storage.download_file_to_path(file_record.storage_key, tmp_path)
+        await storage.download_file_to_path(file_record.id.hex, tmp_path)
         logger.info("Downloaded file for processing", file_id=str(file_record.id), path=tmp_path)
 
         # Extract text elements

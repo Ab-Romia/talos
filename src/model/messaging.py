@@ -1,12 +1,17 @@
 import uuid
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import DateTime, UUID, ForeignKey, func
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 
-from files.models import FileAttachment
+from files.model import FileAttachment
 from model import Base
+
+
+class WorkspaceMember(Base):
+    __tablename__ = "workspace_members"
+    workspace_id = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), primary_key=True)
+    user_id = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
 
 
 class Workspace(Base):
@@ -16,9 +21,10 @@ class Workspace(Base):
     owner_id = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
-    deleted_at: Mapped[Optional[datetime]] = mapped_column()
+    deleted_at: Mapped[datetime | None] = mapped_column()
 
     channels: Mapped[list[Channel]] = relationship("Channel", back_populates="workspace")
+    members = relationship("User", secondary="workspace_members", back_populates="workspaces")
     files: Mapped[list[FileAttachment]] = relationship("FileAttachment", back_populates="workspace")
 
 

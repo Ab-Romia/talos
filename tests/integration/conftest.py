@@ -1,57 +1,11 @@
-import os
 import uuid
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
 
 import pytest
-from model.identity import User
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
 
-from files.models import FileAttachment, ProcessingStatus
-from model import Base, get_db
+from files.model import FileAttachment, ProcessingStatus
 from model.messaging import Workspace, Channel, Message
-
-TEST_DB_URL = os.environ.get(
-    "DATABASE_URL", "postgresql://talos_app:password@localhost:5432/talos_test"
-)
-
-
-@pytest.fixture(scope="session")
-def test_engine():
-    engine = create_engine(TEST_DB_URL, echo=False)
-    with engine.connect() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS citext"))
-        conn.commit()
-    Base.metadata.create_all(engine)
-    yield engine
-    Base.metadata.drop_all(engine)
-    engine.dispose()
-
-
-@pytest.fixture
-def db_session(test_engine):
-    """Per-test session with rollback cleanup."""
-    TestSession = sessionmaker(bind=test_engine)
-    session = TestSession()
-    yield session
-    session.rollback()
-    session.close()
-
-
-@pytest.fixture
-def test_user(db_session):
-    user = User(
-        id=uuid.uuid4(),
-        username=f"test_{uuid.uuid4().hex[:8]}",
-        primary_email=f"test_{uuid.uuid4().hex[:8]}@example.com",
-        email_verified=True,
-        name="Test User",
-        data={},
-    )
-    db_session.add(user)
-    db_session.flush()
-    return user
 
 
 @pytest.fixture
@@ -103,7 +57,6 @@ def _make_file_in_db(db_session, workspace_id, channel_id=None, uploader_id=None
         original_filename="test.txt",
         content_type="text/plain",
         size_bytes=100,
-        storage_key=f"workspaces/{workspace_id}/channels/general/{file_id}.txt",
         checksum=uuid.uuid4().hex,
         processing_status=ProcessingStatus.UPLOADED,
     )
@@ -138,6 +91,7 @@ def client(db_session, test_user, test_workspace, mock_storage, mock_arq_pool):
     """FastAPI TestClient with all dependencies overridden and lifespan disabled."""
     from fastapi.testclient import TestClient
     from backend.auth.utils.helpers import active_user
+    from backend.auth.utils.session import verified_session
     from files.dependencies import get_workspace_member, get_storage
     from app import app
 
@@ -153,9 +107,9 @@ def client(db_session, test_user, test_workspace, mock_storage, mock_arq_pool):
     original_router.lifespan_context = _noop_lifespan
 
     app.dependency_overrides[active_user] = lambda: test_user
+    app.dependency_overrides[verified_session] = lambda: None
     app.dependency_overrides[get_workspace_member] = lambda: test_workspace
     app.dependency_overrides[get_storage] = lambda: mock_storage
-    app.dependency_overrides[get_db] = lambda: db_session
 
     with TestClient(app, raise_server_exceptions=False) as c:
         yield c

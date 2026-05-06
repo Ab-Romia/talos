@@ -43,7 +43,7 @@ class TestRetryStuckProcessing:
     def test_retry_reclaims_stuck_processing(
             self, client, test_workspace, make_file, db_session, mock_arq_pool
     ):
-        from files.models import FileAttachment, ProcessingStatus
+        from files.model import FileAttachment, ProcessingStatus
         from processing.worker import STUCK_AGE
 
         f = make_file(test_workspace.id, processing_status=ProcessingStatus.PROCESSING)
@@ -62,7 +62,7 @@ class TestRetryStuckProcessing:
     def test_retry_rejects_active_processing(
             self, client, test_workspace, make_file, db_session
     ):
-        from files.models import ProcessingStatus
+        from files.model import ProcessingStatus
 
         f = make_file(test_workspace.id, processing_status=ProcessingStatus.PROCESSING)
         # updated_at is recent (just made), so it's still considered active
@@ -77,7 +77,7 @@ class TestSoftDeleteVectorFailure:
     def test_soft_delete_aborts_when_vector_cleanup_fails(
             self, client, test_workspace, make_file, db_session
     ):
-        from files.models import FileAttachment, ProcessingStatus
+        from files.model import FileAttachment, ProcessingStatus
 
         f = make_file(test_workspace.id, processing_status=ProcessingStatus.INDEXED)
 
@@ -96,7 +96,7 @@ class TestSoftDeleteVectorFailure:
             self, client, test_workspace, make_file, db_session
     ):
         """UPLOADED/PROCESSING/FAILED files have no chunks to clean."""
-        from files.models import ProcessingStatus
+        from files.model import ProcessingStatus
 
         f = make_file(test_workspace.id, processing_status=ProcessingStatus.UPLOADED)
         with patch(

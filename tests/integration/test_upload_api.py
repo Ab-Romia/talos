@@ -76,10 +76,24 @@ class TestUploadAPI:
         assert resp.status_code == 202
         file_id = resp.json()["file_id"]
 
-        from files.models import FileAttachment
+        from files.model import FileAttachment
         record = db_session.get(FileAttachment, uuid.UUID(file_id))
         assert record is not None
         assert record.original_filename == "persist.txt"
+
+    def test_channel_upload_derives_workspace_id(self, client, test_workspace, test_channel, db_session):
+        resp = client.post(
+            f"/api/channels/{test_channel.id}/files",
+            files={"file": ("channel.txt", b"channel data", "text/plain")},
+        )
+        assert resp.status_code == 202
+
+        from files.model import FileAttachment
+        file_id = uuid.UUID(resp.json()["file_id"])
+        record = db_session.get(FileAttachment, file_id)
+        assert record is not None
+        assert record.channel_id == test_channel.id
+        assert record.workspace_id == test_workspace.id
 
 
 @pytest.mark.integration
@@ -87,7 +101,7 @@ class TestRetryAPI:
     def test_retry_resets_failed_file_and_enqueues(
             self, client, test_workspace, make_file, db_session, mock_arq_pool
     ):
-        from files.models import FileAttachment, ProcessingStatus
+        from files.model import FileAttachment, ProcessingStatus
 
         f = make_file(
             test_workspace.id,
@@ -105,7 +119,7 @@ class TestRetryAPI:
         mock_arq_pool.enqueue_job.assert_called_once()
 
     def test_retry_rejects_indexed_file(self, client, test_workspace, make_file):
-        from files.models import ProcessingStatus
+        from files.model import ProcessingStatus
 
         f = make_file(test_workspace.id, processing_status=ProcessingStatus.INDEXED)
         resp = client.post(f"/api/workspaces/{test_workspace.id}/files/{f.id}/retry")

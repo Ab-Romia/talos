@@ -1,6 +1,6 @@
-"""Import Drive files through the existing FileService pipeline.
+"""Import Drive files through the FileService upload pipeline.
 
-We deliberately reuse FileService.upload by wrapping the Drive download in
+We reuse FileService upload methods by wrapping the Drive download in
 a Starlette UploadFile so MIME sniffing, size cap, checksum, MinIO upload,
 DB persistence, and ARQ enqueue all behave identically to a direct upload.
 """
@@ -15,7 +15,7 @@ from starlette.datastructures import Headers
 
 from config import cfg
 from files.exceptions import FileTooLarge, UnsupportedFileType
-from files.models import FileAttachment
+from files.model import FileAttachment
 from files.service import FileService
 from files.storage import MinIOStorage
 from utils.logger import get_logger
@@ -72,8 +72,8 @@ class DriveImportService:
         svc = FileService(self.db, self.storage)
         return await svc.upload(
             upload,
-            workspace_id=workspace_id,
             uploader_id=self.user_id,
+            workspace_id=workspace_id,
             channel_id=channel_id,
         )
 

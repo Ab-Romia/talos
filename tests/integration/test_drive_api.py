@@ -106,7 +106,7 @@ class TestDriveImport:
     def test_happy_path_runs_through_upload(
             self, client, test_workspace, drive_token, db_session, mock_arq_pool
     ):
-        from files.models import FileAttachment
+        from files.model import FileAttachment
 
         with patch("integrations.drive.service.DriveClient") as MockClient:
             instance = MockClient.return_value

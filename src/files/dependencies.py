@@ -1,4 +1,5 @@
 import uuid
+from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
@@ -10,6 +11,7 @@ from model import DatabaseDep
 from model.messaging import Workspace
 
 
+# TODO: expand this to check actual workspace membership once we have that concept (vs. just ownership)
 def get_workspace_member(
         workspace_id: uuid.UUID,
         user: User = Depends(active_user),
@@ -40,3 +42,6 @@ def get_storage(request: Request) -> MinIOStorage:
             "Storage service not available",
         )
     return storage
+
+
+StorageDep = Annotated[MinIOStorage, Depends(get_storage)]

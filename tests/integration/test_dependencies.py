@@ -3,9 +3,8 @@ import uuid
 import pytest
 from fastapi import HTTPException
 
+from backend.auth.model import User
 from files.dependencies import get_workspace_member, get_storage
-from model.identity import User
-from model.messaging import Workspace
 
 
 @pytest.mark.integration
@@ -30,9 +29,9 @@ class TestGetWorkspaceMember:
     def test_not_owner_403(self, db_session, test_workspace):
         other_user = User(
             id=uuid.uuid4(),
-            username=f"other_{uuid.uuid4().hex[:8]}",
+            username=f"other-{uuid.uuid4().hex[:8]}",
             primary_email=f"other_{uuid.uuid4().hex[:8]}@example.com",
-            email_verified=True,
+            signup_complete=True,
             name="Other",
             data={},
         )

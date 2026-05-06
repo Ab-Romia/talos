@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from files.models import ProcessingStatus
+from files.model import ProcessingStatus
 
 
 @pytest.mark.unit
@@ -33,7 +33,7 @@ class TestProcessFileDispatcher:
     async def test_missing_row_during_processing_does_not_re_raise(self):
         """Audit bug #3: vanished file row should log + return, not retry forever."""
         from processing.tasks import process_file
-        from files.models import FileAttachment
+        from files.model import FileAttachment
 
         existing = MagicMock(spec=FileAttachment)
         existing.id = uuid.uuid4()

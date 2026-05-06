@@ -19,13 +19,13 @@ class MinIOStorage:
     """Wraps two MinIO clients: internal (server-to-server) and external (pre-signed URLs)."""
 
     def __init__(
-        self,
-        internal_endpoint: str,
-        external_endpoint: str,
-        access_key: str,
-        secret_key: str,
-        secure: bool = False,
-        bucket_name: str = "talos-uploads",
+            self,
+            internal_endpoint: str,
+            external_endpoint: str,
+            access_key: str,
+            secret_key: str,
+            secure: bool = False,
+            bucket_name: str = "talos-uploads",
     ):
         self.bucket_name = bucket_name
 
@@ -76,8 +76,7 @@ class MinIOStorage:
     ) -> str:
         """Upload a file to MinIO. ``data`` may be any binary stream that
         supports ``read(size)``; minio-py uploads it in ``part_size`` chunks,
-        so callers can pass a streaming wrapper rather than a fully-buffered
-        BytesIO. Returns the etag."""
+        so callers can pass a streaming wrapper. Returns the etag."""
         try:
             result = await run_in_threadpool(
                 self._internal.put_object,
@@ -127,10 +126,10 @@ class MinIOStorage:
             raise StorageError("delete_file", str(e)) from e
 
     async def generate_presigned_download_url(
-        self,
-        storage_key: str,
-        original_filename: str,
-        expires: timedelta = timedelta(minutes=15),
+            self,
+            storage_key: str,
+            original_filename: str,
+            expires: timedelta = timedelta(minutes=15),
     ) -> str:
         """Generate a pre-signed download URL using the external client."""
         try:
@@ -148,9 +147,9 @@ class MinIOStorage:
             raise StorageError("generate_presigned_download_url", str(e)) from e
 
     async def generate_presigned_upload_url(
-        self,
-        storage_key: str,
-        expires: timedelta = timedelta(minutes=30),
+            self,
+            storage_key: str,
+            expires: timedelta = timedelta(minutes=30),
     ) -> str:
         """Generate a pre-signed upload URL using the external client."""
         try:

@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from files.models import ProcessingStatus
+from files.model import ProcessingStatus
 
 
 class FileUploadResponse(BaseModel):
@@ -27,7 +27,6 @@ class FileMetadata(BaseModel):
     checksum: str
     processing_status: ProcessingStatus
     processing_error: str | None
-    thumbnail_storage_key: str | None
     chunk_count: int | None
     created_at: datetime
     updated_at: datetime

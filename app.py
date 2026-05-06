@@ -14,42 +14,41 @@ from config import cfg
 from files.router import router as files_router
 from files.storage import MinIOStorage
 from integrations.drive import drive_router
-from model import Base, engine
 
 templates = Jinja2Templates(directory="frontend/templates")
 
 
-def _get_minio_storage() -> MinIOStorage:
-    minio_cfg = cfg().minio
-    return MinIOStorage(
-        internal_endpoint=minio_cfg.internal_endpoint,
-        external_endpoint=minio_cfg.external_endpoint,
-        access_key=minio_cfg.access_key,
-        secret_key=minio_cfg.secret_key,
-        secure=minio_cfg.secure,
-        bucket_name=minio_cfg.bucket_name,
-    )
-
-
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(app: FastAPI):
+    from arq import create_pool
+    from utils.logger import get_logger
+    from model import Base, engine
+
     with Session(engine) as session:
         session.execute(text("CREATE EXTENSION IF NOT EXISTS citext;"))
         session.commit()
 
     Base.metadata.create_all(engine)
 
-    storage = _get_minio_storage()
-    await storage.ensure_bucket()
-    app.state.minio_storage = storage
+    storage = MinIOStorage(
+        internal_endpoint=cfg().minio.internal_endpoint,
+        external_endpoint=cfg().minio.external_endpoint,
+        access_key=cfg().minio.access_key,
+        secret_key=cfg().minio.secret_key,
+        secure=cfg().minio.secure,
+        bucket_name=cfg().minio.bucket_name,
+    )
+    try:
+        await storage.ensure_bucket()
+        app.state.minio_storage = storage
+    except Exception:
+        get_logger(__name__).error("Failed to ensure MinIO bucket", exc_info=True)
 
     # Initialize ARQ Redis pool for background task enqueueing
-    from arq import create_pool
-    from processing.worker import get_redis_settings
-    from utils.logger import get_logger
+
     try:
-        app.state.arq_pool = await create_pool(get_redis_settings())
-    except Exception as e:
+        app.state.arq_pool = await create_pool(cfg().redis.to_redis_settings())
+    except Exception:
         # Keep the app running so non-upload endpoints stay usable
         # uploads will now fail with 503
         get_logger(__name__).error("Failed to initialize ARQ Redis pool", exc_info=True)
@@ -62,7 +61,7 @@ async def lifespan(_: FastAPI):
         await app.state.arq_pool.aclose()
 
 
-app = FastAPI(title='Temp', lifespan=lifespan)
+app = FastAPI(title='Talos', lifespan=lifespan)
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.add_middleware(SessionMiddleware)
 app.include_router(auth_router, prefix="/api/auth")

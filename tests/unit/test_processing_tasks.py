@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch, AsyncMock
 
 import pytest
 
-from files.models import FileAttachment, ProcessingStatus
+from files.model import FileAttachment, ProcessingStatus
 
 
 @pytest.mark.unit

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from files.models import FileAttachment, ProcessingStatus
+from files.model import FileAttachment, ProcessingStatus
 
 
 @pytest.mark.unit
@@ -62,7 +62,8 @@ class TestExtractText:
             # _extract_text tries `from unstructured.partition.auto import partition`
             # If unstructured is not installed, it catches ImportError and uses fallback
             # We mock sys.modules to force the ImportError
-            with patch.dict("sys.modules", {"unstructured": None, "unstructured.partition": None, "unstructured.partition.auto": None}):
+            with patch.dict("sys.modules", {"unstructured": None, "unstructured.partition": None,
+                                            "unstructured.partition.auto": None}):
                 # Need to reload to pick up the mocked modules
                 result = _extract_text(path, "text/plain")
                 assert len(result) == 1
@@ -79,7 +80,6 @@ class TestProcessDocument:
         record.workspace_id = uuid.uuid4()
         record.original_filename = filename
         record.content_type = content_type
-        record.storage_key = "test/key"
         record.processing_status = ProcessingStatus.PROCESSING
         record.chunk_count = None
         return record

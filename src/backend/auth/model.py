@@ -8,7 +8,7 @@ from sqlalchemy import Uuid, ForeignKey, DateTime, func
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from files.models import FileAttachment
+from files.model import FileAttachment
 from model import Base
 
 
@@ -21,6 +21,7 @@ class Issuer(PyEnum):
 
 class User(Base):
     from backend.auth.permissions.model import Role, users_roles
+    from model.messaging import Workspace
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, primary_key=True, default=uuid.uuid4)
@@ -34,6 +35,8 @@ class User(Base):
     deleted_at: Mapped[datetime | None] = mapped_column()
 
     data: Mapped[dict[str, Any]] = mapped_column(default={})
+
+    workspaces: Mapped[list[Workspace]] = relationship(secondary="workspace_members", back_populates="members")
     roles: Mapped[list[Role]] = relationship(secondary=users_roles, back_populates=__tablename__)
     uploaded_files: Mapped[list[FileAttachment]] = relationship(
         FileAttachment,

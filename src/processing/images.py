@@ -8,7 +8,7 @@ from PIL import Image
 from sqlalchemy.orm import Session
 
 from config import cfg
-from files.models import FileAttachment
+from files.model import FileAttachment
 from files.storage import MinIOStorage
 from utils.logger import get_logger
 
@@ -30,7 +30,7 @@ async def process_image(
 
     try:
         # Download original
-        await storage.download_file_to_path(file_record.storage_key, tmp_path)
+        await storage.download_file_to_path(file_record.id.hex, tmp_path)
 
         # Generate thumbnail
         with Image.open(tmp_path) as img:
@@ -46,7 +46,7 @@ async def process_image(
             thumb_buffer.seek(0)
 
         # Upload thumbnail
-        thumb_key = f"{file_record.storage_key}_thumb.jpg"
+        thumb_key = f"{file_record.id.hex}_thumb.jpg"
         await storage.upload_file(
             storage_key=thumb_key,
             data=thumb_buffer,

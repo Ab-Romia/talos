@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from files.models import ProcessingStatus
+from files.model import ProcessingStatus
 from files.schemas import (
     FileListResponse,
     FileMetadata,
@@ -38,7 +38,6 @@ class TestSchemas:
         obj.checksum = "abc123"
         obj.processing_status = ProcessingStatus.UPLOADED
         obj.processing_error = None
-        obj.thumbnail_storage_key = None
         obj.chunk_count = None
         obj.created_at = datetime.now()
         obj.updated_at = datetime.now()
