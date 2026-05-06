@@ -9,3 +9,33 @@ __pycache__/
 node_modules
 CLAUDE.md
 .claude/
+
+# Personal study notes (kept outside the repo, but if symlinked here, ignore)
+study-notes/
+
+# Evaluation artefacts — generated at runtime, not source code
+evaluation/en_wikipedia_cs.pkl
+evaluation/runs/
+evaluation/runs_talos/
+evaluation/.cache/
+evaluation/.cache_talos/
+evaluation/qa_set.json
+evaluation/qa_set_talos.json
+evaluation/human_calibration_template.csv
+evaluation/human_calibration_filled.csv
+evaluation/figs/
+evaluation/talos_corpus/*.pdf
+evaluation/talos_corpus/*.md
+!evaluation/talos_corpus/README.md
+evaluation/presentation.pdf
+evaluation/presentation.aux
+evaluation/presentation.bbl
+evaluation/presentation.bcf
+evaluation/presentation.blg
+evaluation/presentation.log
+evaluation/presentation.nav
+evaluation/presentation.out
+evaluation/presentation.run.xml
+evaluation/presentation.snm
+evaluation/presentation.toc
+evaluation/presentation-blx.bib

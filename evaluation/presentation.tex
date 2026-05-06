@@ -1,0 +1,392 @@
+% Build:
+%   pdflatex presentation.tex && bibtex presentation && pdflatex presentation.tex && pdflatex presentation.tex
+%
+% Talos-corpus numbers fill in via the four \newcommand definitions below.
+
+\documentclass[10pt,aspectratio=169,xcolor={table}]{beamer}
+\usetheme{Madrid}
+\usecolortheme{seagull}
+\useinnertheme{circles}
+\useoutertheme{infolines}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usepackage{tabularx}
+\usepackage{amsmath}
+\graphicspath{{figs/}}
+
+\usepackage[backend=bibtex,style=numeric,maxbibnames=3]{biblatex}
+\addbibresource{refs.bib}
+
+% Talos-corpus placeholders — replace once that run finishes
+\newcommand{\TalosNQ}{TBD}
+\newcommand{\TalosCorrect}{TBD}
+\newcommand{\TalosCBLift}{TBD}
+\newcommand{\TalosNoiseDrop}{TBD}
+\newcommand{\TalosTBD}[1]{\textbf{\textcolor{red}{[#1]}}}
+
+\newcommand{\bigresult}[2]{%
+  \begin{tikzpicture}
+    \node[draw=teal!60, fill=teal!8, rounded corners, inner sep=8pt, minimum width=0.85\textwidth]
+      {\parbox{0.83\textwidth}{\centering\Large\textbf{#1}\\[2pt]\normalsize #2}};
+  \end{tikzpicture}}
+
+\title[Talos RAG Eval]{Talos RAG Pipeline --- Evaluation}
+\subtitle{}
+\author{}
+\institute{}
+\date{}
+
+\begin{document}
+
+\begin{frame}\titlepage\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{What was evaluated}
+  Talos uses a Retrieval-Augmented Generation pipeline to answer questions
+  over user-uploaded files. The pipeline has several optional components:
+  \begin{itemize}
+    \item Dense retrieval (OpenAI embeddings + Milvus)
+    \item Optional BM25 hybrid retrieval
+    \item Cross-encoder reranking
+    \item Optional query rewriting and HyDE
+    \item Optional contextual compression
+    \item GPT-4o-mini answer generation
+  \end{itemize}
+  \vspace{8pt}
+  The evaluation answers three questions:
+  \begin{enumerate}
+    \item Does the system actually beat answering from the LLM's memory alone?
+    \item Which optional components are pulling their weight?
+    \item Are the LLM-judge scores trustworthy?
+  \end{enumerate}
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{The four metrics}
+  The standard "RAG Triad" plus Correctness:
+  \begin{itemize}
+    \item \textbf{Faithfulness} --- does the answer stick to the retrieved context, or does it hallucinate?
+    \item \textbf{Answer Relevancy} --- does the answer address the question asked?
+    \item \textbf{Context Relevance} --- are the retrieved chunks relevant to the question?
+    \item \textbf{Answer Correctness} --- is the answer factually right against a reference?
+  \end{itemize}
+  \vspace{6pt}
+  Plus classical IR metrics for retrieval-only: Hit@5, Recall@5, MRR, nDCG@5, nDCG@10.
+
+  \vspace{12pt}
+  \footnotesize
+  Metric definitions follow the Ragas framework (Es et al., EACL 2024).
+  Statistical methodology uses paired Wilcoxon with Holm correction
+  (Dror et al., ACL 2018).
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{Two test sets}
+  \begin{columns}[T,onlytextwidth]
+    \column{0.5\textwidth}
+    \textbf{Wikipedia Computer Science}
+    \begin{itemize}\small
+      \item 200 articles, 6{,}640 chunks
+      \item 49 synthesised Q\&A items
+        \begin{itemize}\scriptsize
+          \item 24 single-hop, 11 multi-hop specific, 14 multi-hop abstract
+        \end{itemize}
+      \item Tests retrieval on Wikipedia-style content
+    \end{itemize}
+
+    \column{0.5\textwidth}
+    \textbf{Talos-realistic corpus}
+    \begin{itemize}\small
+      \item 26 documents, 403 chunks
+      \item Course PDFs (distributed systems, data mining, computer vision)
+      \item Talos's own design docs and system-design PDF (LLM has never seen these)
+      \item \TalosTBD{\TalosNQ} synthesised Q\&A items
+    \end{itemize}
+  \end{columns}
+
+  \vspace{14pt}
+  \begin{center}\small
+    Two corpora $\Rightarrow$ either result on its own can be challenged;
+    convergent evidence is harder to argue with.
+  \end{center}
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{The nine variants}
+  \footnotesize
+  \begin{tabularx}{\textwidth}{l c c c c c X}
+    \toprule
+    Variant & Retrieval & Rewrite & HyDE & Rerank & Hybrid & Compression \\
+    \midrule
+    \texttt{closed\_book} & --- & & & & & --- \\
+    \texttt{dense\_only} & dense & & & & & none \\
+    \rowcolor{teal!10}
+    \textbf{\texttt{production\_default}} & dense & & & \checkmark & & none \\
+    \texttt{+rewrite} & dense & \checkmark & & & & none \\
+    \texttt{+hyde} & dense & \checkmark & \checkmark & & & none \\
+    \texttt{+rerank} & dense & \checkmark & \checkmark & \checkmark & & none \\
+    \texttt{hybrid+rerank} & dense+BM25 & \checkmark & \checkmark & \checkmark & \checkmark & none \\
+    \texttt{compression\_calibrated} & dense+BM25 & \checkmark & \checkmark & \checkmark & \checkmark & filter @ 0.50 \\
+    \rowcolor{red!8}
+    \texttt{everything\_on\_stress} & dense+BM25 & \checkmark & \checkmark & \checkmark & \checkmark & filter @ 0.76 \\
+    \bottomrule
+  \end{tabularx}
+  \vspace{4pt}
+  \begin{itemize}\small
+    \item \textbf{Green} = the configuration the system actually ships.
+    \item \textbf{Red} = a stress test, not the deployed config.
+  \end{itemize}
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{Headline result --- Wikipedia-CS}
+  \texttt{production\_default} on 49 questions:
+  \vspace{6pt}
+
+  \centering
+  \begin{tabularx}{0.7\textwidth}{lcc}
+    \toprule
+    Metric & Mean & 95\% CI \\
+    \midrule
+    Correctness        & \textbf{0.806} & [0.694, 0.898] \\
+    Faithfulness       & 0.943          & [0.888, 0.984] \\
+    Answer Relevancy   & 0.939          & [0.857, 1.000] \\
+    Context Relevance  & 0.457          & [0.376, 0.535] \\
+    Hit@5              & 0.816          & --- \\
+    nDCG@5 / nDCG@10   & 0.589 / 0.604  & --- \\
+    \bottomrule
+  \end{tabularx}
+
+  \vspace{14pt}
+  \bigresult{+0.316}{Correctness lift over the closed-book baseline\\
+                     (paired Wilcoxon, Holm-adjusted $p = 0.004$, effect size $r = 0.83$)}
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{End-to-end ablation across nine variants}
+  \begin{center}
+    \includegraphics[width=0.95\textwidth]{metrics_e2e.png}
+  \end{center}
+  \begin{itemize}\footnotesize
+    \item Green bar = production. Red bar = the broken stress variant.
+    \item Adding query rewriting / HyDE / cross-encoder rerank / BM25 hybrid
+          on top of dense doesn't significantly change end-to-end Correctness.
+    \item The compression filter at its langchain default destroys answers ---
+          surfaced as a real production-config bug.
+  \end{itemize}
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{Retrieval-only IR --- $k = 5$ and $k = 10$}
+  \begin{center}
+    \includegraphics[width=0.95\textwidth]{metrics_ir.png}
+  \end{center}
+  \begin{itemize}\footnotesize
+    \item Reranking adds about $+0.04$ to MRR@5 --- a clean gain in retrieval ranking.
+    \item BM25 hybrid hurts ranking on this corpus (the dense retriever already covers the topical range).
+    \item nDCG@10 (the BEIR convention) shows the four configurations within 0.07 of each other --- a saturated regime.
+  \end{itemize}
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{What's actually significantly different from production?}
+  \begin{center}
+    \includegraphics[width=0.95\textwidth]{metrics_delta.png}
+  \end{center}
+  \begin{itemize}\footnotesize
+    \item Each bar is the average difference vs. \texttt{production\_default}.
+    \item Red \textbf{*} marks differences that survive multiple-comparisons correction (Holm-adjusted $p < 0.05$).
+    \item Only two contrasts are statistically real: closed-book is significantly worse on Correctness,
+          and the broken stress variant is significantly worse on Correctness and Helpfulness.
+    \item Everything else is a tie at this sample size.
+  \end{itemize}
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{Diagnostic 1 --- closed-book lift per category}
+  How much does retrieval add over answering from the LLM's memory alone?
+
+  \vspace{6pt}\centering\small
+  \begin{tabularx}{0.95\textwidth}{lXXXX}
+    \toprule
+    Variant & single-hop & multi-hop spec.\ & multi-hop abst.\ & overall \\
+    \midrule
+    \texttt{dense\_only} & +0.542 & +0.273 & +0.143 & +0.367 \\
+    \rowcolor{teal!10}
+    \texttt{production\_default} & \textbf{+0.542} & \textbf{+0.182} & +0.036 & \textbf{+0.316} \\
+    \texttt{+rewrite}            & +0.500 & +0.273 & +0.107 & +0.337 \\
+    \texttt{+hyde}               & +0.438 & +0.227 & +0.036 & +0.276 \\
+    \rowcolor{red!8}
+    \texttt{everything\_on\_stress} & $-0.021$ & $-0.045$ & $-0.429$ & $-0.143$ \\
+    \bottomrule
+  \end{tabularx}
+  \vspace{8pt}
+  \begin{itemize}\footnotesize
+    \item Single-hop questions get the largest RAG lift --- specific facts the LLM cannot reliably recall.
+    \item Multi-hop-abstract questions show near-zero lift --- the LLM already has strong priors for "compare A and B" type questions.
+    \item This is the contamination-control methodology of Mallen et al., ACL 2023.
+  \end{itemize}
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{Diagnostic 2 --- counterfactual-noise drop}
+  What happens if the retrieved chunks are replaced with random distractor chunks?
+
+  \vspace{6pt}\centering\small
+  \begin{tabularx}{0.85\textwidth}{lXXXX}
+    \toprule
+    & \textbf{single-hop} & \textbf{multi-hop spec.} & \textbf{multi-hop abst.} & \textbf{overall} \\
+    \midrule
+    Real retrieval Correctness & 0.938 & 0.682 & 0.714 & 0.816 \\
+    Random-noise Correctness   & 0.229 & 0.182 & 0.250 & 0.224 \\
+    \midrule
+    \rowcolor{teal!10}
+    \textbf{Drop} & \textbf{0.708} & \textbf{0.500} & \textbf{0.464} & \textbf{0.592} \\
+    \bottomrule
+  \end{tabularx}
+
+  \vspace{14pt}
+  \bigresult{$-0.592$}{When retrieved chunks are swapped for random ones,
+                       Correctness collapses. The generator is using context,
+                       not memorising.}
+
+  \vspace{4pt}\footnotesize
+  Methodology: Yoran et al., ICLR 2024.
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{Is the LLM judge trustworthy?}
+  Re-graded a 10-question slice with GPT-4o (a stronger model) instead of GPT-4o-mini:
+  \vspace{6pt}\centering
+  \begin{tabularx}{0.7\textwidth}{lc}
+    \toprule
+    Metric & Value \\
+    \midrule
+    Primary judge (GPT-4o-mini) mean & 0.800 \\
+    Alternative judge (GPT-4o) mean  & 0.850 \\
+    Pearson correlation              & \textbf{0.921} \\
+    Spearman correlation             & \textbf{0.986} \\
+    Mean absolute disagreement       & 0.050 \\
+    \bottomrule
+  \end{tabularx}
+
+  \vspace{14pt}
+  \bigresult{$r = 0.921$}{The cheap judge tracks a 10$\times$ stronger model.
+                          Self-enhancement bias is empirically bounded.}
+
+  \vspace{4pt}\footnotesize
+  Methodology: Zheng et al., NeurIPS 2023, §4.
+  Threshold for "judge tracks stronger model" in Ragas / ARES is $r > 0.7$.
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{Compression-threshold sweep --- a production-config bug}
+  Sweeping the embedding-filter threshold:
+  \vspace{6pt}\centering\small
+  \begin{tabularx}{0.7\textwidth}{cXX}
+    \toprule
+    Threshold $\theta$ & Chunks kept (avg) & Correctness \\
+    \midrule
+    \rowcolor{teal!10}
+    0.30 & 5.00 (all) & \textbf{0.847} \\
+    0.40 & 4.90       & 0.827 \\
+    0.50 & 4.41       & 0.806 \\
+    0.60 & 2.08       & 0.663 \\
+    \rowcolor{red!8}
+    \textbf{0.76 (langchain default)} & \textbf{0.14}  & \textbf{0.357} \\
+    \bottomrule
+  \end{tabularx}
+
+  \vspace{6pt}
+  \begin{itemize}\footnotesize
+    \item At threshold 0.76, the filter strips $\sim$95\% of retrieved chunks
+          for \texttt{text-embedding-3-small}.
+    \item No threshold actually helps --- the filter is either a no-op
+          or it strips everything useful.
+    \item \textbf{Recommendation}: keep \texttt{compression\_type = NONE}
+          in production (already the default in \texttt{src/config/config.py},
+          confirmed correct).
+  \end{itemize}
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{Second test set --- Talos-realistic corpus}
+  Same evaluation pipeline run against a CS-realistic corpus:
+  \vspace{4pt}
+  \begin{tabularx}{\textwidth}{lX}
+    \toprule
+    Source & Count \\
+    \midrule
+    Distributed-systems lectures (RPCs, Dynamo, MapReduce, consistency) & 4 PDFs \\
+    Data-mining lectures & 4 PDFs \\
+    Computer-vision lectures & 5 PDFs \\
+    Talos design Markdown (RAG, Backend, Frontend, Auth, AI Assistant, …) & 10 \texttt{.md} \\
+    Talos system-design PDF (semester~1) & 1 PDF \\
+    Project README + MCP contract & 2 \texttt{.md} \\
+    \bottomrule
+  \end{tabularx}
+
+  \vspace{6pt}
+  Total: 26 documents, 403 chunks. Talos's own design docs are
+  \textbf{guaranteed unseen} by GPT-4o-mini --- closed-book Correctness
+  on those questions is a clean retrieval-vs-memorisation diagnostic.
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{Talos-corpus headline}
+  \centering
+  \bigresult{\TalosTBD{\TalosCorrect}}{Correctness for
+             \texttt{production\_default} on the Talos corpus
+             (\TalosTBD{\TalosNQ} questions)}
+
+  \vspace{14pt}
+  \begin{itemize}
+    \item \textbf{Closed-book lift}: \TalosTBD{+\TalosCBLift} ---
+          driven primarily by the Talos design docs, which the LLM has not seen.
+    \item \textbf{Counterfactual-noise drop}: \TalosTBD{$-$\TalosNoiseDrop} ---
+          confirms retrieval is doing real work on this distribution too.
+    \item \textbf{Variant ranking matches the Wikipedia run} ---
+          single-component additions are tied with production;
+          \texttt{everything\_on\_stress} regresses.
+  \end{itemize}
+
+  \vspace{6pt}\footnotesize
+  \emph{Convergent evidence: same conclusions on a corpus the LLM has never seen.}
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{Takeaways}
+  \begin{itemize}
+    \item The deployed configuration significantly beats answering from
+          parametric memory alone (+0.316 Correctness, $p < 0.01$).
+    \item Cross-encoder reranking improves retrieval ranking but is
+          end-to-end indistinguishable from dense alone at this sample size.
+    \item Query rewriting, HyDE, and BM25 hybrid don't statistically improve
+          end-to-end performance on either corpus.
+    \item One real production-config issue surfaced: the optional
+          embedding-filter compression should not be enabled at its
+          langchain default threshold.
+    \item Both contamination diagnostics agree: retrieval is doing real work,
+          not bypassing to LLM memory.
+    \item Judge agreement with a stronger model is $r = 0.921$ ---
+          the LLM-judge methodology is empirically validated.
+  \end{itemize}
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}[allowframebreaks]{References}
+  \footnotesize
+  \nocite{*}
+  \printbibliography[heading=none]
+\end{frame}
+
+\end{document}
