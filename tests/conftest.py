@@ -1,10 +1,13 @@
+import os
+import uuid
 from datetime import timedelta
+from functools import lru_cache
 from typing import Callable
+from unittest.mock import AsyncMock
 
 import pytest
 import sqlalchemy
 import sqlalchemy.exc
-from functools import lru_cache
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text, delete
 from sqlalchemy.orm import Session
@@ -14,6 +17,8 @@ from backend.auth.model import User, IdentityProvider, Issuer
 from backend.auth.password import hash_password
 from backend.auth.utils.jwt import create_token
 from backend.auth.utils.session import SessionClaims, Session as UserSession
+from files.models import FileAttachment, ProcessingStatus
+from files.storage import MinIOStorage
 
 
 @pytest.fixture(scope="session")
@@ -166,17 +171,8 @@ def expired_token(test_user: User, test_session: SessionClaims) -> str:
 
 # ── File upload fixtures ──
 
-import os
-import uuid
-from unittest.mock import AsyncMock
 
 os.environ.setdefault("DATABASE_URL", "postgresql://talos_app:password@localhost:5432/talos_test")
-
-import model.identity  # noqa: F401
-import model.messaging  # noqa: F401
-
-from files.models import FileAttachment, ProcessingStatus
-from files.storage import MinIOStorage
 
 
 @pytest.fixture
@@ -206,12 +202,12 @@ def sample_file_record():
     return FileAttachment(
         id=file_id,
         workspace_id=workspace_id,
-        chatroom_id=None,
+        channel_id=None,
         uploader_id=uuid.uuid4(),
         original_filename="test.pdf",
         content_type="application/pdf",
         size_bytes=1024,
-        storage_key=f"workspaces/{workspace_id}/chatrooms/general/{file_id}.pdf",
+        storage_key=f"workspaces/{workspace_id}/channels/general/{file_id}.pdf",
         checksum="abc123def456",
         processing_status=ProcessingStatus.UPLOADED,
     )

@@ -4,8 +4,9 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 
+from backend.auth.model import User
 from backend.auth.utils.helpers import active_user
-from files.constants import MAX_FILE_SIZE
+from config import cfg
 from files.dependencies import get_storage, get_workspace_member
 from files.exceptions import FileTooLarge, UnsupportedFileType
 from files.schemas import (
@@ -18,9 +19,10 @@ from files.schemas import (
 from files.service import FileService
 from files.storage import MinIOStorage
 from model import DatabaseDep
-from model.identity import User
 from model.messaging import Workspace
 from utils.logger import get_logger
+
+MAX_FILE_SIZE = cfg().files.max_size
 
 logger = get_logger(__name__)
 
@@ -35,14 +37,14 @@ router = APIRouter()
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def upload_file(
-    request: Request,
-    workspace_id: uuid.UUID,
-    file: UploadFile = File(...),
-    chatroom_id: uuid.UUID | None = Query(None),
-    user: User = Depends(active_user),
-    workspace: Workspace = Depends(get_workspace_member),
-    db: DatabaseDep = None,
-    storage: MinIOStorage = Depends(get_storage),
+        request: Request,
+        workspace_id: uuid.UUID,
+        file: UploadFile = File(...),
+        channel_id: uuid.UUID | None = Query(None),
+        user: User = Depends(active_user),
+        workspace: Workspace = Depends(get_workspace_member),
+        db: DatabaseDep = None,
+        storage: MinIOStorage = Depends(get_storage),
 ):
     """Upload a file to a workspace. MIME type is validated via magic bytes."""
     content_length = request.headers.get("content-length")
@@ -51,7 +53,7 @@ async def upload_file(
 
     svc = FileService(db, storage)
     try:
-        db_file = await svc.upload(file, workspace_id, user.id, chatroom_id)
+        db_file = await svc.upload(file, workspace_id, user.id, channel_id)
     except FileTooLarge:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "File exceeds maximum size")
     except UnsupportedFileType as e:
@@ -85,11 +87,11 @@ async def upload_file(
     response_model=FileMetadata,
 )
 def get_file_metadata(
-    workspace_id: uuid.UUID,
-    file_id: uuid.UUID,
-    user: User = Depends(active_user),
-    workspace: Workspace = Depends(get_workspace_member),
-    db: DatabaseDep = None,
+        workspace_id: uuid.UUID,
+        file_id: uuid.UUID,
+        user: User = Depends(active_user),
+        workspace: Workspace = Depends(get_workspace_member),
+        db: DatabaseDep = None,
 ):
     """Get metadata for a single file."""
     svc = FileService(db, storage=None)
@@ -106,12 +108,12 @@ def get_file_metadata(
     response_model=FileDownloadResponse,
 )
 async def download_file(
-    workspace_id: uuid.UUID,
-    file_id: uuid.UUID,
-    user: User = Depends(active_user),
-    workspace: Workspace = Depends(get_workspace_member),
-    db: DatabaseDep = None,
-    storage: MinIOStorage = Depends(get_storage),
+        workspace_id: uuid.UUID,
+        file_id: uuid.UUID,
+        user: User = Depends(active_user),
+        workspace: Workspace = Depends(get_workspace_member),
+        db: DatabaseDep = None,
+        storage: MinIOStorage = Depends(get_storage),
 ):
     """Generate a pre-signed download URL for a file."""
     svc = FileService(db, storage)
@@ -130,12 +132,12 @@ async def download_file(
     response_model=FileThumbnailResponse,
 )
 async def get_file_thumbnail(
-    workspace_id: uuid.UUID,
-    file_id: uuid.UUID,
-    user: User = Depends(active_user),
-    workspace: Workspace = Depends(get_workspace_member),
-    db: DatabaseDep = None,
-    storage: MinIOStorage = Depends(get_storage),
+        workspace_id: uuid.UUID,
+        file_id: uuid.UUID,
+        user: User = Depends(active_user),
+        workspace: Workspace = Depends(get_workspace_member),
+        db: DatabaseDep = None,
+        storage: MinIOStorage = Depends(get_storage),
 ):
     """Return a pre-signed URL to the file's generated thumbnail, if any."""
     svc = FileService(db, storage)
@@ -152,12 +154,12 @@ async def get_file_thumbnail(
     response_model=FileMetadata,
 )
 async def retry_file_processing(
-    request: Request,
-    workspace_id: uuid.UUID,
-    file_id: uuid.UUID,
-    user: User = Depends(active_user),
-    workspace: Workspace = Depends(get_workspace_member),
-    db: DatabaseDep = None,
+        request: Request,
+        workspace_id: uuid.UUID,
+        file_id: uuid.UUID,
+        user: User = Depends(active_user),
+        workspace: Workspace = Depends(get_workspace_member),
+        db: DatabaseDep = None,
 ):
     """Re-enqueue a file for processing. Valid for UPLOADED and FAILED states."""
     svc = FileService(db, storage=None)
@@ -187,11 +189,11 @@ async def retry_file_processing(
     "/workspaces/{workspace_id}/files/{file_id}/status",
 )
 def get_file_status(
-    workspace_id: uuid.UUID,
-    file_id: uuid.UUID,
-    user: User = Depends(active_user),
-    workspace: Workspace = Depends(get_workspace_member),
-    db: DatabaseDep = None,
+        workspace_id: uuid.UUID,
+        file_id: uuid.UUID,
+        user: User = Depends(active_user),
+        workspace: Workspace = Depends(get_workspace_member),
+        db: DatabaseDep = None,
 ):
     """Get the processing status of a file."""
     svc = FileService(db, storage=None)
@@ -213,20 +215,20 @@ def get_file_status(
     response_model=FileListResponse,
 )
 def list_files(
-    workspace_id: uuid.UUID,
-    chatroom_id: uuid.UUID | None = Query(None),
-    content_type: str | None = Query(None),
-    cursor: str | None = Query(None),
-    limit: int = Query(20, ge=1, le=100),
-    user: User = Depends(active_user),
-    workspace: Workspace = Depends(get_workspace_member),
-    db: DatabaseDep = None,
+        workspace_id: uuid.UUID,
+        channel_id: uuid.UUID | None = Query(None),
+        content_type: str | None = Query(None),
+        cursor: str | None = Query(None),
+        limit: int = Query(20, ge=1, le=100),
+        user: User = Depends(active_user),
+        workspace: Workspace = Depends(get_workspace_member),
+        db: DatabaseDep = None,
 ):
     """List files in a workspace with cursor-based pagination."""
     svc = FileService(db, storage=None)
     files, next_cursor = svc.list_files(
         workspace_id=workspace_id,
-        chatroom_id=chatroom_id,
+        channel_id=channel_id,
         content_type=content_type,
         cursor=cursor,
         limit=limit,
@@ -244,11 +246,11 @@ def list_files(
     response_model=FileMetadata,
 )
 def delete_file(
-    workspace_id: uuid.UUID,
-    file_id: uuid.UUID,
-    user: User = Depends(active_user),
-    workspace: Workspace = Depends(get_workspace_member),
-    db: DatabaseDep = None,
+        workspace_id: uuid.UUID,
+        file_id: uuid.UUID,
+        user: User = Depends(active_user),
+        workspace: Workspace = Depends(get_workspace_member),
+        db: DatabaseDep = None,
 ):
     """Soft-delete a file (sets deleted_at)."""
     svc = FileService(db, storage=None)
@@ -268,21 +270,21 @@ def delete_file(
 # --- Attach file to message ---
 
 @router.post(
-    "/workspaces/{workspace_id}/chatrooms/{chatroom_id}/messages/{message_id}/files",
+    "/workspaces/{workspace_id}/channels/{channel_id}/messages/{message_id}/files",
     status_code=status.HTTP_200_OK,
 )
 def attach_file_to_message(
-    workspace_id: uuid.UUID,
-    chatroom_id: uuid.UUID,
-    message_id: uuid.UUID,
-    file_id: uuid.UUID = Query(...),
-    user: User = Depends(active_user),
-    workspace: Workspace = Depends(get_workspace_member),
-    db: DatabaseDep = None,
+        workspace_id: uuid.UUID,
+        channel_id: uuid.UUID,
+        message_id: uuid.UUID,
+        file_id: uuid.UUID = Query(...),
+        user: User = Depends(active_user),
+        workspace: Workspace = Depends(get_workspace_member),
+        db: DatabaseDep = None,
 ):
     """Attach an existing file to a message."""
     svc = FileService(db, storage=None)
-    success = svc.attach_to_message(file_id, message_id, workspace_id, chatroom_id)
+    success = svc.attach_to_message(file_id, message_id, workspace_id, channel_id)
     if not success:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "File or message not found")
     return {"status": "attached", "file_id": str(file_id), "message_id": str(message_id)}

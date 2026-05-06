@@ -45,6 +45,42 @@ class MinIOConfig(BaseModel):
     bucket_name: str = "talos-uploads"
 
 
+class FilesConfig(BaseModel):
+    max_size: int = 50 * 1024 * 1024  # 50 MiB
+
+    # Allowed MIME types for uploads
+    allowed_mime_types: set[str] = {
+        # Documents
+        "application/pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "text/plain",
+        "text/markdown",
+        # Images
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+    }
+
+    document_mime_types: set[str] = {
+        "application/pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "text/plain",
+        "text/markdown",
+    }
+
+    image_mime_types: set[str] = {
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+    }
+
+    thumbnail_size: tuple[int, int] = (300, 300)
+
+    # Template used to build storage keys for uploaded files. Keep placeholders:
+    # {workspace_id}, {channel_id}, {file_id}, {ext}
+    storage_key_template: str = "workspaces/{workspace_id}/channel/{channel_id}/{file_id}{ext}"
+
+
 class RedisConfig(BaseModel):
     url: str = "redis://localhost:6379"
 
@@ -60,6 +96,7 @@ class Config(BaseSettings):
     auth: AuthConfig = None
     minio: MinIOConfig = MinIOConfig()
     redis: RedisConfig = RedisConfig()
+    files: FilesConfig = FilesConfig()
 
     model_config = SettingsConfigDict(
         env_file='.env',

@@ -11,10 +11,9 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from backend.auth.model import ProviderToken
 from config import cfg
-from model.identity import ProviderToken
 from utils.logger import get_logger
-
 from .constants import (
     DRIVE_FILES_ENDPOINT,
     GOOGLE_DOC_EXPORTS,
@@ -102,10 +101,10 @@ class DriveClient:
         return {"Authorization": f"Bearer {token.access_token}"}
 
     async def list_files(
-        self,
-        query: str | None = None,
-        page_size: int = 25,
-        page_token: str | None = None,
+            self,
+            query: str | None = None,
+            page_size: int = 25,
+            page_token: str | None = None,
     ) -> dict:
         """List files visible to the app under the drive.file scope."""
         params = {
@@ -151,7 +150,7 @@ class DriveClient:
         return resp.json()
 
     async def download(
-        self, drive_file_id: str, mime_type: str, max_bytes: int
+            self, drive_file_id: str, mime_type: str, max_bytes: int
     ) -> tuple[str, str, bytes]:
         """Return (effective_mime, suggested_ext, content_bytes).
 

@@ -4,13 +4,13 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
 
 import pytest
+from model.identity import User
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-from model import Base, get_db
-from model.identity import User
-from model.messaging import Workspace, Chatroom, Message
 from files.models import FileAttachment, ProcessingStatus
+from model import Base, get_db
+from model.messaging import Workspace, Channel, Message
 
 TEST_DB_URL = os.environ.get(
     "DATABASE_URL", "postgresql://talos_app:password@localhost:5432/talos_test"
@@ -67,8 +67,8 @@ def test_workspace(db_session, test_user):
 
 
 @pytest.fixture
-def test_chatroom(db_session, test_workspace):
-    cr = Chatroom(
+def test_channel(db_session, test_workspace):
+    cr = Channel(
         id=uuid.uuid4(),
         name="general",
         workspace_id=test_workspace.id,
@@ -79,11 +79,11 @@ def test_chatroom(db_session, test_workspace):
 
 
 @pytest.fixture
-def test_message(db_session, test_workspace, test_chatroom, test_user):
+def test_message(db_session, test_workspace, test_channel, test_user):
     msg = Message(
         id=uuid.uuid4(),
         workspace_id=test_workspace.id,
-        chatroom_id=test_chatroom.id,
+        channel_id=test_channel.id,
         sender_id=test_user.id,
         content="Hello",
     )
@@ -92,18 +92,18 @@ def test_message(db_session, test_workspace, test_chatroom, test_user):
     return msg
 
 
-def _make_file_in_db(db_session, workspace_id, chatroom_id=None, uploader_id=None, **overrides):
+def _make_file_in_db(db_session, workspace_id, channel_id=None, uploader_id=None, **overrides):
     """Helper to insert a FileAttachment into the test DB."""
     file_id = overrides.pop("id", uuid.uuid4())
     defaults = dict(
         id=file_id,
         workspace_id=workspace_id,
-        chatroom_id=chatroom_id,
+        channel_id=channel_id,
         uploader_id=uploader_id,
         original_filename="test.txt",
         content_type="text/plain",
         size_bytes=100,
-        storage_key=f"workspaces/{workspace_id}/chatrooms/general/{file_id}.txt",
+        storage_key=f"workspaces/{workspace_id}/channels/general/{file_id}.txt",
         checksum=uuid.uuid4().hex,
         processing_status=ProcessingStatus.UPLOADED,
     )
@@ -117,9 +117,11 @@ def _make_file_in_db(db_session, workspace_id, chatroom_id=None, uploader_id=Non
 @pytest.fixture
 def make_file(db_session, test_user):
     """Factory fixture to create files in DB."""
+
     def _factory(workspace_id, **kwargs):
         kwargs.setdefault("uploader_id", test_user.id)
         return _make_file_in_db(db_session, workspace_id, **kwargs)
+
     return _factory
 
 

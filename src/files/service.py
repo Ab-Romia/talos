@@ -7,17 +7,24 @@ import uuid
 from datetime import datetime
 
 import magic
-from utils.datetime import utcnow
 from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from files.constants import ALLOWED_MIME_TYPES, MAX_FILE_SIZE, STORAGE_KEY_TEMPLATE
+from config import cfg
 from files.exceptions import FileTooLarge, UnsupportedFileType
 from files.models import FileAttachment, ProcessingStatus, message_files
 from files.storage import MinIOStorage
 from model.messaging import Message
+from utils.datetime import utcnow
 from utils.logger import get_logger
+
+MAX_FILE_SIZE = cfg().files.max_size
+ALLOWED_MIME_TYPES = cfg().files.allowed_mime_types
+DOCUMENT_MIME_TYPES = cfg().files.document_mime_types
+IMAGE_MIME_TYPES = cfg().files.image_mime_types
+THUMBNAIL_SIZE = cfg().files.thumbnail_size
+STORAGE_KEY_TEMPLATE = cfg().files.storage_key_template
 
 logger = get_logger(__name__)
 
@@ -28,11 +35,11 @@ class FileService:
         self.storage = storage
 
     async def upload(
-        self,
-        file: UploadFile,
-        workspace_id: uuid.UUID,
-        uploader_id: uuid.UUID,
-        chatroom_id: uuid.UUID | None = None,
+            self,
+            file: UploadFile,
+            workspace_id: uuid.UUID,
+            uploader_id: uuid.UUID,
+            channel_id: uuid.UUID | None = None,
     ) -> FileAttachment:
         """Validate, upload to MinIO, persist metadata, return FileAttachment."""
         # 1. MIME detection via magic bytes
@@ -43,18 +50,18 @@ class FileService:
         if detected_mime not in ALLOWED_MIME_TYPES:
             raise UnsupportedFileType(detected_mime)
 
-        # 1b. Validate chatroom belongs to workspace
-        if chatroom_id is not None:
-            from model.messaging import Chatroom
-            chatroom = self.db.scalar(
-                select(Chatroom).where(
-                    Chatroom.id == chatroom_id,
-                    Chatroom.workspace_id == workspace_id,
-                    Chatroom.deleted_at.is_(None),
+        # 1b. Validate channel belongs to workspace
+        if channel_id is not None:
+            from model.messaging import Channel
+            channel = self.db.scalar(
+                select(Channel).where(
+                    Channel.id == channel_id,
+                    Channel.workspace_id == workspace_id,
+                    Channel.deleted_at.is_(None),
                 )
             )
-            if chatroom is None:
-                raise ValueError(f"Chatroom {chatroom_id} not found in workspace {workspace_id}")
+            if channel is None:
+                raise ValueError(f"Channel {channel_id} not found in workspace {workspace_id}")
 
         # 2. Stream the body once into a bounded buffer, computing size + checksum.
         # Stops at MAX_FILE_SIZE + 1 so a client lying about Content-Length cannot
@@ -78,10 +85,10 @@ class FileService:
         # 3. Generate storage key
         file_id = uuid.uuid4()
         ext = os.path.splitext(file.filename or "")[1].lower()
-        chatroom_part = str(chatroom_id) if chatroom_id else "general"
+        channel_part = str(channel_id) if channel_id else "general"
         storage_key = STORAGE_KEY_TEMPLATE.format(
             workspace_id=workspace_id,
-            chatroom_id=chatroom_part,
+            channel_id=channel_part,
             file_id=file_id,
             ext=ext,
         )
@@ -98,7 +105,7 @@ class FileService:
         db_file = FileAttachment(
             id=file_id,
             workspace_id=workspace_id,
-            chatroom_id=chatroom_id,
+            channel_id=channel_id,
             uploader_id=uploader_id,
             original_filename=file.filename or "unnamed",
             content_type=detected_mime,
@@ -122,9 +129,9 @@ class FileService:
         return db_file
 
     def get_file(
-        self,
-        file_id: uuid.UUID,
-        workspace_id: uuid.UUID,
+            self,
+            file_id: uuid.UUID,
+            workspace_id: uuid.UUID,
     ) -> FileAttachment | None:
         """Retrieve file metadata, scoped to workspace. Returns None if not found or deleted."""
         return self.db.scalar(
@@ -136,9 +143,9 @@ class FileService:
         )
 
     async def get_download_url(
-        self,
-        file_id: uuid.UUID,
-        workspace_id: uuid.UUID,
+            self,
+            file_id: uuid.UUID,
+            workspace_id: uuid.UUID,
     ) -> tuple[str, str] | None:
         """Return (download_url, filename) or None if file not found."""
         file = self.get_file(file_id, workspace_id)
@@ -152,12 +159,12 @@ class FileService:
         return url, file.original_filename
 
     def list_files(
-        self,
-        workspace_id: uuid.UUID,
-        chatroom_id: uuid.UUID | None = None,
-        content_type: str | None = None,
-        cursor: str | None = None,
-        limit: int = 20,
+            self,
+            workspace_id: uuid.UUID,
+            channel_id: uuid.UUID | None = None,
+            content_type: str | None = None,
+            cursor: str | None = None,
+            limit: int = 20,
     ) -> tuple[list[FileAttachment], str | None]:
         """List files with cursor-based pagination. Returns (files, next_cursor)."""
         query = (
@@ -170,8 +177,8 @@ class FileService:
             .limit(limit + 1)
         )
 
-        if chatroom_id is not None:
-            query = query.where(FileAttachment.chatroom_id == chatroom_id)
+        if channel_id is not None:
+            query = query.where(FileAttachment.channel_id == channel_id)
 
         if content_type is not None:
             query = query.where(FileAttachment.content_type == content_type)
@@ -188,8 +195,8 @@ class FileService:
                 query = query.where(
                     (FileAttachment.created_at < cursor_ts)
                     | (
-                        (FileAttachment.created_at == cursor_ts)
-                        & (FileAttachment.id < cursor_id)
+                            (FileAttachment.created_at == cursor_ts)
+                            & (FileAttachment.id < cursor_id)
                     )
                 )
             except (ValueError, TypeError):
@@ -206,9 +213,9 @@ class FileService:
         return results, next_cursor
 
     def soft_delete(
-        self,
-        file_id: uuid.UUID,
-        workspace_id: uuid.UUID,
+            self,
+            file_id: uuid.UUID,
+            workspace_id: uuid.UUID,
     ) -> FileAttachment | None:
         """Soft-delete a file. Returns the file or None if not found.
 
@@ -257,9 +264,9 @@ class FileService:
         )
 
     def reset_for_retry(
-        self,
-        file_id: uuid.UUID,
-        workspace_id: uuid.UUID,
+            self,
+            file_id: uuid.UUID,
+            workspace_id: uuid.UUID,
     ) -> FileAttachment | None:
         """Reset a file so it can be reprocessed.
 
@@ -292,9 +299,9 @@ class FileService:
         return file
 
     async def get_thumbnail_url(
-        self,
-        file_id: uuid.UUID,
-        workspace_id: uuid.UUID,
+            self,
+            file_id: uuid.UUID,
+            workspace_id: uuid.UUID,
     ) -> str | None:
         """Return a presigned URL to the thumbnail, or None if there isn't one."""
         file = self.get_file(file_id, workspace_id)
@@ -307,16 +314,16 @@ class FileService:
         )
 
     def attach_to_message(
-        self,
-        file_id: uuid.UUID,
-        message_id: uuid.UUID,
-        workspace_id: uuid.UUID,
-        chatroom_id: uuid.UUID | None = None,
+            self,
+            file_id: uuid.UUID,
+            message_id: uuid.UUID,
+            workspace_id: uuid.UUID,
+            channel_id: uuid.UUID | None = None,
     ) -> bool:
         """Attach an existing file to a message. Returns True on success.
 
-        When chatroom_id is provided, the message must belong to that
-        chatroom — otherwise a caller could pass any chatroom in the URL
+        When channel_id is provided, the message must belong to that
+        channel — otherwise a caller could pass any channel in the URL
         and have it accepted.
         """
         file = self.get_file(file_id, workspace_id)
@@ -327,8 +334,8 @@ class FileService:
             Message.id == message_id,
             Message.workspace_id == workspace_id,
         )
-        if chatroom_id is not None:
-            msg_query = msg_query.where(Message.chatroom_id == chatroom_id)
+        if channel_id is not None:
+            msg_query = msg_query.where(Message.channel_id == channel_id)
 
         msg = self.db.scalar(msg_query)
         if msg is None:

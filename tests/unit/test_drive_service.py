@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from files.constants import MAX_FILE_SIZE
+from config import cfg
 from files.exceptions import FileTooLarge, UnsupportedFileType
 from integrations.drive.service import DriveImportService
 
@@ -49,7 +49,7 @@ class TestImportFileGuards:
             "id": "x",
             "name": "huge.pdf",
             "mimeType": "application/pdf",
-            "size": str(MAX_FILE_SIZE + 1),
+            "size": str(cfg().files.max_size + 1),
         })
         with pytest.raises(FileTooLarge):
             await svc.import_file("x", uuid.uuid4())
@@ -90,12 +90,12 @@ class TestImportFileGuards:
 
         captured = {}
 
-        async def _fake_upload(self_, upload_file, workspace_id, uploader_id, chatroom_id=None):
+        async def _fake_upload(self_, upload_file, workspace_id, uploader_id, channel_id=None):
             captured["filename"] = upload_file.filename
             captured["content_type"] = upload_file.content_type
             captured["workspace_id"] = workspace_id
             captured["uploader_id"] = uploader_id
-            captured["chatroom_id"] = chatroom_id
+            captured["channel_id"] = channel_id
             return MagicMock(id=uuid.uuid4(), original_filename=upload_file.filename)
 
         with patch("integrations.drive.service.FileService.upload", new=_fake_upload):
@@ -107,4 +107,4 @@ class TestImportFileGuards:
         )
         assert captured["workspace_id"] == ws_id
         assert captured["uploader_id"] == user_id
-        assert captured["chatroom_id"] is None
+        assert captured["channel_id"] is None

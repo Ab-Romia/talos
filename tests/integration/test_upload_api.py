@@ -1,10 +1,8 @@
 import uuid
-from io import BytesIO
-from unittest.mock import AsyncMock
 
 import pytest
 
-from files.constants import MAX_FILE_SIZE
+from config import cfg
 
 
 @pytest.mark.integration
@@ -32,7 +30,7 @@ class TestUploadAPI:
         resp = client.post(
             f"/api/workspaces/{test_workspace.id}/files",
             files={"file": ("big.txt", b"x", "text/plain")},
-            headers={"content-length": str(MAX_FILE_SIZE + 1)},
+            headers={"content-length": str(cfg().files.max_size + 1)},
         )
         assert resp.status_code == 413
 
@@ -87,7 +85,7 @@ class TestUploadAPI:
 @pytest.mark.integration
 class TestRetryAPI:
     def test_retry_resets_failed_file_and_enqueues(
-        self, client, test_workspace, make_file, db_session, mock_arq_pool
+            self, client, test_workspace, make_file, db_session, mock_arq_pool
     ):
         from files.models import FileAttachment, ProcessingStatus
 

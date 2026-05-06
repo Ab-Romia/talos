@@ -1,13 +1,12 @@
 import enum
 import uuid
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import (
     DateTime, UUID, ForeignKey, String, BigInteger,
     Index, Table, Column, text, func,
 )
-from sqlalchemy.dialects.postgresql import ENUM as PgEnum
+from sqlalchemy.dialects.postgresql import ENUM
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from model import Base
@@ -41,12 +40,12 @@ class FileAttachment(Base):
         ForeignKey("workspaces.id", ondelete="CASCADE"),
         nullable=False, index=True,
     )
-    chatroom_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    channel_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("chatrooms.id", ondelete="SET NULL"),
+        ForeignKey("channels.id", ondelete="SET NULL"),
         nullable=True, index=True,
     )
-    uploader_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    uploader_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
@@ -59,25 +58,26 @@ class FileAttachment(Base):
     checksum: Mapped[str] = mapped_column(String(64), nullable=False)
 
     processing_status: Mapped[ProcessingStatus] = mapped_column(
-        PgEnum(ProcessingStatus, name="processing_status_enum", create_type=True),
+        ENUM(ProcessingStatus, name="processing_status_enum", create_type=True),
         nullable=False, default=ProcessingStatus.UPLOADED,
     )
-    processing_error: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
-    thumbnail_storage_key: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
-    chunk_count: Mapped[Optional[int]] = mapped_column(nullable=True)
+    processing_error: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    thumbnail_storage_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    chunk_count: Mapped[int | None] = mapped_column(nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
-    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(),
+                                                 onupdate=func.now())
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
 
     workspace = relationship("Workspace", back_populates="files")
-    chatroom = relationship("Chatroom", back_populates="files")
+    channel = relationship("Channel", back_populates="files")
     uploader = relationship("User", back_populates="uploaded_files")
     messages = relationship("Message", secondary="message_files", back_populates="files")
 
     __table_args__ = (
         Index("ix_file_workspace_created", "workspace_id", "created_at"),
-        Index("ix_file_chatroom_created", "chatroom_id", "created_at"),
+        Index("ix_file_channel_created", "channel_id", "created_at"),
         Index("ix_file_active", "workspace_id", "created_at",
               postgresql_where=text("deleted_at IS NULL")),
     )

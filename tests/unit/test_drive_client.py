@@ -7,20 +7,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from backend.auth.model import ProviderToken
 from integrations.drive.client import DriveClient, REFRESH_LEEWAY
 from integrations.drive.exceptions import (
     DriveAPIError,
     DriveNotConnected,
     DriveTokenRefreshFailed,
 )
-from model.identity import ProviderToken
 
 
 def _make_token(
-    access_token: str = "good-access",
-    refresh_token: str | None = "good-refresh",
-    expires_at: datetime | None = None,
-    scope: str | None = "drive.file",
+        access_token: str = "good-access",
+        refresh_token: str | None = "good-refresh",
+        expires_at: datetime | None = None,
+        scope: str | None = "drive.file",
 ) -> ProviderToken:
     """Build a ProviderToken without committing to the DB."""
     t = ProviderToken(
@@ -306,7 +306,7 @@ class TestPersistProviderToken:
     def test_reauth_without_expiry_preserves_existing_expires_at(self):
         from datetime import datetime, timezone, timedelta
         from backend.auth.oauth import _persist_provider_token
-        from model.identity import ProviderToken
+        from backend.auth.model import ProviderToken
         import uuid
 
         future = datetime.now(timezone.utc) + timedelta(hours=1)
@@ -377,4 +377,3 @@ class TestDownloadUnknownGoogleMime:
         with pytest.raises(DriveAPIError) as exc:
             await client.download("file-id", "application/vnd.google-apps.form", max_bytes=10 * 1024 * 1024)
         assert exc.value.status_code == 415
-

@@ -6,7 +6,6 @@ import pytest
 
 from files.models import ProcessingStatus
 from files.schemas import (
-    FileDownloadResponse,
     FileListResponse,
     FileMetadata,
     FileUploadResponse,
@@ -31,7 +30,7 @@ class TestSchemas:
         obj = MagicMock()
         obj.id = uuid.uuid4()
         obj.workspace_id = uuid.uuid4()
-        obj.chatroom_id = None
+        obj.channel_id = None
         obj.uploader_id = uuid.uuid4()
         obj.original_filename = "test.pdf"
         obj.content_type = "application/pdf"

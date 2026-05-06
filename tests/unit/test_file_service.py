@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from files.constants import MAX_FILE_SIZE
+from config import cfg
 from files.exceptions import FileTooLarge, UnsupportedFileType
 from files.models import FileAttachment, ProcessingStatus
 from files.service import FileService
@@ -70,25 +70,25 @@ class TestFileServiceUpload:
         svc = FileService(db, mock_storage)
         # Streaming size cap: bytes are counted as they're read, so we hit
         # FileTooLarge before the full body lands in memory.
-        upload = _make_upload_file(content=b"x" * (MAX_FILE_SIZE + 100), filename="big.txt")
+        upload = _make_upload_file(content=b"x" * (cfg().files.max_size + 100), filename="big.txt")
 
         with pytest.raises(FileTooLarge):
             await svc.upload(upload, uuid.uuid4(), uuid.uuid4())
 
     @pytest.mark.asyncio
     @patch("files.service.magic.from_buffer", return_value="text/plain")
-    async def test_upload_generates_key_with_chatroom(self, mock_magic, mock_storage):
+    async def test_upload_generates_key_with_channel(self, mock_magic, mock_storage):
         db = MagicMock()
         svc = FileService(db, mock_storage)
         upload = _make_upload_file(filename="doc.txt")
-        chatroom_id = uuid.uuid4()
+        channel_id = uuid.uuid4()
 
-        result = await svc.upload(upload, uuid.uuid4(), uuid.uuid4(), chatroom_id)
-        assert str(chatroom_id) in result.storage_key
+        result = await svc.upload(upload, uuid.uuid4(), uuid.uuid4(), channel_id)
+        assert str(channel_id) in result.storage_key
 
     @pytest.mark.asyncio
     @patch("files.service.magic.from_buffer", return_value="text/plain")
-    async def test_upload_generates_key_general_without_chatroom(self, mock_magic, mock_storage):
+    async def test_upload_generates_key_general_without_channel(self, mock_magic, mock_storage):
         db = MagicMock()
         svc = FileService(db, mock_storage)
         upload = _make_upload_file(filename="doc.txt")

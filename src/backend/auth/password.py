@@ -6,14 +6,14 @@ from fastapi import Depends, APIRouter, Form
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select, or_, update
 
-from backend.auth.model import User, IdentityProvider, Issuer
-from backend.auth.utils import errors, jwt
-from backend.auth.utils.helpers import sudo
-from backend.auth.utils.jwt import BaseJWTClaims
-from backend.auth.utils.session import revoke_by_uid, SessionDep, NewSessionDep
 from config import cfg
 from model import DatabaseDep
 from utils.email import send_email
+from .model import User, IdentityProvider, Issuer
+from .utils import errors, jwt
+from .utils.helpers import sudo
+from .utils.jwt import BaseJWTClaims
+from .utils.session import revoke_by_uid, SessionDep, NewSessionDep, Session as DBSession
 
 router = APIRouter()
 
@@ -57,11 +57,6 @@ def password_authenticate(
         .where(IdentityProvider.issuer == Issuer.totp)
     )
 
-    # Create or refresh DB session record so active_user can find it.
-    # Using merge() keeps re-login idempotent when the browser still has a
-    # valid cookie from a previous session — db.add() would collide on the
-    # existing sessions.id primary key.
-    from model.identity import Session as DBSession
     db.merge(DBSession(id=session.jti, user_id=user.id))
     db.commit()
 

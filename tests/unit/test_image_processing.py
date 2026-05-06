@@ -1,5 +1,4 @@
 import os
-import tempfile
 import uuid
 from io import BytesIO
 from unittest.mock import AsyncMock, MagicMock
@@ -26,7 +25,7 @@ def _make_record(filename="photo.png", content_type="image/png"):
     record.workspace_id = uuid.uuid4()
     record.original_filename = filename
     record.content_type = content_type
-    record.storage_key = f"workspaces/ws/chatrooms/general/{uuid.uuid4()}.png"
+    record.storage_key = f"workspaces/ws/channels/general/{uuid.uuid4()}.png"
     record.processing_status = ProcessingStatus.PROCESSING
     record.thumbnail_storage_key = None
     return record

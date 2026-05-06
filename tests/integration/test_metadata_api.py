@@ -50,12 +50,12 @@ class TestMetadataAPI:
         assert len(data2["files"]) == 5
         assert data2["next_cursor"] is None
 
-    def test_list_files_filter_chatroom(self, client, test_workspace, test_chatroom, make_file):
-        make_file(test_workspace.id, chatroom_id=test_chatroom.id, original_filename="in_chat.txt")
-        make_file(test_workspace.id, chatroom_id=None, original_filename="no_chat.txt")
+    def test_list_files_filter_channel(self, client, test_workspace, test_channel, make_file):
+        make_file(test_workspace.id, channel_id=test_channel.id, original_filename="in_chat.txt")
+        make_file(test_workspace.id, channel_id=None, original_filename="no_chat.txt")
 
         resp = client.get(
-            f"/api/workspaces/{test_workspace.id}/files?chatroom_id={test_chatroom.id}"
+            f"/api/workspaces/{test_workspace.id}/files?channel_id={test_channel.id}"
         )
         assert resp.status_code == 200
         files = resp.json()["files"]

@@ -4,9 +4,11 @@ from enum import Enum as PyEnum
 from typing import Any
 
 import sqlalchemy as sql
+from sqlalchemy import Uuid, ForeignKey, DateTime, func
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from files.models import FileAttachment
 from model import Base
 
 
@@ -33,6 +35,11 @@ class User(Base):
 
     data: Mapped[dict[str, Any]] = mapped_column(default={})
     roles: Mapped[list[Role]] = relationship(secondary=users_roles, back_populates=__tablename__)
+    uploaded_files: Mapped[list[FileAttachment]] = relationship(
+        FileAttachment,
+        back_populates="uploader",
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         # Ensure that the emails and usernames are partitioned
@@ -66,3 +73,25 @@ class IdentityProvider(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(sql.DateTime(), default=None)
 
     user = relationship("User", backref="identity_providers")
+
+
+class ProviderToken(Base):
+    """Persisted OAuth tokens for third-party API access (e.g. Google Drive).
+
+    Distinct from IdentityProvider, which only stores the OIDC claims used
+    for sign-in. One row per (user, provider).
+    """
+    __tablename__ = "provider_tokens"
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    provider: Mapped[str] = mapped_column(index=True)
+    access_token: Mapped[str] = mapped_column()
+    refresh_token: Mapped[str | None] = mapped_column()
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    scope: Mapped[str | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=func.now(), onupdate=func.now()
+    )

@@ -33,7 +33,7 @@ class Channel(Base):
 
     messages: Mapped[list[Message]] = relationship("Message", back_populates="channel")
     workspace: Mapped[Workspace] = relationship("Workspace", back_populates="channels")
-    files: Mapped[list[FileAttachment]] = relationship("FileAttachment", back_populates="chatroom")
+    files: Mapped[list[FileAttachment]] = relationship("FileAttachment", back_populates="channel")
 
 
 class Message(Base):

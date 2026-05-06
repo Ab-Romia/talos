@@ -3,19 +3,19 @@ import uuid
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
 
-from backend.auth.utils.helpers import active_user
+from backend.auth import active_user
+from backend.auth.model import User
 from files.storage import MinIOStorage
 from model import DatabaseDep
-from model.identity import User
 from model.messaging import Workspace
 
 
 def get_workspace_member(
-    workspace_id: uuid.UUID,
-    user: User = Depends(active_user),
-    db: DatabaseDep = None,
+        workspace_id: uuid.UUID,
+        user: User = Depends(active_user),
+        db: DatabaseDep = None,
 ) -> Workspace:
-    """Verify the user has access to the workspace. Currently checks ownership only."""
+    """Verify the user has access to the workspace. Currently, checks ownership only."""
     workspace = db.scalar(
         select(Workspace).where(
             Workspace.id == workspace_id,
@@ -32,7 +32,7 @@ def get_workspace_member(
 
 
 def get_storage(request: Request) -> MinIOStorage:
-    """Retrieve the MinIOStorage instance from app state."""
+    """Retrieve the MinIOStorage instance from the app state."""
     storage: MinIOStorage | None = getattr(request.app.state, "minio_storage", None)
     if storage is None:
         raise HTTPException(

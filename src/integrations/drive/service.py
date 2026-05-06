@@ -10,21 +10,22 @@ import os
 import uuid
 
 from fastapi import UploadFile
-from starlette.datastructures import Headers
 from sqlalchemy.orm import Session
+from starlette.datastructures import Headers
 
-from files.constants import ALLOWED_MIME_TYPES, MAX_FILE_SIZE
+from config import cfg
 from files.exceptions import FileTooLarge, UnsupportedFileType
 from files.models import FileAttachment
 from files.service import FileService
 from files.storage import MinIOStorage
 from utils.logger import get_logger
-
 from .client import DriveClient
 from .constants import GOOGLE_DOC_EXPORTS
-from .exceptions import DriveAPIError
 
 logger = get_logger(__name__)
+
+MAX_FILE_SIZE = cfg().files.max_size
+ALLOWED_MIME_TYPES = cfg().files.allowed_mime_types
 
 
 class DriveImportService:
@@ -35,10 +36,10 @@ class DriveImportService:
         self.client = DriveClient(db, user_id)
 
     async def import_file(
-        self,
-        drive_file_id: str,
-        workspace_id: uuid.UUID,
-        chatroom_id: uuid.UUID | None = None,
+            self,
+            drive_file_id: str,
+            workspace_id: uuid.UUID,
+            channel_id: uuid.UUID | None = None,
     ) -> FileAttachment:
         meta = await self.client.get_metadata(drive_file_id)
 
@@ -73,7 +74,7 @@ class DriveImportService:
             upload,
             workspace_id=workspace_id,
             uploader_id=self.user_id,
-            chatroom_id=chatroom_id,
+            channel_id=channel_id,
         )
 
     @staticmethod

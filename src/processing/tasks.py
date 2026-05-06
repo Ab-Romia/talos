@@ -4,9 +4,12 @@ import uuid
 
 from sqlalchemy import update as sa_update
 
-from files.constants import DOCUMENT_MIME_TYPES, IMAGE_MIME_TYPES
+from config import cfg
 from files.models import FileAttachment, ProcessingStatus
 from utils.logger import get_logger
+
+DOCUMENT_MIME_TYPES = cfg().files.document_mime_types
+IMAGE_MIME_TYPES = cfg().files.image_mime_types
 
 logger = get_logger(__name__)
 

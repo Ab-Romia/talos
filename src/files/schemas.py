@@ -19,7 +19,7 @@ class FileUploadResponse(BaseModel):
 class FileMetadata(BaseModel):
     id: uuid.UUID
     workspace_id: uuid.UUID
-    chatroom_id: uuid.UUID | None
+    channel_id: uuid.UUID | None
     uploader_id: uuid.UUID
     original_filename: str
     content_type: str

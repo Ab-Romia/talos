@@ -23,7 +23,7 @@ class DriveFileListResponse(BaseModel):
 class DriveImportRequest(BaseModel):
     drive_file_id: str
     workspace_id: uuid.UUID
-    chatroom_id: uuid.UUID | None = None
+    channel_id: uuid.UUID | None = None
 
 
 class DriveImportResponse(FileUploadResponse):

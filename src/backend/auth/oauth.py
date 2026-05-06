@@ -1,5 +1,5 @@
-from typing import Annotated
 from datetime import datetime, timezone, timedelta
+from typing import Annotated
 
 import httpx
 from authlib.integrations.base_client import OAuthError
@@ -154,7 +154,7 @@ async def oauth_callback(provider: ProviderParam,
     if not user.signup_complete:
         return RedirectResponse(url="/complete_signup", status_code=status.HTTP_303_SEE_OTHER)
 
-    _persist_provider_token(db, user.user_id, provider, token)
+    _persist_provider_token(db, user.id, provider, token)
 
     return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
 

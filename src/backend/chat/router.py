@@ -1,5 +1,4 @@
-"""Chat and workspace endpoints — connects frontend to RAG pipeline."""
-
+"""Chat-related endpoints: workspaces, channels, messages"""
 import json
 import time
 import uuid
@@ -9,11 +8,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from backend.auth.utils.helpers import active_user, UserDep
+from backend.auth.model import User
+from backend.auth.utils.helpers import active_user
 from files.dependencies import get_workspace_member
 from model import DatabaseDep
-from model.identity import User
-from model.messaging import Workspace, Chatroom, Message
+from model.messaging import Workspace, Channel, Message
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -31,7 +30,7 @@ class WorkspaceCreate(BaseModel):
     name: str
 
 
-class ChatroomCreate(BaseModel):
+class ChannelCreate(BaseModel):
     name: str
 
 
@@ -44,8 +43,8 @@ class MessageCreate(BaseModel):
 
 @router.get("/workspaces")
 def list_workspaces(
-    user: User = Depends(active_user),
-    db: DatabaseDep = None,
+        user: User = Depends(active_user),
+        db: DatabaseDep = None,
 ):
     workspaces = db.scalars(
         select(Workspace).where(
@@ -61,9 +60,9 @@ def list_workspaces(
 
 @router.post("/workspaces", status_code=status.HTTP_201_CREATED)
 def create_workspace(
-    body: WorkspaceCreate,
-    user: User = Depends(active_user),
-    db: DatabaseDep = None,
+        body: WorkspaceCreate,
+        user: User = Depends(active_user),
+        db: DatabaseDep = None,
 ):
     ws = Workspace(name=body.name, owner_id=user.id)
     db.add(ws)
@@ -74,8 +73,8 @@ def create_workspace(
 
 @router.get("/workspaces/{workspace_id}")
 def get_workspace(
-    workspace_id: uuid.UUID,
-    workspace: Workspace = Depends(get_workspace_member),
+        workspace_id: uuid.UUID,
+        workspace: Workspace = Depends(get_workspace_member),
 ):
     return {
         "id": str(workspace.id),
@@ -84,36 +83,34 @@ def get_workspace(
     }
 
 
-# ── Chatrooms ──
-
-@router.get("/workspaces/{workspace_id}/chatrooms")
-def list_chatrooms(
-    workspace_id: uuid.UUID,
-    user: User = Depends(active_user),
-    workspace: Workspace = Depends(get_workspace_member),
-    db: DatabaseDep = None,
+@router.get("/workspaces/{workspace_id}/channels")
+def list_channels(
+        workspace_id: uuid.UUID,
+        user: User = Depends(active_user),
+        workspace: Workspace = Depends(get_workspace_member),
+        db: DatabaseDep = None,
 ):
-    chatrooms = db.scalars(
-        select(Chatroom).where(
-            Chatroom.workspace_id == workspace_id,
-            Chatroom.deleted_at.is_(None),
-        ).order_by(Chatroom.created_at)
+    channels = db.scalars(
+        select(Channel).where(
+            Channel.workspace_id == workspace_id,
+            Channel.deleted_at.is_(None),
+        ).order_by(Channel.created_at)
     ).all()
     return [
         {"id": str(c.id), "name": c.name, "created_at": c.created_at.isoformat() if c.created_at else None}
-        for c in chatrooms
+        for c in channels
     ]
 
 
-@router.post("/workspaces/{workspace_id}/chatrooms", status_code=status.HTTP_201_CREATED)
-def create_chatroom(
-    workspace_id: uuid.UUID,
-    body: ChatroomCreate,
-    user: User = Depends(active_user),
-    workspace: Workspace = Depends(get_workspace_member),
-    db: DatabaseDep = None,
+@router.post("/workspaces/{workspace_id}/channels", status_code=status.HTTP_201_CREATED)
+def create_channel(
+        workspace_id: uuid.UUID,
+        body: ChannelCreate,
+        user: User = Depends(active_user),
+        workspace: Workspace = Depends(get_workspace_member),
+        db: DatabaseDep = None,
 ):
-    cr = Chatroom(name=body.name, workspace_id=workspace_id)
+    cr = Channel(name=body.name, workspace_id=workspace_id)
     db.add(cr)
     db.commit()
     db.refresh(cr)
@@ -122,19 +119,19 @@ def create_chatroom(
 
 # ── Messages ──
 
-@router.get("/workspaces/{workspace_id}/chatrooms/{chatroom_id}/messages")
+@router.get("/workspaces/{workspace_id}/channels/{channel_id}/messages")
 def list_messages(
-    workspace_id: uuid.UUID,
-    chatroom_id: uuid.UUID,
-    limit: int = Query(50, ge=1, le=200),
-    user: User = Depends(active_user),
-    workspace: Workspace = Depends(get_workspace_member),
-    db: DatabaseDep = None,
+        workspace_id: uuid.UUID,
+        channel_id: uuid.UUID,
+        limit: int = Query(50, ge=1, le=200),
+        user: User = Depends(active_user),
+        workspace: Workspace = Depends(get_workspace_member),
+        db: DatabaseDep = None,
 ):
     messages = db.scalars(
         select(Message).where(
             Message.workspace_id == workspace_id,
-            Message.chatroom_id == chatroom_id,
+            Message.channel_id == channel_id,
         ).order_by(Message.created_at.asc()).limit(limit)
     ).all()
     return [
@@ -149,30 +146,30 @@ def list_messages(
     ]
 
 
-@router.post("/workspaces/{workspace_id}/chatrooms/{chatroom_id}/messages")
+@router.post("/workspaces/{workspace_id}/channels/{channel_id}/messages")
 def send_message(
-    workspace_id: uuid.UUID,
-    chatroom_id: uuid.UUID,
-    body: MessageCreate,
-    user: User = Depends(active_user),
-    workspace: Workspace = Depends(get_workspace_member),
-    db: DatabaseDep = None,
+        workspace_id: uuid.UUID,
+        channel_id: uuid.UUID,
+        body: MessageCreate,
+        user: User = Depends(active_user),
+        workspace: Workspace = Depends(get_workspace_member),
+        db: DatabaseDep = None,
 ):
-    # Verify chatroom exists in workspace
-    chatroom = db.scalar(
-        select(Chatroom).where(
-            Chatroom.id == chatroom_id,
-            Chatroom.workspace_id == workspace_id,
-            Chatroom.deleted_at.is_(None),
+    # Verify channel exists in workspace
+    channel = db.scalar(
+        select(Channel).where(
+            Channel.id == channel_id,
+            Channel.workspace_id == workspace_id,
+            Channel.deleted_at.is_(None),
         )
     )
-    if chatroom is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chatroom not found")
+    if channel is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Channel not found")
 
     # Save user message
     user_msg = Message(
         workspace_id=workspace_id,
-        chatroom_id=chatroom_id,
+        channel_id=channel_id,
         sender_id=user.id,
         content=body.content,
     )
@@ -208,7 +205,7 @@ def send_message(
             with SessionLocal() as gen_db:
                 recent = gen_db.scalars(
                     select(Message).where(
-                        Message.chatroom_id == chatroom_id,
+                        Message.channel_id == channel_id,
                     ).order_by(Message.created_at.desc()).limit(10)
                 ).all()
                 for msg in reversed(recent[1:]):
@@ -253,7 +250,7 @@ def send_message(
             with SessionLocal() as gen_db:
                 ai_msg = Message(
                     workspace_id=workspace_id,
-                    chatroom_id=chatroom_id,
+                    channel_id=channel_id,
                     sender_id=None,
                     content=ai_response,
                 )

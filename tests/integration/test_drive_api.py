@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from model.identity import ProviderToken
+from backend.auth.model import ProviderToken
+from config import cfg
 
 
 @pytest.fixture
@@ -103,7 +104,7 @@ class TestDriveImport:
         assert resp.status_code == 412
 
     def test_happy_path_runs_through_upload(
-        self, client, test_workspace, drive_token, db_session, mock_arq_pool
+            self, client, test_workspace, drive_token, db_session, mock_arq_pool
     ):
         from files.models import FileAttachment
 
@@ -134,15 +135,13 @@ class TestDriveImport:
         mock_arq_pool.enqueue_job.assert_called_once()
 
     def test_413_on_oversized_file(self, client, test_workspace, drive_token):
-        from files.constants import MAX_FILE_SIZE
-
         with patch("integrations.drive.service.DriveClient") as MockClient:
             instance = MockClient.return_value
             instance.get_metadata = AsyncMock(return_value={
                 "id": "abc",
                 "name": "huge.pdf",
                 "mimeType": "application/pdf",
-                "size": str(MAX_FILE_SIZE + 1),
+                "size": str(cfg().files.max_size + 1),
             })
             resp = client.post(
                 f"/api/integrations/drive/workspaces/{test_workspace.id}/import"
@@ -151,7 +150,7 @@ class TestDriveImport:
         assert resp.status_code == 413
 
     def test_415_on_unsupported_google_native_type(
-        self, client, test_workspace, drive_token
+            self, client, test_workspace, drive_token
     ):
         with patch("integrations.drive.service.DriveClient") as MockClient:
             instance = MockClient.return_value
@@ -167,7 +166,7 @@ class TestDriveImport:
         assert resp.status_code == 415
 
     def test_503_when_arq_pool_unavailable(
-        self, client, test_workspace, drive_token
+            self, client, test_workspace, drive_token
     ):
         from app import app
         app.state.arq_pool = None
@@ -191,13 +190,13 @@ class TestDriveImport:
             # restore for other tests
             app.state.arq_pool = None  # client fixture re-installs on next test
 
-    def test_chatroom_validated_against_workspace(
-        self, client, test_workspace, drive_token
+    def test_channel_validated_against_workspace(
+            self, client, test_workspace, drive_token
     ):
-        # chatroom_id that doesn't exist in this workspace
+        # channel_id that doesn't exist in this workspace
         resp = client.post(
             f"/api/integrations/drive/workspaces/{test_workspace.id}/import"
-            f"?drive_file_id=abc&chatroom_id={uuid.uuid4()}"
+            f"?drive_file_id=abc&channel_id={uuid.uuid4()}"
         )
         assert resp.status_code == 404
 
