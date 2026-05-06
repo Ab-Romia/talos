@@ -25,6 +25,11 @@ class AuthConfig(BaseModel):
     sudo_max_age: timedelta = timedelta(minutes=10)
     session_max_age: timedelta = timedelta(days=30)
     session_refresh_threshold: timedelta = timedelta(minutes=10)
+    password_reset_token_expiry: timedelta = timedelta(hours=1)
+
+    session_cookie_key: str = "user_session"
+
+    permission_bitstring_length: int = 64
 
     model_config = SettingsConfigDict(
         val_json_bytes="base64"
@@ -49,7 +54,8 @@ class Config(BaseSettings):
     app_host: str
     app_port: int
 
-    database_url: str = ""
+    database_url: str
+    cache_backend: str = "memory://"
 
     auth: AuthConfig = None
     minio: MinIOConfig = MinIOConfig()

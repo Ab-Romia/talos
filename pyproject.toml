@@ -3,11 +3,10 @@ name = "graduation-project"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13, <3.15"
+requires-python = ">=3.14"
 dependencies = [
     "bcrypt>=5.0.0",
     "pyotp>=2.9.0",
-    #
     "fastapi[all]>=0.134.0",
     "jinja2>=3.1.6",
     "langchain>=1.2.10",
@@ -24,8 +23,7 @@ dependencies = [
     "psycopg2-binary>=2.9.11",
     "python-multipart>=0.0.22",
     "rank-bm25>=0.2.2",
-    #    "sentence-transformers>=5.1.3",
-    #
+    "sentence-transformers>=5.1.3",
     "sqlalchemy>=2.0.48",
     "starlette>=0.52.1",
     "uvicorn>=0.41.0",
@@ -34,7 +32,9 @@ dependencies = [
     "qrcode[pil]>=8.2",
     "joserfc>=1.6.3",
     "black>=26.3.1",
-    # File upload & processing
+    "limits>=5.8.0",
+    "cachetools>=7.1.0",
+    "bidict>=0.23.1",
     "minio>=7.2.20",
     "arq>=0.27.0",
     "pillow>=12.1.1",
@@ -66,22 +66,6 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]
-asyncio_mode = "auto"
-markers = [
-    "unit: Unit tests (no external deps)",
-    "integration: Integration tests (need DB)",
-]
-
-[tool.uv.sources]
-torch = { index = "pytorch-cpu" }
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
 
 [tool.pyright]
-extraPaths = [
-    "src",
-    "."
-]
+extraPaths = ["src", "."]

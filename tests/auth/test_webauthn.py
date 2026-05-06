@@ -4,10 +4,10 @@ from unittest.mock import Mock, patch
 
 from fastapi import status
 
+from backend.auth.model import IdentityProvider, Issuer
 from backend.auth.utils.jwt import create_token, verify_token
 from backend.auth.webauthn import WebAuthnChallengeClaims, generate_passkey_new, verify_passkey, register_passkey, \
     generate_passkey_for_auth
-from model.identity import IdentityProvider, Issuer
 
 
 class TestGeneratePasskey:

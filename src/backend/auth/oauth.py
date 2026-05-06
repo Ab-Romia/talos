@@ -1,20 +1,24 @@
 from typing import Annotated
+from datetime import datetime, timezone, timedelta
 
 import httpx
 from authlib.integrations.base_client import OAuthError
-from authlib.integrations.starlette_client import OAuth
+from authlib.integrations.starlette_client import OAuth, StarletteOAuth2App
 from fastapi import Request, HTTPException, status, APIRouter
-from pydantic import AfterValidator, BaseModel, PydanticUserError
+from pydantic import AfterValidator, BaseModel, ConfigDict, ValidationError
 from sqlalchemy import select
 from starlette.responses import RedirectResponse
 
-from datetime import datetime, timezone, timedelta
-
+from backend.auth.model import IdentityProvider, Issuer, User, ProviderToken
+from backend.auth.utils.session import UnverifiedSessionDep, NewSessionDep
 from model import DatabaseDep
-from model.identity import IdentityProvider, ProviderToken, User, Issuer
-from config import cfg
-from backend.auth.utils.session import UnverifiedSessionDep
-from sqlalchemy import select as _select
+from src.config import cfg
+
+router = APIRouter()
+oauth = OAuth()
+
+for name, client in cfg().auth.oauth_clients.items():
+    oauth.register(name=name, **client.model_dump())
 
 
 class OIDC(BaseModel):
@@ -25,6 +29,8 @@ class OIDC(BaseModel):
     name: str
     picture: str = None
 
+    model_config = ConfigDict(extra="ignore")
+
     @staticmethod
     def from_github(github_user: dict):
         return OIDC(
@@ -34,13 +40,6 @@ class OIDC(BaseModel):
             picture=github_user["avatar_url"],
             iss="https://github.com"
         )
-
-
-router = APIRouter()
-oauth = OAuth()
-
-for name, client in cfg().auth.oauth_clients.items():
-    oauth.register(name=name, **client.model_dump())
 
 
 def invalid_provider_exception(provider):
@@ -77,18 +76,16 @@ async def oauth_login(provider: ProviderParam, request: Request, session: Unveri
 
 @router.get("/{provider}/callback")
 async def oauth_callback(provider: ProviderParam,
-                         session: UnverifiedSessionDep,
+                         session: NewSessionDep,
                          request: Request,
                          db: DatabaseDep):
-    client = oauth.create_client(provider)
+    client: StarletteOAuth2App = oauth.create_client(provider)
 
     fail = HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail=f"{provider.capitalize()} authentication failed",
     )
 
-    # TODO: handle all errors,
-    #  is this correct handling?
     try:
         # authlib expects a session dict in the scope
         request.scope["session"] = session.model_extra
@@ -98,42 +95,36 @@ async def oauth_callback(provider: ProviderParam,
         session.model_extra.clear()
         session.model_extra.update(request.session)
     except OAuthError:
-        raise
-        # return RedirectResponse(url=request.url_for("oauth_login", provider=provider),
-        #                         status_code=status.HTTP_302_FOUND)
+        raise fail
 
     try:
         match provider:
             case "google":
-                user_info = OIDC.model_validate(
-                    token["userinfo"],
-                    extra="ignore"
-                )
+                user_info = OIDC.model_validate(token["userinfo"])
             case "github":
-                res = httpx.get('https://api.github.com/user',
-                                headers={"Authorization": f"Bearer {token['access_token']}"})
+                res = await client.get("/user", token=token)
                 user_info = OIDC.from_github(res.json())
             case _:
                 raise invalid_provider_exception(provider)
-    except PydanticUserError:
+    except ValidationError:
         raise fail
 
     identity = db.scalar(
         select(IdentityProvider)
-        .where(
-            IdentityProvider.issuer == Issuer.oauth,
-            IdentityProvider.data["sub"].as_string() == user_info.sub,
-        )
+        .where(IdentityProvider.issuer == Issuer.oauth)
+        .where(IdentityProvider.data["sub"].as_string() == user_info.sub)
     )
 
     if identity is None:
-        # New Identity or new user
+        # First time login with this provider
+        # Either new identity for existing user or new user
         user = db.scalar(
-            select(User).where(User.primary_email == user_info.email)
+            select(User)
+            .where(User.primary_email == user_info.email)
+            .where(User.deleted_at.is_(None))
         )
+
         if user is None:
-            # New user
-            # TODO: handle account creation -> redirect to first time profile customizations
             user = User(
                 primary_email=user_info.email,
                 name=user_info.name,
@@ -142,25 +133,35 @@ async def oauth_callback(provider: ProviderParam,
                 roles=[],
             )
             db.add(user)
-            db.flush()  # populate user.id
+            db.flush()
 
         identity = IdentityProvider(
             user_id=user.id,
             issuer=Issuer.oauth,
-            data=user_info.model_dump(),
+            data=user_info.model_dump(include={"sub", "iss"})
         )
         db.add(identity)
         db.commit()
+    else:
+        user = db.scalar(
+            select(User)
+            .where(User.id == identity.user_id)
+        )
+        assert user is not None, "Identity exists without a user"
 
-    _persist_provider_token(db, identity.user_id, provider, token)
+    session.sub = user.id
 
-    session.sub = identity.user_id
+    if not user.signup_complete:
+        return RedirectResponse(url="/complete_signup", status_code=status.HTTP_303_SEE_OTHER)
+
+    _persist_provider_token(db, user.user_id, provider, token)
 
     return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
 
 
-def _persist_provider_token(db, user_id, provider: str, token: dict) -> None:
-    """Upsert the OAuth access/refresh token returned by the provider.
+def _persist_provider_token(db, user_id, provider: str, token: dict):
+    """
+    Upsert the OAuth access/refresh token returned by the provider.
 
     Only stores tokens we'll actually call APIs with (currently: google).
     A missing refresh_token on a re-auth is preserved from the existing row
@@ -181,7 +182,7 @@ def _persist_provider_token(db, user_id, provider: str, token: dict) -> None:
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(token["expires_in"]))
 
     existing = db.scalar(
-        _select(ProviderToken).where(
+        select(ProviderToken).where(
             ProviderToken.user_id == user_id,
             ProviderToken.provider == provider,
         )

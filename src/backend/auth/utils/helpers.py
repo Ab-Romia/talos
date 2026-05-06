@@ -4,26 +4,23 @@ from typing import Annotated
 from fastapi import Depends
 from fastapi.exception_handlers import http_exception_handler as fastapi_http_exception_handler
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
 
+from backend.auth.model import User
 from backend.auth.utils import errors
-from backend.auth.utils.session import SessionDep, auth_token, unverified_session, verified_session, \
-    UnverifiedSessionDep
+from backend.auth.utils.session import SessionDep, auth_token, unverified_session, UnverifiedSessionDep, Session
 from model import DatabaseDep
-from model.identity import User, Session
 
 
 # TODO:
-#  forgot password,
 #  backup codes for totp
 #  email verification,
 #  multiple account support
-#  sudo mode (re-auth for sensitive actions)
 #  remember me functionality
 #  device recognition (e.g. for risk-based authentication)
 #  exception handling
-#  use starlette middleware session
 #  prevent re-signin, and invalidate prev session on resignin
 
 
@@ -34,7 +31,7 @@ async def auth_exception_handler(request: Request, exc: errors.AuthException):
         return await fastapi_http_exception_handler(request, exc)
 
     match type(exc):
-        case errors.InvalidToken:
+        case errors.InvalidCredentials:
             return RedirectResponse(url=request.url_for("login"), status_code=302)
 
     return await fastapi_http_exception_handler(request, exc)
@@ -55,8 +52,8 @@ def active_user(session: UnverifiedSessionDep, db: DatabaseDep):
     if user.deleted_at is not None:
         raise errors.UserNotFound()
 
-    if not user.email_verified:
-        raise errors.EmailNotVerified()
+    if not user.signup_complete:
+        raise errors.IncompleteUserProfile()
 
     return user
 
@@ -74,6 +71,7 @@ def optional_active_user(request: Request, db: DatabaseDep):
 
 
 def sudo(session: SessionDep):
+    """Dependency to require sudo mode for sensitive actions. Sudo mode is activated by re-authenticating the user and is valid for a short period of time."""
     if session.sudo_exp is None or session.sudo_exp < datetime.now(timezone.utc):
         raise errors.SudoRequired()
 

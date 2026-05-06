@@ -1,8 +1,9 @@
 from fastapi import status
 from sqlalchemy import select
 
+from backend.auth.model import IdentityProvider, Issuer
 from backend.auth.password import hash_password, verify_password, password_authenticate, change_password
-from model.identity import IdentityProvider, Issuer, Session as UserSession
+from backend.auth.utils.session import Session as UserSession
 
 
 class TestPasswordHashing:
@@ -82,7 +83,7 @@ class TestPasswordAuthentication:
 
     def test_with_unverified_email(self, client, path, db_session, test_user_with_password):
         user, password = test_user_with_password
-        user.email_verified = False
+        user.signup_complete = False
         db_session.commit()
 
         response = client.post(
@@ -138,7 +139,7 @@ class TestChangePassword:
         response = client.put(
             path(change_password),
             headers={"Authorization": f"Bearer {sudo_auth_token}"},
-            params={"new_password": new_password},
+            data={"new_password": new_password},
         )
 
         assert response.status_code == status.HTTP_200_OK
@@ -163,10 +164,10 @@ class TestChangePassword:
         response = client.put(
             path(change_password),
             headers={"Authorization": f"Bearer {auth_token}"},
-            params={"new_password": new_password},
+            data={"new_password": new_password},
         )
 
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.status_code == status.HTTP_403_FORBIDDEN
 
     def test_clears_sessions(self, client, path, db_session, test_user_with_password, sudo_auth_token):
         user, _ = test_user_with_password
@@ -180,7 +181,7 @@ class TestChangePassword:
         response = client.put(
             path(change_password),
             headers={"Authorization": f"Bearer {sudo_auth_token}"},
-            params={"new_password": "NewPassword456!"},
+            data={"new_password": "NewPassword456!"},
         )
 
         assert response.status_code == status.HTTP_200_OK

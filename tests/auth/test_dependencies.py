@@ -36,8 +36,14 @@ def opt_active_user_path():
 
 
 class TestActiveUserEndpoint:
+    @staticmethod
+    def _set_session_cookie(client, token: str):
+        client.cookies.clear()
+        client.cookies.set("user_session", token)
+
     def test_valid_session(self, client, test_user, auth_token, active_user_path):
-        resp = client.get(active_user_path, cookies={"user_session": auth_token})
+        self._set_session_cookie(client, auth_token)
+        resp = client.get(active_user_path)
 
         assert resp.status_code == 200
         assert resp.json()["id"] == str(test_user.id)
@@ -45,10 +51,10 @@ class TestActiveUserEndpoint:
     def test_when_otp_required(self, client, test_session, active_user_path):
         test_session.requires_otp = True
         auth_token = create_token(test_session)
+        self._set_session_cookie(client, auth_token)
 
         resp = client.get(active_user_path,
-                          headers={"Authorization": f"Bearer {auth_token}"},
-                          cookies={"user_session": auth_token})
+                          headers={"Authorization": f"Bearer {auth_token}"})
 
         assert resp.status_code == 401
 
@@ -56,18 +62,18 @@ class TestActiveUserEndpoint:
         from datetime import timezone, datetime
         test_user.deleted_at = datetime.now(timezone.utc)
         db_session.commit()
+        self._set_session_cookie(client, auth_token)
 
-        resp = client.get(active_user_path, headers={"Authorization": f"Bearer {auth_token}"},
-                          cookies={"user_session": auth_token})
+        resp = client.get(active_user_path, headers={"Authorization": f"Bearer {auth_token}"})
 
         assert resp.status_code == 401
 
     def test_when_email_not_verified(self, client, db_session, test_user, test_session, auth_token, active_user_path):
-        test_user.email_verified = False
+        test_user.signup_complete = False
         db_session.commit()
+        self._set_session_cookie(client, auth_token)
 
-        resp = client.get(active_user_path, headers={"Authorization": f"Bearer {auth_token}"},
-                          cookies={"user_session": auth_token})
+        resp = client.get(active_user_path, headers={"Authorization": f"Bearer {auth_token}"})
 
         assert resp.status_code == 401
 
@@ -79,12 +85,14 @@ class TestActiveUserEndpoint:
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
         token = create_token(claims)
+        self._set_session_cookie(client, token)
 
-        resp = client.get(active_user_path, cookies={"user_session": token})
+        resp = client.get(active_user_path)
 
         assert resp.status_code == 401
 
     def test_optional_user_invalid(self, client, active_user_path, opt_active_user_path):
+        client.cookies.clear()
         resp1 = client.get(active_user_path)
         resp2 = client.get(opt_active_user_path)
 
@@ -93,8 +101,9 @@ class TestActiveUserEndpoint:
         assert resp2.json() is None
 
     def test_optional_user_valid(self, client, auth_token, active_user_path, opt_active_user_path):
-        resp1 = client.get(active_user_path, cookies={"user_session": auth_token})
-        resp2 = client.get(opt_active_user_path, cookies={"user_session": auth_token})
+        self._set_session_cookie(client, auth_token)
+        resp1 = client.get(active_user_path)
+        resp2 = client.get(opt_active_user_path)
 
         assert resp2.status_code == 200
         assert resp1.status_code == 200

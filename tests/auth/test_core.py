@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import timedelta
 
@@ -5,36 +6,124 @@ from fastapi import status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.auth.core import activate_sudo, logout, revoke_token, create_user
+from backend.auth.core import activate_sudo, logout, revoke_token, initiate_signup, complete_signup
+from backend.auth.model import User, IdentityProvider, Issuer
 from backend.auth.utils.jwt import verify_token
-from backend.auth.utils.session import SessionClaims
-from model.identity import User, Session as UserSession
+from backend.auth.utils.session import SessionClaims, Session as UserSession
 
 
 class TestSignup:
-    def test_success(self, client, path, db_session: Session):
-        from faker import Faker
-        faker = Faker()
+    def test_success(self, client, path, db_session, capsys):
+        suffix = uuid.uuid4().hex
+        email_data = {"email": f"{suffix}@example.com"}
+
+        response = client.post(path(initiate_signup), data=email_data)
+
+        if response.status_code != 202:
+            print("ERROR", response.json())
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+
+        # TODO: fix:
+        #  Extract token from printed output (since send_email is mocked to print the email content)
+        stdout = capsys.readouterr().out
+        match = re.search(r"token=([^\n]+)", stdout)
+        assert match is not None
+        verify_token_value = match.group(1).strip()
+
         user_data = {
-            "username": "test_" + faker.user_name(),
-            "primary_email": faker.email(),
-            "password": faker.password(),
-            "name": faker.name(),
+            "email_token": str(verify_token_value),
+            "username": f"test-{suffix}",
+            "auth_info": [{
+                "auth_type": "password",
+                "password": "TestPassword123!",
+            }],
         }
 
-        response = client.post(path(create_user), data=user_data)
+        verify_response = client.post(path(complete_signup),
+                                      json=user_data,
+                                      follow_redirects=False)
+        assert verify_response.status_code == status.HTTP_302_FOUND
 
-        assert response.status_code == status.HTTP_201_CREATED
-
-        # Verify user was created
         user = db_session.scalar(
             select(User)
             .where(User.username == user_data["username"])
         )
         assert user is not None
-        assert user.primary_email == user_data["primary_email"]
-        assert user.name == user_data["name"]
-        assert user.email_verified is True  # TODO marked in code
+        assert user.primary_email == email_data["email"]
+
+        identity = db_session.scalar(
+            select(IdentityProvider)
+            .where(IdentityProvider.user_id == user.id,
+                   IdentityProvider.issuer == Issuer.password)
+        )
+        assert identity is not None
+        assert "hash" in identity.data
+
+    def test_signup_duplicate_username_or_email(self, client, path, test_user):
+        response = client.post(
+            path(initiate_signup),
+            data={"email": test_user.primary_email}
+        )
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+
+    def test_verify_duplicate_user_returns_conflict(self, client, path, db_session: Session, capsys, test_user):
+        response = client.post(
+            path(initiate_signup),
+            data={"email": "new_user_for_verify@example.com"}
+        )
+        assert response.status_code == status.HTTP_202_ACCEPTED
+
+        stdout = capsys.readouterr().out
+        match = re.search(r"token=([^\n]+)", stdout)
+        assert match is not None
+        verify_token_value = match.group(1).strip()
+
+        # Insert a conflicting user before verify to mimic race condition.
+        conflict = User(
+            username="new-user-for-verify",
+            primary_email="different_email@example.com",
+            name="Conflict",
+            data={},
+            roles=[],
+        )
+        db_session.add(conflict)
+        db_session.commit()
+
+        verify_response = client.post(
+            path(complete_signup),
+            json={
+                "email_token": str(verify_token_value),
+                "username": "new-user-for-verify",
+                "auth_info": [{
+                    "auth_type": "password",
+                    "password": "TestPassword123!",
+                }],
+            }
+        )
+        assert verify_response.status_code == status.HTTP_409_CONFLICT
+
+    def test_invalid_auth_info_returns_validation_error(self, client, path, capsys):
+        suffix = uuid.uuid4().hex
+        response = client.post(path(initiate_signup), data={"email": f"{suffix}@example.com"})
+        assert response.status_code == status.HTTP_202_ACCEPTED
+
+        stdout = capsys.readouterr().out
+        match = re.search(r"token=([^\n]+)", stdout)
+        assert match is not None
+        verify_token_value = match.group(1).strip()
+
+        verify_response = client.post(
+            path(complete_signup),
+            data={
+                "email_token": str(verify_token_value),
+                "username": f"test-{suffix}",
+                "auth_info": "not-json",
+            },
+        )
+
+        assert verify_response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 class TestLogout:
@@ -69,12 +158,13 @@ class TestSudo:
         response = client.post(
             path(activate_sudo),
             headers={"Authorization": f"Bearer {auth_token}"},
-            json={"password": "test"},  # TODO: Implementation needed
+            json={"auth_info": {
+                "auth_type": "password",
+                "password": "TestPassword123!",
+            }},
         )
 
         assert response.status_code == status.HTTP_200_OK
-        # Implementation returns the token in the cookie by default when Accept header is not application/json
-        # and response body is empty.
         token = response.cookies.get("user_session")
         if token is None:
             token = response.headers.get("X-Session-Token")
@@ -85,7 +175,7 @@ class TestSudo:
         claims = verify_token(token, return_model=SessionClaims)
         assert claims.sudo_exp is not None
 
-        # Verify short sudo expiration
+        # Verify a short sudo expiration
         from datetime import timezone, datetime
         sudo_delta = claims.sudo_exp - datetime.now(timezone.utc)
         assert sudo_delta < timedelta(minutes=20)  # Should be ~15 minutes
@@ -121,4 +211,4 @@ class TestRevokeToken:
             headers={"Authorization": f"Bearer {auth_token}"},
         )
 
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.status_code == status.HTTP_403_FORBIDDEN

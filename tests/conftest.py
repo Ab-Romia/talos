@@ -10,20 +10,15 @@ from sqlalchemy import select, text, delete
 from sqlalchemy.orm import Session
 
 from app import app
+from backend.auth.model import User, IdentityProvider, Issuer
 from backend.auth.password import hash_password
 from backend.auth.utils.jwt import create_token
-from backend.auth.utils.session import SessionClaims
-from model.identity import User, Session as UserSession, IdentityProvider, Issuer
+from backend.auth.utils.session import SessionClaims, Session as UserSession
 
 
 @pytest.fixture(scope="session")
 def engine():
-    """Create a single SQLAlchemy engine for the whole test session.
-
-    - Ensures citext extension exists
-    - Creates all tables at session start
-    - Drops all tables at session end to delete everything in the DB
-    """
+    """Create a single SQLAlchemy engine for the whole test session."""
     from model import Base as ModelBase
 
     engine = sqlalchemy.create_engine(
@@ -84,7 +79,7 @@ def test_user(db_session: Session):
         user = User(
             username=user_name,
             primary_email=faker.email(),
-            email_verified=True,
+            signup_complete=True,
             name=faker.name(),
             data={},
             roles=[],
