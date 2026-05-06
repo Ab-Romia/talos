@@ -11,7 +11,8 @@ from modules.app.auth import auth as auth_router
 from modules.app.auth import get_current_user
 from modules.model.base import Base, engine
 
-
+from modules.app.websocket import router as websocket_router
+from modules.app.preferences import router as preferences_router
 
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -33,7 +34,7 @@ app.add_middleware(SessionMiddleware,secret_key="any string")
 
 app.include_router(auth_router)
 app.include_router(websocket_router)
-
+app.include_router(preferences_router)
 @app.get('/', response_class=HTMLResponse)
 async def root():
     with open('templates/index.html', 'r') as f:
