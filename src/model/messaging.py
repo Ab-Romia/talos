@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, UUID, ForeignKey, func
+from sqlalchemy import DateTime, ForeignKey, func, Uuid
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 
 from files.model import FileAttachment
@@ -16,9 +16,10 @@ class WorkspaceMember(Base):
 
 class Workspace(Base):
     __tablename__ = "workspaces"
-    id = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(unique=True, index=True)
-    owner_id = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column()
@@ -30,9 +31,9 @@ class Workspace(Base):
 
 class Channel(Base):
     __tablename__ = "channels"
-    id = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(index=True)
-    workspace_id = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column()
@@ -44,10 +45,10 @@ class Channel(Base):
 
 class Message(Base):
     __tablename__ = "messages"
-    id = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    workspace_id = mapped_column(ForeignKey(Workspace.id, ondelete="CASCADE"))
-    channel_id = mapped_column(ForeignKey(Channel.id, ondelete="CASCADE"))
-    sender_id = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey(Workspace.id, ondelete="CASCADE"))
+    channel_id: Mapped[uuid.UUID] = mapped_column(ForeignKey(Channel.id, ondelete="CASCADE"))
+    sender_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     content: Mapped[str] = mapped_column()
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())

@@ -5,31 +5,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from files.model import FileAttachment, ProcessingStatus
-from model.messaging import Workspace, Channel, Message
-
-
-@pytest.fixture
-def test_workspace(db_session, test_user):
-    ws = Workspace(
-        id=uuid.uuid4(),
-        name=f"ws_{uuid.uuid4().hex[:8]}",
-        owner_id=test_user.id,
-    )
-    db_session.add(ws)
-    db_session.flush()
-    return ws
-
-
-@pytest.fixture
-def test_channel(db_session, test_workspace):
-    cr = Channel(
-        id=uuid.uuid4(),
-        name="general",
-        workspace_id=test_workspace.id,
-    )
-    db_session.add(cr)
-    db_session.flush()
-    return cr
+from model.messaging import Message
+from tests.conftest import test_workspace, test_channel
 
 
 @pytest.fixture

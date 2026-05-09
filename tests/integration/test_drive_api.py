@@ -8,6 +8,7 @@ import pytest
 
 from backend.auth.model import ProviderToken
 from config import cfg
+from integrations.drive.router import drive_status, list_drive_files, import_drive_file
 
 
 @pytest.fixture
@@ -27,15 +28,15 @@ def drive_token(db_session, test_user):
 
 @pytest.mark.integration
 class TestDriveStatus:
-    def test_status_disconnected(self, client):
-        resp = client.get("/api/integrations/drive/status")
+    def test_status_disconnected(self, client, path):
+        resp = client.get(path(drive_status))
         assert resp.status_code == 200
         body = resp.json()
         assert body["connected"] is False
         assert body["scope"] is None
 
-    def test_status_connected(self, client, drive_token):
-        resp = client.get("/api/integrations/drive/status")
+    def test_status_connected(self, client, drive_token, path):
+        resp = client.get(path(drive_status))
         assert resp.status_code == 200
         body = resp.json()
         assert body["connected"] is True
@@ -44,11 +45,11 @@ class TestDriveStatus:
 
 @pytest.mark.integration
 class TestDriveListFiles:
-    def test_412_when_not_connected(self, client):
-        resp = client.get("/api/integrations/drive/files")
+    def test_412_when_not_connected(self, client, path):
+        resp = client.get(path(list_drive_files))
         assert resp.status_code == 412
 
-    def test_returns_files_when_connected(self, client, drive_token):
+    def test_returns_files_when_connected(self, client, drive_token, path):
         with patch("integrations.drive.router.DriveClient") as MockClient:
             instance = MockClient.return_value
             instance.list_files = AsyncMock(return_value={
@@ -63,48 +64,45 @@ class TestDriveListFiles:
                 ],
                 "nextPageToken": "tok",
             })
-            resp = client.get("/api/integrations/drive/files")
+            resp = client.get(path(list_drive_files))
         assert resp.status_code == 200
         body = resp.json()
         assert body["next_page_token"] == "tok"
         assert body["files"][0]["id"] == "f1"
         assert body["files"][0]["size"] == 1024
 
-    def test_502_on_drive_api_error(self, client, drive_token):
+    def test_502_on_drive_api_error(self, client, drive_token, path):
         from integrations.drive.exceptions import DriveAPIError
 
         with patch("integrations.drive.router.DriveClient") as MockClient:
             instance = MockClient.return_value
             instance.list_files = AsyncMock(side_effect=DriveAPIError(500, "boom"))
-            resp = client.get("/api/integrations/drive/files")
+            resp = client.get(path(list_drive_files))
         assert resp.status_code == 502
 
-    def test_401_on_refresh_failure(self, client, drive_token):
+    def test_401_on_refresh_failure(self, client, drive_token, path):
         from integrations.drive.exceptions import DriveTokenRefreshFailed
 
         with patch("integrations.drive.router.DriveClient") as MockClient:
             instance = MockClient.return_value
             instance.list_files = AsyncMock(side_effect=DriveTokenRefreshFailed("nope"))
-            resp = client.get("/api/integrations/drive/files")
+            resp = client.get(path(list_drive_files))
         assert resp.status_code == 401
 
-    def test_page_size_clamped(self, client, drive_token):
-        resp = client.get("/api/integrations/drive/files?page_size=999")
+    def test_page_size_clamped(self, client, drive_token, path):
+        resp = client.get(path(list_drive_files) + "?page_size=999")
         # Pydantic validation -> 422 before the Drive call
         assert resp.status_code == 422
 
 
 @pytest.mark.integration
 class TestDriveImport:
-    def test_412_when_not_connected(self, client, test_workspace):
-        resp = client.post(
-            f"/api/integrations/drive/workspaces/{test_workspace.id}/import"
-            f"?drive_file_id=abc"
-        )
+    def test_412_when_not_connected(self, client, test_workspace, path):
+        resp = client.post(path(import_drive_file, workspace_id=test_workspace.id) + "?drive_file_id=abc")
         assert resp.status_code == 412
 
     def test_happy_path_runs_through_upload(
-            self, client, test_workspace, drive_token, db_session, mock_arq_pool
+            self, client, test_workspace, drive_token, db_session, mock_arq_pool, path
     ):
         from files.model import FileAttachment
 
@@ -120,8 +118,7 @@ class TestDriveImport:
                 return_value=("application/pdf", "", b"%PDF-1.4 fake")
             )
             resp = client.post(
-                f"/api/integrations/drive/workspaces/{test_workspace.id}/import"
-                f"?drive_file_id=abc"
+                path(import_drive_file, workspace_id=test_workspace.id) + "?drive_file_id=abc"
             )
 
         assert resp.status_code == 202, resp.text
@@ -134,7 +131,7 @@ class TestDriveImport:
         # Same enqueue path as direct upload
         mock_arq_pool.enqueue_job.assert_called_once()
 
-    def test_413_on_oversized_file(self, client, test_workspace, drive_token):
+    def test_413_on_oversized_file(self, client, test_workspace, drive_token, path):
         with patch("integrations.drive.service.DriveClient") as MockClient:
             instance = MockClient.return_value
             instance.get_metadata = AsyncMock(return_value={
@@ -144,13 +141,12 @@ class TestDriveImport:
                 "size": str(cfg().files.max_size + 1),
             })
             resp = client.post(
-                f"/api/integrations/drive/workspaces/{test_workspace.id}/import"
-                f"?drive_file_id=abc"
+                path(import_drive_file, workspace_id=test_workspace.id) + "?drive_file_id=abc"
             )
         assert resp.status_code == 413
 
     def test_415_on_unsupported_google_native_type(
-            self, client, test_workspace, drive_token
+            self, client, test_workspace, drive_token, path
     ):
         with patch("integrations.drive.service.DriveClient") as MockClient:
             instance = MockClient.return_value
@@ -160,13 +156,12 @@ class TestDriveImport:
                 "mimeType": "application/vnd.google-apps.drawing",
             })
             resp = client.post(
-                f"/api/integrations/drive/workspaces/{test_workspace.id}/import"
-                f"?drive_file_id=abc"
+                path(import_drive_file, workspace_id=test_workspace.id) + "?drive_file_id=abc"
             )
         assert resp.status_code == 415
 
     def test_503_when_arq_pool_unavailable(
-            self, client, test_workspace, drive_token
+            self, client, test_workspace, drive_token, path
     ):
         from app import app
         app.state.arq_pool = None
@@ -182,8 +177,7 @@ class TestDriveImport:
                     return_value=("application/pdf", "", b"%PDF-1.4 ok")
                 )
                 resp = client.post(
-                    f"/api/integrations/drive/workspaces/{test_workspace.id}/import"
-                    f"?drive_file_id=abc"
+                    path(import_drive_file, workspace_id=test_workspace.id) + "?drive_file_id=abc"
                 )
             assert resp.status_code == 503
         finally:
@@ -191,23 +185,21 @@ class TestDriveImport:
             app.state.arq_pool = None  # client fixture re-installs on next test
 
     def test_channel_validated_against_workspace(
-            self, client, test_workspace, drive_token
+            self, client, test_workspace, drive_token, path
     ):
         # channel_id that doesn't exist in this workspace
         resp = client.post(
-            f"/api/integrations/drive/workspaces/{test_workspace.id}/import"
-            f"?drive_file_id=abc&channel_id={uuid.uuid4()}"
+            path(import_drive_file, workspace_id=test_workspace.id) + f"?drive_file_id=abc&channel_id={uuid.uuid4()}"
         )
         assert resp.status_code == 404
 
-    def test_502_on_drive_api_error(self, client, test_workspace, drive_token):
+    def test_502_on_drive_api_error(self, client, test_workspace, drive_token, path):
         from integrations.drive.exceptions import DriveAPIError
 
         with patch("integrations.drive.service.DriveClient") as MockClient:
             instance = MockClient.return_value
             instance.get_metadata = AsyncMock(side_effect=DriveAPIError(500, "boom"))
             resp = client.post(
-                f"/api/integrations/drive/workspaces/{test_workspace.id}/import"
-                f"?drive_file_id=abc"
+                path(import_drive_file, workspace_id=test_workspace.id) + "?drive_file_id=abc"
             )
         assert resp.status_code == 502

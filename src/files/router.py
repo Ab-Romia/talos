@@ -102,7 +102,7 @@ async def download_file(
 ):
     """Generate a pre-signed download URL for a file."""
     svc = FileService(db, storage)
-    result = await svc.get_download_url(file_id, workspace_id)
+    result = await svc.get_download_url(file_id)
     if result is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found")
 

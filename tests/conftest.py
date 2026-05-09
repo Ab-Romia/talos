@@ -1,4 +1,3 @@
-import os
 import uuid
 from datetime import timedelta
 from functools import lru_cache
@@ -19,6 +18,7 @@ from backend.auth.utils.jwt import create_token
 from backend.auth.utils.session import SessionClaims, Session as UserSession
 from files.model import FileAttachment, ProcessingStatus
 from files.storage import MinIOStorage
+from model.messaging import Workspace, Channel
 
 
 @pytest.fixture(scope="session")
@@ -36,17 +36,16 @@ def engine():
         session.commit()
 
     # create schema for tests
+    ModelBase.metadata.drop_all(engine)
     ModelBase.metadata.create_all(engine)
 
     try:
         yield engine
     finally:
-        # Remove all tables / data at the end of the test session
-        ModelBase.metadata.drop_all(engine)
         engine.dispose()
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture(autouse=True, scope="session")
 def db_session(engine):
     """Provide a per-test DB session and override app dependency to return it."""
     from model import get_db
@@ -59,7 +58,7 @@ def db_session(engine):
         app.dependency_overrides.pop(get_db, None)
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="session")
 def client() -> TestClient:
     return TestClient(app)
 
@@ -93,7 +92,7 @@ def test_user(db_session: Session):
         db_session.commit()
         db_session.refresh(user)
     except sqlalchemy.exc.IntegrityError:
-        user = db_session.scalar(
+        user = db_session.execute(
             select(User)
             .where(User.username == user_name)
         ).one()
@@ -127,7 +126,7 @@ def test_user_with_password(db_session: Session, test_user: User):
 
 
 @pytest.fixture
-def test_session(db_session, test_user) -> SessionClaims:
+def test_session(db_session: Session, test_user: User) -> SessionClaims:
     from datetime import timezone, datetime
     session = UserSession(user_id=test_user.id)
     db_session.add(session)
@@ -167,12 +166,6 @@ def expired_token(test_user: User, test_session: SessionClaims) -> str:
         exp=datetime.now(timezone.utc) - timedelta(hours=1),
     )
     return create_token(claims)
-
-
-# ── File upload fixtures ──
-
-
-os.environ.setdefault("DATABASE_URL", "postgresql://talos_app:password@localhost:5432/talos_test")
 
 
 @pytest.fixture
@@ -217,3 +210,27 @@ def sample_file_record():
         checksum="abc123def456",
         processing_status=ProcessingStatus.UPLOADED,
     )
+
+
+@pytest.fixture
+def test_workspace(db_session: Session, test_user: User):
+    ws = Workspace(
+        id=uuid.uuid4(),
+        name=f"ws_{uuid.uuid4().hex[:8]}",
+        owner_id=test_user.id,
+    )
+    db_session.add(ws)
+    db_session.flush()
+    return ws
+
+
+@pytest.fixture
+def test_channel(db_session: Session, test_workspace: Workspace):
+    cr = Channel(
+        id=uuid.uuid4(),
+        name="general",
+        workspace_id=test_workspace.id,
+    )
+    db_session.add(cr)
+    db_session.flush()
+    return cr

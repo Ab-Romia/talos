@@ -3,10 +3,7 @@ import uuid
 from datetime import datetime
 
 import sqlalchemy as sql
-from sqlalchemy import (
-    DateTime, UUID, ForeignKey, String, BigInteger,
-    Index, Table, Column, text, func, event, DDL,
-)
+from sqlalchemy import DateTime, ForeignKey, String, BigInteger, Index, text, func, event
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from model import Base
@@ -19,14 +16,14 @@ class ProcessingStatus(str, enum.Enum):
     FAILED = "failed"
 
 
-message_files = Table(
-    "message_files", Base.metadata,
-    Column("message_id", UUID(as_uuid=True),
-           ForeignKey("messages.id", ondelete="CASCADE"), primary_key=True),
-    Column("file_id", UUID(as_uuid=True),
-           ForeignKey("file_attachments.id", ondelete="CASCADE"), primary_key=True),
-    Column("created_at", DateTime(), nullable=False, server_default=text("now()")),
-)
+class MessageFile(Base):
+    __tablename__ = "message_files"
+
+    message_id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, ForeignKey("messages.id", ondelete="CASCADE"),
+                                                  primary_key=True)
+    file_id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, ForeignKey("file_attachments.id", ondelete="CASCADE"),
+                                               primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class FileAttachment(Base):
@@ -67,35 +64,11 @@ class FileAttachment(Base):
     )
 
 
-# --- Database trigger to populate workspace_id from channel_id on insert ---
-# We create a PL/pgSQL function and a trigger so the logic runs inside the DB.
-# Attach function creation to the table before_create and trigger creation to after_create
-# so it is available when the trigger is defined.
+@event.listens_for(FileAttachment, "before_insert")
+@event.listens_for(FileAttachment, "before_update")
+def set_workspace_id(_mapper, _connection, target):
+    from model.messaging import Channel
 
-# Ensure the function exists before we attempt to create the trigger
-event.listen(FileAttachment.__table__, "before_create", DDL(
-    """
-    CREATE OR REPLACE FUNCTION set_file_workspace_from_channel()
-        RETURNS trigger AS
-    $$
-    BEGIN
-        SELECT workspace_id
-        INTO STRICT NEW.workspace_id
-        FROM channels
-        WHERE id = NEW.channel_id;
-        RETURN NEW;
-    END;
-    $$ LANGUAGE plpgsql;
-
-    """
-))
-event.listen(FileAttachment.__table__, "after_create", DDL(
-    """
-    CREATE TRIGGER trg_set_file_workspace_from_channel
-        BEFORE INSERT
-        ON file_attachments
-        FOR EACH ROW
-        WHEN (NEW.channel_id IS NOT NULL)
-    EXECUTE FUNCTION set_file_workspace_from_channel();
-    """
-))
+    if target.channel_id is not None:
+        session = sql.orm.object_session(target)
+        target.workspace_id = session.get(Channel, target.channel_id).workspace_id

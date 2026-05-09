@@ -12,8 +12,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from config import cfg
-from files.exceptions import FileTooLarge, StorageError
-from files.model import FileAttachment, ProcessingStatus, message_files
+from files.exceptions import FileTooLarge, StorageError, UnsupportedFileType
+from files.model import FileAttachment, ProcessingStatus, MessageFile
 from files.storage import MinIOStorage
 from files.streaming import HashingReader
 from model.messaging import Message
@@ -50,11 +50,9 @@ class FileService:
 
         detected_mime = await self._validate_mime_type(file)
 
-        if detected_mime is None:
-            raise ValueError("Unsupported MIME type")
-
         db_file = FileAttachment(
             channel_id=channel_id,
+            workspace_id=workspace_id,
             uploader_id=uploader_id,
             original_filename=file.filename or "unnamed",
             content_type=detected_mime,
@@ -91,7 +89,7 @@ class FileService:
         detected_mime = magic.from_descriptor(file.file.fileno(), mime=True)
 
         if detected_mime not in ALLOWED_MIME_TYPES:
-            return None
+            raise UnsupportedFileType(detected_mime)
 
         return detected_mime
 
@@ -126,12 +124,8 @@ class FileService:
                    FileAttachment.deleted_at.is_(None))
         )
 
-    async def get_download_url(
-            self,
-            file_id: uuid.UUID,
-            workspace_id: uuid.UUID,
-    ) -> tuple[str, str] | None:
-        """Return (download_url, filename) or None if file not found."""
+    async def get_download_url(self, file_id: uuid.UUID) -> tuple[str, str] | None:
+        """Return (download_url, filename) or None if a file not found."""
         file = self.get_file(file_id)
         if file is None:
             return None
@@ -302,12 +296,11 @@ class FileService:
             return False
 
         # Check if already attached (idempotent)
-        if self.db.get(message_files, (message_id, file_id)) is not None:
+        if self.db.get(MessageFile, (message_id, file_id)) is not None:
             return True
 
-        self.db.execute(
-            message_files.insert().values(message_id=message_id, file_id=file_id)
-        )
+        mf = MessageFile(message_id=message_id, file_id=file_id, )
+        self.db.add(mf)
         self.db.commit()
 
         logger.info("File attached to message", file_id=str(file_id), message_id=str(message_id))
