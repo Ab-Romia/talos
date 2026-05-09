@@ -1245,22 +1245,10 @@ dependencies = [
     { name = "webauthn" },
 ]
 
-[package.optional-dependencies]
-test = [
-    { name = "faker" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-mock" },
-]
-
 [package.dev-dependencies]
 dev = [
     { name = "alembic" },
     { name = "basedpyright" },
-    { name = "faker" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-mock" },
     { name = "types-authlib" },
 ]
 eval = [
@@ -1279,6 +1267,12 @@ eval = [
     { name = "pandas" },
     { name = "scipy" },
 ]
+test = [
+    { name = "faker" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-mock" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1288,7 +1282,6 @@ requires-dist = [
     { name = "bidict", specifier = ">=0.23.1" },
     { name = "black", specifier = ">=26.3.1" },
     { name = "cachetools", specifier = ">=7.1.0" },
-    { name = "faker", marker = "extra == 'test'", specifier = ">=40.15.0" },
     { name = "fastapi", extras = ["all"], specifier = ">=0.136.1" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "joserfc", specifier = ">=1.6.5" },
@@ -1309,9 +1302,6 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pymilvus", specifier = ">=2.6.12" },
     { name = "pyotp", specifier = ">=2.9.0" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0.3" },
-    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.24.0" },
-    { name = "pytest-mock", marker = "extra == 'test'", specifier = ">=3.14.0" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "python-magic", specifier = ">=0.4.27" },
     { name = "python-multipart", specifier = ">=0.0.27" },
@@ -1325,16 +1315,11 @@ requires-dist = [
     { name = "uvicorn", specifier = ">=0.46.0" },
     { name = "webauthn", specifier = ">=2.7.1" },
 ]
-provides-extras = ["test"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "alembic", specifier = ">=1.18.4" },
     { name = "basedpyright", specifier = ">=1.39.3" },
-    { name = "faker", specifier = ">=40.8.0" },
-    { name = "pytest", specifier = ">=8.0.0" },
-    { name = "pytest-asyncio", specifier = ">=0.24.0" },
-    { name = "pytest-mock", specifier = ">=3.14.0" },
     { name = "types-authlib", specifier = ">=1.6.11.20260418" },
 ]
 eval = [
@@ -1352,6 +1337,12 @@ eval = [
     { name = "notebook", specifier = ">=7.0" },
     { name = "pandas", specifier = ">=2.2" },
     { name = "scipy", specifier = ">=1.13" },
+]
+test = [
+    { name = "faker", specifier = ">=40.8.0" },
+    { name = "pytest", specifier = ">=8.0.0" },
+    { name = "pytest-asyncio", specifier = ">=0.24.0" },
+    { name = "pytest-mock", specifier = ">=3.14.0" },
 ]
 
 [[package]]

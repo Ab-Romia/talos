@@ -46,23 +46,17 @@ dependencies = [
     "pydantic>=2.12.5",
 ]
 
-[project.optional-dependencies]
-test = [
-    "pytest>=9.0.3",
-    "pytest-asyncio>=0.24.0",
-    "pytest-mock>=3.14.0",
-    "faker>=40.15.0",
-]
-
 [dependency-groups]
-dev = [
-    "alembic>=1.18.4",
-    "basedpyright>=1.39.3",
-    "types-authlib>=1.6.11.20260418",
+test = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
     "pytest-mock>=3.14.0",
     "faker>=40.8.0",
+]
+dev = [
+    "alembic>=1.18.4",
+    "basedpyright>=1.39.3",
+    "types-authlib>=1.6.11.20260418",
 ]
 eval = [
     "jupyter>=1.1.1",

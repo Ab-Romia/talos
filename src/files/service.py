@@ -124,12 +124,8 @@ class FileService:
                    FileAttachment.deleted_at.is_(None))
         )
 
-    async def get_download_url(
-            self,
-            file_id: uuid.UUID,
-            workspace_id: uuid.UUID,
-    ) -> tuple[str, str] | None:
-        """Return (download_url, filename) or None if file not found."""
+    async def get_download_url(self, file_id: uuid.UUID) -> tuple[str, str] | None:
+        """Return (download_url, filename) or None if a file not found."""
         file = self.get_file(file_id)
         if file is None:
             return None
