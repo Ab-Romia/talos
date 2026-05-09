@@ -1,84 +1,52 @@
 import uuid
 from typing import Annotated, Callable
 
-from cachetools import cached
+from cachetools import cached, LRUCache
 from fastapi import Path, Depends
-from sqlalchemy import select, or_
+from sqlalchemy import select, and_
 
 from backend.auth.utils import errors
 from backend.auth.utils.session import SessionDep
 from model import DatabaseDep
-from model.messaging import Workspace
-from .model import PermissionRegistry, PermissionSet, default_perm_cache, EVERYONE_ID, \
-    perm_cache, Role, ChannelRoleOverride, Permission, PermissionScope
+from .model import PermissionSet, Role, ChannelRoleOverride, Permission, PermissionScope, PermissionRegistry
 
-registry = PermissionRegistry()
-
-
-def default_base_permissions(db: DatabaseDep) -> PermissionSet:
-    @cached(default_perm_cache)
-    def helper():
-        allow = db.scalar(
-            select(Role.allow_mask)
-            .where(Role.id == EVERYONE_ID)
-        )
-        assert allow is not None
-
-        return PermissionSet.from_mask(allow)
-
-    return helper()
+# TODO: use reddis
+permission_cache = LRUCache(maxsize=2 ** 16)
 
 
-def base_permissions(workspace_id: uuid.UUID, db: DatabaseDep) -> PermissionSet:
-    @cached(perm_cache)
-    def helper(wsid):
-        default = default_base_permissions(db)
-        if wsid is None:
-            return default
-
-        allow = db.scalar(
-            select(Role.allow_mask)
-            .where(Role.workspace_id == wsid)
-            .where(Role.id == wsid)
-        )
-
-        if allow is None:
-            return default
-
-        return PermissionSet.from_mask(allow)
-
-    return helper(workspace_id)
+@cached({}, key=lambda *args: None)
+def permission_registry(db: DatabaseDep):
+    return PermissionRegistry(db)
 
 
 def user_perms(
-        workspace_id: Annotated[uuid.UUID | None, Path(default=None)],
-        channel_id: Annotated[uuid.UUID | None, Path(default=None)],
         session: SessionDep,
-        db: DatabaseDep):
-    @cached(perm_cache)
-    def helper(wid, cid, uid):
-        # Validate that the user is a member of the workspace (if workspace_id is provided)
-        wid = db.scalar(select(Workspace.id)
-                        .where(Workspace.id == wid)
-                        .where(Workspace.members.any(id=uid))
-                        )
-        permissions = base_permissions(wid, db)
+        db: DatabaseDep,
+        workspace_id: Annotated[uuid.UUID | None, Path(default_factory=lambda: None)],
+        channel_id: Annotated[uuid.UUID | None, Path(default_factory=lambda: None)],
+):
+    @cached(permission_cache)
+    def helper(workspace_id, channel_id, user_id):
+        permissions = PermissionSet()
         deny_overrides = PermissionSet()
         allow_overrides = PermissionSet()
 
-        roles_and_overrides = db.scalars(
-            select(Role, ChannelRoleOverride)
-            .join(ChannelRoleOverride, Role.id == ChannelRoleOverride.role_id, isouter=True)
-            .where(Role.users.any(id=uid))
-            .where(Role.workspace_id == wid)
-            .where(or_(ChannelRoleOverride.channel_id.is_(None), ChannelRoleOverride.channel_id == channel_id))
+        roles_and_overrides = db.execute(
+            select(Role.allow_mask, ChannelRoleOverride.allow_mask, ChannelRoleOverride.deny_mask)
+            .join(ChannelRoleOverride,
+                  and_(Role.id == ChannelRoleOverride.role_id,
+                       ChannelRoleOverride.channel_id == channel_id),
+                  isouter=True
+                  )
+            .where(Role.users.any(id=user_id))
+            .where(Role.workspace_id == workspace_id)
+            .order_by(Role.priority.desc())
         ).all()
 
-        for r, o in roles_and_overrides:
-            permissions |= r.allow_mask
-            if o is not None:
-                deny_overrides |= o.deny_mask
-                allow_overrides |= o.allow_mask
+        for role_allow, override_allow, override_deny in roles_and_overrides:
+            permissions |= PermissionSet.from_mask(role_allow)
+            deny_overrides |= PermissionSet.from_mask(override_deny or 0)
+            allow_overrides |= PermissionSet.from_mask(override_allow or 0)
 
         permissions -= deny_overrides
         permissions |= allow_overrides
@@ -88,8 +56,10 @@ def user_perms(
     return helper(workspace_id, channel_id, session.sub)
 
 
-def require_perms(*required_permissions: str,
-                  is_owner: Callable[..., bool] = lambda: False):
+UserPermissionsDep = Annotated[PermissionSet, Depends(user_perms)]
+
+
+def require_perms(*required_permissions: str, is_owner: Callable[..., bool] = lambda: False):
     """
     Processes permission requirements for a specific context to validate that the user has the
     necessary permissions. This function defines a permission validation system by combining
@@ -105,19 +75,19 @@ def require_perms(*required_permissions: str,
     """
 
     required_perms = PermissionSet.from_permission_list((Permission.from_str(p) for p in required_permissions))
+    own_scope_mask = PermissionSet.from_mask(permission_registry().scope_mask(PermissionScope.OWN))
 
     # TODO: implement caching for user permissions
     # TODO: special case for `permission:edit`: user must have the permission to grant/revoke it
 
-    def helper(user_permissions: Annotated[PermissionSet, Depends(user_perms)],
-               is_owner: Annotated[bool, Depends(is_owner)]):
+    def helper(user_permissions: UserPermissionsDep, is_owner: Annotated[bool, Depends(is_owner)]):
         if not is_owner:
             # Clear OWN scope permissions if the user is not the owner
-            user_permissions -= PermissionSet.from_mask(registry.scope_mask(PermissionScope.OWN))
+            user_permissions -= own_scope_mask
 
         user_permissions = user_permissions.collapse_scope()
         missing = required_perms - user_permissions
-        if len(missing) > 0:
+        if not missing.empty():
             raise errors.Forbidden(missing)
 
     return helper

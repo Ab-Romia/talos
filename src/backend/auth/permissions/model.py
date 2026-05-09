@@ -5,16 +5,18 @@ from typing import Self, Iterable
 
 import sqlalchemy as sql
 from bidict import bidict
-from cachetools import cached, LRUCache, TTLCache
-from sqlalchemy import select, UniqueConstraint
+from cachetools import cached, TTLCache
+from sqlalchemy import select, UniqueConstraint, orm, exists, text
 from sqlalchemy.dialects.postgresql import BIT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from config import cfg
-from model import DatabaseDep, get_db, Base
+from model import Base
 from model.messaging import Workspace, Channel
 
 EVERYONE_ID = uuid.UUID(int=0)
+BITSTRING_LENGTH = cfg().auth.permission_bitstring_length
+DEFAULT_BITS = text(f"CAST(0 AS BIT({BITSTRING_LENGTH}))")
 
 PERMISSIONS = {
     "workspace": {
@@ -89,60 +91,48 @@ PERMISSIONS = {
     },
 }
 
-default_perm_cache = TTLCache(ttl=60, maxsize=1)
-perm_cache = LRUCache(maxsize=2 ** 16)
-
 
 class PermissionRegistry:
     _permission_registry = bidict()
-    _scope_mask_cache = dict()
-    _global_instance = None
 
-    def __init__(self, db: DatabaseDep = None):
-        self.db = db or next(get_db())
+    def __init__(self, db: orm.Session):
+        self.db = db
 
-    @classmethod
-    def get_instance(cls) -> Self:
-        if cls._global_instance is None:
-            cls._global_instance = cls()
-
-        return cls._global_instance
-
-    @cached(cache=_permission_registry.inverse)
-    def bit_offset(self, key: Permission) -> int | None:
-        perm_id: int = self.db.scalar(
-            select(Permission.bit_offset)
-            .where(Permission.resource == key.resource)
-            .where(Permission.action == key.action)
-            .where(Permission.scope == key.scope)
+    @cached(TTLCache(ttl=60, maxsize=1))
+    def default_base_permissions(self) -> PermissionSet:
+        allow = self.db.scalar(
+            select(Role.allow_mask)
+            .where(Role.id == EVERYONE_ID)
         )
-        return perm_id
+        assert allow is not None
 
-    @cached(cache=_permission_registry)
-    def permission(self, key: int) -> Permission | None:
-        resource, action, scope = self.db.scalar(
-            select(Permission.resource, Permission.action, Permission.scope)
+        return PermissionSet.from_mask(allow)
+
+    @cached(_permission_registry.inverse)
+    def bit_offset(self, resource: str, action: str, scope: PermissionScope) -> int | None:
+        return self.db.scalar(
+            select(Permission.bit_offset)
+            .where(Permission.resource == resource)
+            .where(Permission.action == action)
+            .where(Permission.scope == scope)
+        )
+
+    @cached(_permission_registry)
+    def permission_from_offset(self, key: int) -> Permission | None:
+        return self.db.scalar(
+            select(Permission)
             .where(Permission.bit_offset == key)
-        ).one_or_none()
-        return Permission(resource=resource, action=action, scope=scope)
-
-    def permission_field(self, required_perm: Permission) -> int:
-        """Computes a bitfield for the given permission string, considering both the resource-action pair and the scope."""
-
-        scope_bits = self.scope_mask(required_perm.scope)
-        resource_action_bits = 0
-        bit_offsets = self.db.scalars(
-            select(Permission.bit_offset)
-            .where(Permission.resource == required_perm.resource)
-            .where(Permission.action == required_perm.action)
         )
 
-        for bit_offset in bit_offsets:
-            resource_action_bits |= (1 << bit_offset)
+    def get_permission(self, resource: str, action: str, scope: PermissionScope) -> Permission | None:
+        return self.db.scalar(
+            select(Permission)
+            .where(Permission.resource == resource)
+            .where(Permission.action == action)
+            .where(Permission.scope == scope)
+        )
 
-        return resource_action_bits & scope_bits
-
-    @cached(cache=_scope_mask_cache)
+    @cached({})
     def scope_mask(self, scope: PermissionScope) -> int:
         """Computes a bitmask for the given scope string."""
         if scope == PermissionScope.ANY:
@@ -159,19 +149,31 @@ class PermissionRegistry:
 
         return mask
 
+    def clear_caches(self):
+        self.default_base_permissions.cache_clear()
+        self.bit_offset.cache_clear()
+        self.permission_from_offset.cache_clear()
+        self.scope_mask.cache_clear()
+
 
 class PermissionSet:
     """
     Represents a bitfield-based permission set.
     """
 
-    def __init__(self, registry: PermissionRegistry = None):
+    def __init__(self, registry: PermissionRegistry | None = None):
+        from .core import permission_registry
         self.mask = 0
-        self.registry = registry or PermissionRegistry.get_instance()
+        self.registry = registry if registry is not None else permission_registry()
 
     @classmethod
-    def from_mask(cls, mask: int) -> Self:
+    def from_mask(cls, mask: int | str) -> Self:
         """Creates a PermissionSet instance from a given bitfield integer."""
+
+        # TODO: the order of the bits is flipped in db??
+
+        if isinstance(mask, str):
+            mask = int(mask[::-1], 2)
         instance = cls()
         instance.mask = mask
         return instance
@@ -184,7 +186,7 @@ class PermissionSet:
             instance[perm] = True
         return instance
 
-    def collapse_scope(self) -> Self:
+    def collapse_scope(self):
         """
         Sets the ANY scope bit for a resource-action pair if the user has that permission in any scope.
         Clears other bits.
@@ -202,8 +204,11 @@ class PermissionSet:
 
         return self | new_set
 
+    def empty(self):
+        return self.mask == 0
+
     def __setitem__(self, key: Permission, value: bool):
-        bit_pos = self.registry.bit_offset(key)
+        bit_pos = self.registry.bit_offset(key.resource, key.action, key.scope)
         if bit_pos is None:
             raise ValueError(f"Permission {key} cannot be represented")
 
@@ -213,12 +218,14 @@ class PermissionSet:
             self.mask &= ~(1 << bit_pos)
 
     def __contains__(self, item: Permission) -> bool:
-        # TODO: consider scope
-        bit_pos = self.registry.bit_offset(item)
+        bit_pos = self.registry.bit_offset(item.resource, item.action, item.scope)
         if bit_pos is None:
             return False
 
         return bool(self.mask & (1 << bit_pos))
+
+    def __eq__(self, other: PermissionSet) -> bool:
+        return self.mask == other.mask
 
     def __or__(self, other: PermissionSet):
         return self.from_mask(self.mask | other.mask)
@@ -235,7 +242,7 @@ class PermissionSet:
 
         while mask:
             if mask & 1:
-                perm = self.registry.permission(bit_pos)
+                perm = self.registry.permission_from_offset(bit_pos)
                 if perm:
                     yield perm
             mask >>= 1
@@ -260,6 +267,7 @@ override_permissions = sql.Table(
     sql.Column("role_id", sql.ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
     sql.Column("channel_id", sql.ForeignKey("channels.id", ondelete="CASCADE"), primary_key=True),
     sql.Column("permission_id", sql.ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True),
+    sql.Column("is_deny", sql.Boolean, nullable=False, default=False),
     sql.ForeignKeyConstraint(("role_id", "channel_id"),
                              ("role_overrides.role_id", "role_overrides.channel_id"))
 )
@@ -276,10 +284,12 @@ class PermissionScope(PyEnum):
         return self.value < other.value
 
     def __str__(self):
+        if self == PermissionScope.ANY:
+            return "*"
         return self.name.lower()
 
     @classmethod
-    def from_str(cls, raw_scope) -> Self:
+    def from_str(cls, raw_scope):
         if raw_scope is None or raw_scope == "*":
             return cls.ANY
         return cls[raw_scope.upper()]
@@ -290,24 +300,10 @@ class Permission(Base):
     id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, primary_key=True, default=uuid.uuid4)
     resource: Mapped[str] = mapped_column(index=True)
     action: Mapped[str] = mapped_column(index=True)
-    scope: Mapped[PermissionScope] = mapped_column(sql.Enum(PermissionScope), index=True)
-    is_deny: Mapped[bool] = mapped_column(default=False)
+    scope: Mapped[PermissionScope] = mapped_column(sql.Enum(PermissionScope))
     description: Mapped[str | None] = mapped_column()
-    bit_offset: Mapped[int] = mapped_column(default=0, name="bit_offset_0")
+    bit_offset: Mapped[int] = mapped_column(default=0)
 
-    def covers(self, other: Permission, check_deny=True) -> bool:
-        if (
-                self.resource != other.resource
-                or self.action != other.action
-                or self.scope < other.scope
-                or (check_deny and self.is_deny and not other.is_deny)
-
-        ):
-            return False
-
-        return True
-
-    # TODO: assert that resource, action
     @classmethod
     def from_str(cls, perm_str: str) -> Self:
         """
@@ -333,8 +329,18 @@ class Permission(Base):
                    action=action,
                    scope=scope)
 
+    def validate(self, db: orm.Session) -> bool:
+        """Validates that the permission exists in the database."""
+        return db.execute(
+            exists()
+            .where(Permission.resource == self.resource,
+                   Permission.action == self.action,
+                   Permission.scope == self.scope)
+            .select()
+        ).scalar_one()
+
     def __str__(self):
-        return f"{self.resource}:{self.action}:{self.scope.value if self.scope else '*'}"
+        return f"{self.resource}:{self.action}:{self.scope if self.scope else '*'}"
 
 
 class Role(Base):
@@ -350,7 +356,7 @@ class Role(Base):
     priority: Mapped[int] = mapped_column(index=True, default=0)
 
     # PERF: Precomputed bitfields, recomputed on permission or role changes
-    allow_mask: Mapped[int] = mapped_column(BIT(cfg().auth.permission_bitstring_length), default=0)
+    allow_mask: Mapped[int] = mapped_column(BIT(BITSTRING_LENGTH), server_default=DEFAULT_BITS)
 
     users = relationship("User", secondary=users_roles, back_populates="roles")
     permissions = relationship("Permission", secondary=role_permissions, backref="roles")
@@ -369,5 +375,7 @@ class ChannelRoleOverride(Base):
     permissions = relationship("Permission", secondary=override_permissions)
 
     # PERF: Precomputed bitfield, recomputed on permission or role changes
-    allow_mask: Mapped[int] = mapped_column(BIT(cfg().auth.permission_bitstring_length), default=0)
-    deny_mask: Mapped[int] = mapped_column(BIT(cfg().auth.permission_bitstring_length), default=0)
+    allow_mask: Mapped[int] = mapped_column(BIT(BITSTRING_LENGTH), server_default=DEFAULT_BITS)
+    deny_mask: Mapped[int] = mapped_column(BIT(BITSTRING_LENGTH), server_default=DEFAULT_BITS)
+
+# TODO: compute masks

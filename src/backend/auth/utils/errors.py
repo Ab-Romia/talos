@@ -48,13 +48,15 @@ class ExpiredToken(AuthException):
 
 
 class Forbidden(AuthException):
-    from backend.auth.permissions.model import PermissionSet
     status_code = status.HTTP_403_FORBIDDEN
     detail = "Forbidden"
 
-    def __init__(self, missing_perms: PermissionSet = None):
+    from backend.auth.permissions.model import PermissionSet
+
+    def __init__(self, missing_perms: PermissionSet | None = None):
         if missing_perms:
-            detail = f"Forbidden. Required permissions: {', '.join(missing_perms)}"
+            detail = f"Forbidden: Missing permissions: {', '.join(str(p) for p in missing_perms)}"
         else:
             detail = self.detail
-        super().__init__(status_code=self.status_code, detail=detail)
+
+        super().__init__(detail=detail, status_code=self.status_code)
