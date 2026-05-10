@@ -10,6 +10,7 @@ from config import cfg
 from files.exceptions import FileTooLarge, UnsupportedFileType
 from files.models import FileAttachment, ProcessingStatus
 from files.service import FileService
+from files.streaming import HashingReader
 
 
 def _make_upload_file(content: bytes = b"hello world", filename: str = "test.txt"):
@@ -139,6 +140,21 @@ class TestFileServiceUpload:
 
         result = await svc.upload(upload, uuid.uuid4(), uuid.uuid4())
         assert result.processing_status == ProcessingStatus.UPLOADED
+
+    @pytest.mark.asyncio
+    @patch("files.service.magic.from_buffer", return_value="text/plain")
+    async def test_upload_streams_via_hashing_reader(self, mock_magic, mock_storage):
+        """The whole point of the streaming refactor: storage must receive a
+        HashingReader that hashes-as-it-reads, not a pre-buffered BytesIO."""
+        db = MagicMock()
+        svc = FileService(db, mock_storage)
+        upload = _make_upload_file(content=b"streamed payload")
+
+        await svc.upload(upload, uuid.uuid4(), uuid.uuid4())
+
+        _, kwargs = mock_storage.upload_file.call_args
+        assert isinstance(kwargs["data"], HashingReader)
+        assert kwargs["size"] == len(b"streamed payload")
 
 
 @pytest.mark.unit

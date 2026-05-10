@@ -177,10 +177,17 @@ os.environ.setdefault("DATABASE_URL", "postgresql://talos_app:password@localhost
 
 @pytest.fixture
 def mock_storage():
-    """Fully mocked MinIOStorage."""
+    """Fully mocked MinIOStorage. upload_file drains the stream the same
+    way minio-py does in prod, so the HashingReader actually hashes."""
     storage = AsyncMock(spec=MinIOStorage)
     storage.bucket_name = "talos-uploads"
-    storage.upload_file = AsyncMock(return_value="test-etag")
+
+    async def _drain_then_return(*, storage_key, data, size, content_type):
+        while data.read(64 * 1024):
+            pass
+        return "test-etag"
+
+    storage.upload_file = AsyncMock(side_effect=_drain_then_return)
     storage.download_file = AsyncMock(return_value=b"file content")
     storage.download_file_to_path = AsyncMock()
     storage.delete_file = AsyncMock()

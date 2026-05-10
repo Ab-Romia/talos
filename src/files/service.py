@@ -1,7 +1,5 @@
 """Business logic for file operations."""
 
-import hashlib
-import io
 import os
 import uuid
 from datetime import datetime
@@ -15,6 +13,7 @@ from config import cfg
 from files.exceptions import FileTooLarge, UnsupportedFileType
 from files.models import FileAttachment, ProcessingStatus, message_files
 from files.storage import MinIOStorage
+from files.streaming import HashingReader
 from model.messaging import Message
 from utils.datetime import utcnow
 from utils.logger import get_logger
@@ -63,24 +62,15 @@ class FileService:
             if channel is None:
                 raise ValueError(f"Channel {channel_id} not found in workspace {workspace_id}")
 
-        # 2. Stream the body once into a bounded buffer, computing size + checksum.
-        # Stops at MAX_FILE_SIZE + 1 so a client lying about Content-Length cannot
-        # force the server to buffer the entire upload before we refuse it.
-        hasher = hashlib.sha256()
-        buffer = io.BytesIO()
-        file_size = 0
-        chunk_size = 1024 * 1024  # 1 MiB
-        while True:
-            chunk = await file.read(chunk_size)
-            if not chunk:
-                break
-            file_size += len(chunk)
-            if file_size > MAX_FILE_SIZE:
-                raise FileTooLarge(file_size, MAX_FILE_SIZE)
-            hasher.update(chunk)
-            buffer.write(chunk)
-        buffer.seek(0)
-        checksum = hasher.hexdigest()
+        # 2. Size from the spooled body. Starlette has fully received the
+        # multipart body into UploadFile.file before this handler runs,
+        # so seek/tell is authoritative.
+        underlying = file.file
+        underlying.seek(0, os.SEEK_END)
+        file_size = underlying.tell()
+        underlying.seek(0)
+        if file_size > MAX_FILE_SIZE:
+            raise FileTooLarge(file_size, MAX_FILE_SIZE)
 
         # 3. Generate storage key
         file_id = uuid.uuid4()
@@ -93,15 +83,18 @@ class FileService:
             ext=ext,
         )
 
-        # 5. Upload to MinIO
+        # 4. Stream to MinIO. minio-py reads part_size chunks at a time and
+        # the wrapper hashes each chunk inline, so peak RAM is bounded by
+        # part_size and we avoid a second pass over the body for SHA-256.
+        reader = HashingReader(underlying)
         await self.storage.upload_file(
             storage_key=storage_key,
-            data=buffer,
+            data=reader,
             size=file_size,
             content_type=detected_mime,
         )
 
-        # 6. Persist metadata
+        # 5. Persist metadata
         db_file = FileAttachment(
             id=file_id,
             workspace_id=workspace_id,
@@ -111,7 +104,7 @@ class FileService:
             content_type=detected_mime,
             size_bytes=file_size,
             storage_key=storage_key,
-            checksum=checksum,
+            checksum=reader.checksum,
             processing_status=ProcessingStatus.UPLOADED,
         )
         self.db.add(db_file)
