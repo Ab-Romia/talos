@@ -1,7 +1,7 @@
 """MinIO storage client with two-client pattern for internal ops and pre-signed URLs."""
 
 from datetime import timedelta
-from io import BytesIO
+from typing import BinaryIO
 from urllib.parse import quote
 
 import urllib3
@@ -70,11 +70,14 @@ class MinIOStorage:
     async def upload_file(
         self,
         storage_key: str,
-        data: BytesIO,
+        data: BinaryIO,
         size: int,
         content_type: str,
     ) -> str:
-        """Upload a file to MinIO. Returns the etag."""
+        """Upload a file to MinIO. ``data`` may be any binary stream that
+        supports ``read(size)``; minio-py uploads it in ``part_size`` chunks,
+        so callers can pass a streaming wrapper rather than a fully-buffered
+        BytesIO. Returns the etag."""
         try:
             result = await run_in_threadpool(
                 self._internal.put_object,
