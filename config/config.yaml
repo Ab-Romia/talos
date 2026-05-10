@@ -18,4 +18,6 @@ auth:
       access_token_url: https://github.com/login/oauth/access_token
       authorize_url: https://github.com/login/oauth/authorize
       client_kwargs: { "scope": "read:user user:email" }
-
+rabbitmq:
+  host: localhost
+  port: 5672

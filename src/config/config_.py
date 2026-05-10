@@ -81,6 +81,15 @@ class FilesConfig(BaseModel):
     storage_key_template: str = "workspaces/{workspace_id}/channel/{channel_id}/{file_id}{ext}"
 
 
+class RabbitMQConfig(BaseModel):
+    host: str = "localhost"
+    port: int = 5672
+    username: str
+    password: str
+    virtual_host: str = "/"
+    notification_queue: str = "talos_notifcation_queue"
+
+
 class RedisConfig(BaseModel):
     url: str = "redis://localhost:6379"
 
@@ -97,6 +106,7 @@ class Config(BaseSettings):
     minio: MinIOConfig = MinIOConfig()
     redis: RedisConfig = RedisConfig()
     files: FilesConfig = FilesConfig()
+    rabbitmq: RabbitMQConfig = None
 
     model_config = SettingsConfigDict(
         env_file='.env',

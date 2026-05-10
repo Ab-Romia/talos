@@ -15,8 +15,7 @@ from files.router import router as files_router
 from files.storage import MinIOStorage
 from integrations.drive import drive_router
 from model import Base, engine
-from notifications.app.preferences import router as preferences_router
-from notifications.app.websocket import router as websocket_router
+from notifications.router import router as notifications_router
 
 templates = Jinja2Templates(directory="frontend/templates")
 
@@ -81,8 +80,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
-app.include_router(websocket_router)
-app.include_router(preferences_router)
+app.include_router(notifications_router, prefix="/api")
 
 
 @app.get('/', response_class=HTMLResponse)

@@ -3,12 +3,12 @@ from datetime import datetime
 from enum import Enum as PyEnum
 from typing import Optional, Any
 
-from pydantic import BaseModel
-from sqlalchemy import DateTime, UUID, ForeignKey, Enum, Boolean
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy import DateTime, ForeignKey, Enum, Boolean, Uuid
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.model import Base
+from model import Base
 
 
 class NotificationsType(PyEnum):
@@ -28,20 +28,16 @@ class NotificationsChannel(PyEnum):
 class NotificationDelivery(Base):
     __tablename__ = "notification_deliveries"
 
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
 
-    notification_id: Mapped[UUID] = mapped_column(
+    notification_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("notifications.id", ondelete="CASCADE"),
         index=True
     )
 
     channel: Mapped[NotificationsChannel] = mapped_column(Enum(NotificationsChannel))
-
-    is_sent: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
-    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime())
-
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime())
     retry_count: Mapped[int] = mapped_column(default=0)
-
     created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.now, index=True)
 
     notification: Mapped["Notification"] = relationship(
@@ -53,9 +49,9 @@ class NotificationDelivery(Base):
 # queue creates,in app reads
 class Notification(Base):
     __tablename__ = "notifications"
-    
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), index=True)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     type: Mapped[NotificationsType] = mapped_column(Enum(NotificationsType), index=True)
 
     title: Mapped[str] = mapped_column()
@@ -77,7 +73,7 @@ class Notification(Base):
 class UserNotificationPreference(Base):
     __tablename__ = "user_notification_preferences"
 
-    user_id: Mapped[UUID] = mapped_column(
+    user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
         primary_key=True
     )
@@ -96,5 +92,4 @@ class PreferenceResponse(BaseModel):
     channel: NotificationsChannel
     enabled: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
