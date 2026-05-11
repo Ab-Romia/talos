@@ -20,20 +20,23 @@ from uuid import UUID
 
 from .models import WSMessage
 
-HOT_TTL_SECONDS: int = 300   # message stays hot for 5 min after arrival
-HOT_MAX_PER_CHANNEL: int = 100   # max messages held in hot cache per channel
+HOT_TTL_SECONDS: int = 300  # message stays hot for 5 min after arrival
+HOT_MAX_PER_CHANNEL: int = 100  # max messages held in hot cache per channel
 
 
 class HotColdCache:
-    def __init__(self,ttl: int = HOT_TTL_SECONDS,max_hot: int = HOT_MAX_PER_CHANNEL,) -> None:
+    def __init__(self, ttl: int = HOT_TTL_SECONDS, max_hot: int = HOT_MAX_PER_CHANNEL) -> None:
         self._ttl = ttl
         self._max_hot = max_hot
 
-        # hot  : channel_id → deque[(monotonic_ts, Message)]
-        self._hot:  dict[UUID, deque[tuple[float, WSMessage]]] = defaultdict(deque)
-        # cold : channel_id → list[Message]   (replace with DB calls)
-        self._cold: dict[UUID, list[WSMessage]] = defaultdict(list)
+        # TODO:
+        #  for hot: Use Redis + rabbitmq for hot cache in a multi-worker deployment (shared state + pub/sub eviction).
+        #  for cold: Database storage (replace the in-memory dict with SQLAlchemy calls).
 
+        # hot:  channel_id → deque[(monotonic_ts, Message)]
+        self._hot: dict[UUID, deque[tuple[float, WSMessage]]] = defaultdict(deque)
+        # cold: channel_id → list[Message]
+        self._cold: dict[UUID, list[WSMessage]] = defaultdict(list)
 
     def put(self, message: WSMessage) -> None:
         """
@@ -54,13 +57,12 @@ class HotColdCache:
         # Always persist to cold (primary store)
         self._persist(message)
 
-
     def get_hot(self, channel_id: UUID) -> list[WSMessage]:
         """Return messages currently in the hot cache, pruning stale ones."""
         self._evict_stale(channel_id)
         return [msg for _, msg in self._hot[channel_id]]
 
-    def get_all(self,channel_id: UUID,limit: int = 50,offset: int = 0,) -> list[WSMessage]:
+    def get_all(self, channel_id: UUID, limit: int | None = None, offset: int = 0, ) -> list[WSMessage]:
         """
         Merge hot + cold, deduplicate by message id, sort by created_at,
         then return the requested page.
@@ -83,7 +85,9 @@ class HotColdCache:
                 merged.append(msg)
 
         merged.sort(key=lambda m: m.sent_at)
-        return merged[offset : offset + limit]
+        if limit is None:
+            return merged[offset:]
+        return merged[offset: offset + limit]
 
     def get_by_id(self, channel_id: UUID, message_id: UUID) -> WSMessage | None:
         """Lookup a single message; checks hot cache first, then cold."""
@@ -94,7 +98,6 @@ class HotColdCache:
             if msg.id == message_id:
                 return msg
         return None
-
 
     def _evict_stale(self, channel_id: UUID) -> None:
         """Remove TTL-expired entries from the hot cache."""

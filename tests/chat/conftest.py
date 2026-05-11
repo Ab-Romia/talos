@@ -1,21 +1,19 @@
 """
 Chat test fixtures and utilities.
 """
+from typing import Generator
 from uuid import UUID, uuid4
-from datetime import datetime, timezone
-from typing import List
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app import app
 from backend.chat.cache import HotColdCache, cache as default_cache
 from backend.chat.manager import ChannelConnectionManager, manager as default_manager
 from backend.chat.models import WSMessage, MessageRole
 from model.identity import User
 
 
+# TODO: use existing fixtures for test_channel that actually exists in DB
 @pytest.fixture
 def test_channel_id() -> UUID:
     """Generate a consistent test channel ID."""
@@ -23,21 +21,21 @@ def test_channel_id() -> UUID:
 
 
 @pytest.fixture
-def test_channel_ids() -> List[UUID]:
+def test_channel_ids() -> list[UUID]:
     """Generate multiple distinct test channel IDs."""
     return [uuid4() for _ in range(3)]
 
 
 @pytest.fixture
-def test_users(db_session: Session) -> List[User]:
+def test_users(db_session: Session) -> Generator[list[User]]:
     """Create 3 test users for multi-user chat scenarios."""
     from faker import Faker
     import sqlalchemy.exc
     from sqlalchemy import select, delete
-    
+
     faker = Faker()
     users = []
-    
+
     for i in range(3):
         user_name = f"chat_test_user_{i}_{faker.user_name()}"
         try:
@@ -59,9 +57,9 @@ def test_users(db_session: Session) -> List[User]:
                 .where(User.username == user_name)
             )
             users.append(user)
-    
+
     yield users
-    
+
     # Cleanup
     for user in users:
         db_session.execute(delete(User).where(User.id == user.id))
@@ -99,10 +97,10 @@ def clear_default_manager():
 
 
 def create_test_message(
-    channel_id: UUID,
-    sender_id: UUID,
-    text: str = "Test message",
-    role: MessageRole = MessageRole.USER,
+        channel_id: UUID,
+        sender_id: UUID,
+        text: str = "Test message",
+        role: MessageRole = MessageRole.USER,
 ) -> WSMessage:
     """Helper to create a test message."""
     return WSMessage(

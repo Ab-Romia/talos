@@ -71,10 +71,10 @@ class ChannelConnectionManager:
             return False
 
     async def broadcast(
-        self,
-        user_ids:     list[UUID],
-        payload:      dict,
-        exclude_user: Optional[UUID] = None,
+            self,
+            user_ids: list[UUID],
+            payload: dict,
+            exclude_user: Optional[UUID] = None,
     ) -> tuple[list[UUID], list[UUID]]:
         """
         Push a JSON payload to specified users.

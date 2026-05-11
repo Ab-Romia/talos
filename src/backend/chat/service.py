@@ -35,9 +35,9 @@ def send_message(channel_id: UUID, user_id: UUID, text: str) -> WSMessage:
 # ── read ──────────────────────────────────────────────────────────────────────
 
 def get_messages(
-    channel_id: UUID,
-    limit:  int = 50,
-    offset: int = 0,
+        channel_id: UUID,
+        limit: int | None = None,
+        offset: int = 0,
 ) -> list[WSMessage]:
     """
     Paginated message history for a channel.

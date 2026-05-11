@@ -31,12 +31,12 @@ WebSocket endpoint
     6.  Return offline users list for "to do" delivery handling
 """
 
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel
 from uuid import UUID
 
-from backend.auth.utils.helpers import UserDep
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
 
+from backend.auth.utils.helpers import UserDep
 from .manager import manager
 from .models import MessageEvent, WSIncoming
 from .service import (
@@ -45,6 +45,8 @@ from .service import (
     send_message,
 )
 
+# TODO: permission and authenticate checks for all endpoints,
+#  both REST and WebSocket.
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
@@ -57,17 +59,18 @@ def get_channel_members(channel_id: UUID) -> list[UUID]:
     For now, returns all workspace users for this channel.
     Adapt this based on your actual user-channel relationship in the DB.
     """
-    from sqlalchemy.orm import Session
-    from model.messaging import Chatroom, Workspace
-    
+
     # You'll need to pass a DB session here; for now this is a placeholder
     # that shows the pattern. In a real app, inject the session via dependency.
     return []
+
+
 # TODO: implement this function to return actual channel members based on your DB schema.
 
 
 # ── REST: send ────────────────────────────────────────────────────────────────
 
+# TODO: support rich text, attachments, replies, etc. (See Requirements)
 class SendRequest(BaseModel):
     text: str
 
@@ -92,9 +95,9 @@ def post_message(channel_id: UUID, req: SendRequest, user: UserDep):
     summary="Get paginated message history",
 )
 def get_channel_messages(
-    channel_id: UUID,
-    limit:  int = Query(50, ge=1,  le=200, description="Max messages to return"),
-    offset: int = Query(0,  ge=0,           description="Pagination offset"),
+        channel_id: UUID,
+        limit: int = Query(50, ge=1, le=200, description="Max messages to return"),
+        offset: int = Query(0, ge=0, description="Pagination offset"),
 ):
     """
     Merged hot-cache + cold-store message history, sorted oldest-first.
@@ -145,8 +148,8 @@ def get_online_users(channel_id: UUID):
 
 @router.websocket("/ws")
 async def websocket_channel(
-    websocket: WebSocket,
-    user:      UserDep,
+        websocket: WebSocket,
+        user: UserDep,
 ):
     """
     Persistent WebSocket connection for a user.
@@ -179,10 +182,10 @@ async def websocket_channel(
 
             # Get all channel members from database
             channel_members = get_channel_members(incoming.channel_id)
-            
+
             # Filter to exclude sender and get online/offline split
             other_members = [uid for uid in channel_members if uid != user.id]
-            
+
             # Broadcast to all other members
             event_payload = MessageEvent(message=msg).model_dump(mode="json")
             delivered_users, offline_users = await manager.broadcast(
