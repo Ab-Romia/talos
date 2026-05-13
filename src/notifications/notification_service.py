@@ -5,8 +5,7 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from .model import Notification, NotificationsType, NotificationsChannel
-from .notification_worker import publish_message
-
+from notifications.tasks import process_notification
 
 def push_notification(
         db: Session,
@@ -63,7 +62,7 @@ def push_bulk_notification(
             "user_id": n.user_id,
             "channels": [c.value for c in channels1],
         }
-        publish_message(payload)
+        process_notification(payload)
 
     return notifications
 
@@ -119,3 +118,14 @@ def get_unread_count(db: Session, user_id: uuid.UUID) -> int:
         )
     )
     return count or 0
+@staticmethod
+async def enqueue_notification(
+    notification_id,
+    user_id,
+    channels,
+):
+
+    await process_notification.kiq(
+        notification_id=str(notification_id),
+        channels=[c.value for c in channels]
+    )

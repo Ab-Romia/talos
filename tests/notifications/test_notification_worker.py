@@ -6,7 +6,7 @@ from unittest.mock import Mock, AsyncMock
 import pytest
 from sqlalchemy import select
 
-import notifications.notification_worker as worker
+import notifications.tasks as worker
 from notifications.model import NotificationDelivery, NotificationsChannel
 
 
@@ -34,11 +34,12 @@ class TestNotificationWorker:
         assert [delivery.channel for delivery in deliveries] == [NotificationsChannel.email, NotificationsChannel.push]
 
     def test_process_notification_rolls_back_when_notification_is_missing(self, db_session):
-        worker.process_notification(
+        # calling the async function synchronously without awaiting is fine for the fallback path in tests
+        asyncio.run(worker.process_notification(
             notification_id=uuid.uuid4(),
             channels=[NotificationsChannel.email],
             db=db_session
-        )
+        ))
 
         deliveries = db_session.scalars(
             select(NotificationDelivery)

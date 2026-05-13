@@ -9,7 +9,7 @@ from notifications import Notification, NotificationsType, notification_service
 
 @pytest.fixture(autouse=True)
 def mock_publish(monkeypatch):
-    from notifications.notification_worker import publish_message
+    from notifications.tasks import publish_message
     publish = Mock()
     monkeypatch.setattr(notification_service, publish_message.__name__, publish)
     return publish
