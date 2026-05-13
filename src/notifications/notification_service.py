@@ -8,8 +8,6 @@ from .model import Notification, NotificationsType, NotificationsChannel
 from .notification_worker import publish_message
 
 
-# TODO: notifications should be per session, not per user
-
 def push_notification(
         db: Session,
         user_id: uuid.UUID,

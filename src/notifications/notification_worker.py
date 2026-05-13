@@ -17,9 +17,16 @@ from .model import Notification, NotificationDelivery, NotificationsChannel
 logger = get_logger(__name__)
 
 
-# TODO: unify with chat message worker
+# TODO: use taskiq for task management and scheduling
+#  - broker backend: RabbitMQ or Redis
+#  - result backend: Redis (or database??)
+#  - handle retries, failures, etc.
+#    (e.g. if sending fails, retry with exponential backoff, and mark as failed after certain attempts)
 
-# TODO: REPLACE DICT WITH OTHER OBJECT, no broad exceptions(be specific)
+# TODO: handle different channels (e.g. email, push notifications, etc.)
+#  - for email, integrate with email service provider (use send_email function from utils/email.py)
+#  - for push notifications, (https://pypi.org/project/pywebpush/) or external service (Firebase Cloud Messaging)
+#  - for in-app notifications use websockets
 
 async def process_notification(notification_id: uuid.UUID,
                                channels: Iterable[NotificationsChannel],
@@ -50,6 +57,7 @@ async def process_notification(notification_id: uuid.UUID,
 async def notify_user(notification: Notification):
     # TODO: handle different channels, for now we only have push notifications via websocket
     # TODO: use model instead of dict for payload, and handle serialization properly
+    notification.
     return await ws_manager.send_to_user(
         notification.user_id,
         {
