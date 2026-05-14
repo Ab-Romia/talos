@@ -51,7 +51,7 @@ class Forbidden(AuthException):
     status_code = status.HTTP_403_FORBIDDEN
     detail = "Forbidden"
 
-    from backend.auth.permissions.model import PermissionSet
+    from backend.auth.permissions.registry import PermissionSet
 
     def __init__(self, missing_perms: PermissionSet | None = None):
         if missing_perms:

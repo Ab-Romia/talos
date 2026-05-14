@@ -1,0 +1,244 @@
+from typing import Self, Iterable
+
+from bidict import bidict
+from cachetools import cached, TTLCache
+from pydantic import BaseModel
+from sqlalchemy import orm, select, exists
+from sqlalchemy.dialects.postgresql import BitString
+
+from backend.auth.permissions.model import Role, EVERYONE_ID, PermissionScope, Permission
+from config import cfg
+
+
+class PermissionRegistry:
+    _permission_registry = bidict()
+
+    def __init__(self, db: orm.Session):
+        self.db = db
+
+    @cached(TTLCache(ttl=60, maxsize=1))
+    def default_base_permissions(self) -> PermissionSet:
+        allow = self.db.execute(
+            select(Role.allow_mask)
+            .where(Role.id == EVERYONE_ID)
+        ).scalar()
+        assert allow is not None
+
+        return PermissionSet.from_mask(allow)
+
+    @cached(_permission_registry.inverse, key=lambda self, permission: permission)
+    def bit_offset(self, permission: ScopedPermission) -> int | None:
+        offset = self.db.scalar(
+            select(Permission.bit_offset)
+            .where(Permission.resource == permission.resource)
+            .where(Permission.action == permission.action)
+            .where(Permission.allowed_scopes.contains([permission.scope]))
+        )
+
+        if offset is None:
+            return None
+        else:
+            return offset + (permission.scope.value * PermissionScope.max_bit_length())
+
+    @cached(_permission_registry, key=lambda self, key: key)
+    def permission_from_offset(self, key: int) -> ScopedPermission | None:
+        try:
+            scope = PermissionScope(key // PermissionScope.max_bit_length())
+        except ValueError:
+            return None
+
+        perm = self.db.scalar(
+            select(Permission)
+            .where(Permission.bit_offset == key % PermissionScope.max_bit_length())
+            .where(Permission.allowed_scopes.contains([scope]))
+        )
+
+        if perm is None:
+            return None
+        else:
+            return ScopedPermission(resource=perm.resource, action=perm.action, scope=scope)
+
+    def db_permission(self, resource: str, action: str, scope: PermissionScope) -> Permission | None:
+        """Fetches the Permission object from the database for the given resource, action, and scope."""
+        return self.db.scalar(
+            select(Permission)
+            .where(Permission.resource == resource)
+            .where(Permission.action == action)
+            .where(Permission.allowed_scopes.contains([scope]))
+        )
+
+    def validate(self, permission: ScopedPermission) -> bool:
+        """Validates that the permission exists in the database."""
+        return self.db.execute(
+            exists()
+            .where(Permission.resource == permission.resource)
+            .where(Permission.action == permission.action)
+            .where(Permission.allowed_scopes.contains([permission.scope]))
+            .select()
+        ).scalar_one()
+
+    def scope_mask(self, scope: PermissionScope) -> int:
+        """Computes a bitmask for the given scope string."""
+        if cfg().auth.assert_ordered_permissions:
+            p = cfg().auth.permission_bitstring_length // len(PermissionScope)
+            mask = ((1 << p) - 1) << scope.offset
+            return mask
+        else:
+            bit_offsets = self.db.scalars(
+                select(Permission.bit_offset)
+                .where(Permission.allowed_scopes.contains(scope))
+            )
+
+            mask = 0
+            for offset in bit_offsets:
+                mask |= (1 << offset)
+
+            return mask
+
+    def clear_caches(self):
+        self.default_base_permissions.cache_clear()
+        self.bit_offset.cache_clear()
+        self.permission_from_offset.cache_clear()
+
+
+class ScopedPermission(BaseModel):
+    resource: str
+    action: str
+    scope: PermissionScope
+
+    @classmethod
+    def from_str(cls, perm_str: str) -> Self:
+        """
+        Creates an instance of the class based on a permission string. The permission
+        string is expected to follow the format `resource:action:scope`. The resource
+        and action are mandatory, while the scope is optional. If the scope is not
+        provided, it defaults to `PermissionScope.ANY`.
+
+        :param perm_str: A string representation of the permission in the
+            format `resource[.subresource]:action[:scope]`. The resource and action are required,
+            and the scope, if provided, represents the level of access.
+        :raises ValueError: If the resource or action part of the string is empty.
+        :return: An instance of `Permission` from the parsed string.
+        """
+        resource, action, raw_scope = [*perm_str.split(":") + [None] * 3][:3]
+
+        if not resource or not action:
+            raise ValueError("Permission resource and action cannot be empty.")
+
+        scope = PermissionScope.from_str(raw_scope) if raw_scope else PermissionScope.ANY
+
+        return cls(resource=resource,
+                   action=action,
+                   scope=scope)
+
+    def __str__(self):
+        return f"{self.resource}:{self.action}:{self.scope if self.scope else '*'}"
+
+    def __eq__(self, other: ScopedPermission) -> bool:
+        return (self.resource, self.action, self.scope) == (other.resource, other.action, other.scope)
+
+    def __hash__(self):
+        return hash((self.resource, self.action, self.scope))
+
+
+class PermissionSet:
+    """
+    Represents a bitfield-based permission set.
+    """
+
+    def __init__(self, bitstring: int = 0, registry: PermissionRegistry | None = None):
+        from .core import permission_registry
+        self.bitstring = bitstring
+        self.registry = registry if registry is not None else permission_registry()
+
+    @classmethod
+    def from_mask(cls, mask: int | str | BitString) -> Self:
+        """Creates a PermissionSet instance from a given bitfield integer."""
+        if isinstance(mask, BitString):
+            mask = int(mask, 2)
+        elif isinstance(mask, str):
+            mask = int(mask, 2)
+
+        instance = cls()
+        instance.bitstring = mask
+        return instance
+
+    @classmethod
+    def from_permission_list(cls, perms: Iterable[ScopedPermission]) -> Self:
+        """Creates a PermissionSet instance from a list of Permission objects."""
+        instance = cls()
+        for perm in perms:
+            instance[perm] = True
+        return instance
+
+    def set_any_bit(self):
+        """
+        Sets the ANY scope bit for a resource-action pair if the user has that permission in any scope.
+        Clears other bits.
+
+        1) Fast path if the permissions for each scope are contiguous using bitwise operations.
+        2) Slow path if not, check each permission individually.
+        """
+        any_set = PermissionSet(bitstring=self.bitstring, registry=self.registry)
+
+        if cfg().auth.assert_ordered_permissions:  # Fast path, use bitwise operations
+            p = PermissionScope.max_bit_length()
+            mask = (1 << p) - 1
+            temp = self.bitstring
+            for _scope in PermissionScope:
+                any_set.bitstring |= (temp & mask) << PermissionScope.ANY.offset
+                temp >>= p
+
+        else:  # Slow path, check each permission individually
+            for perm in self:
+                perm.scope = PermissionScope.ANY
+                any_set[perm] = True
+
+        return any_set
+
+    def empty(self):
+        return self.bitstring == 0
+
+    def __setitem__(self, key: ScopedPermission, value: bool):
+        bit_pos = self.registry.bit_offset(key)
+        if bit_pos is None:
+            raise ValueError(f"Permission {key} cannot be represented")
+
+        if value:
+            self.bitstring |= (1 << bit_pos)
+        else:
+            self.bitstring &= ~(1 << bit_pos)
+
+    def __contains__(self, item: ScopedPermission) -> bool:
+        bit_pos = self.registry.bit_offset(item)
+        if bit_pos is None:
+            return False
+
+        return bool(self.bitstring & (1 << bit_pos))
+
+    def __eq__(self, other: PermissionSet) -> bool:
+        return self.bitstring == other.bitstring
+
+    def __or__(self, other: PermissionSet):
+        return PermissionSet(bitstring=self.bitstring | other.bitstring, registry=self.registry)
+
+    def __and__(self, other: PermissionSet):
+        return PermissionSet(bitstring=self.bitstring & other.bitstring, registry=self.registry)
+
+    def __sub__(self, other: PermissionSet):
+        return PermissionSet(bitstring=self.bitstring & ~other.bitstring, registry=self.registry)
+
+    def __iter__(self):
+        mask = self.bitstring
+        bit_pos = 0
+
+        while mask:
+            if mask & 1:
+                perm = self.registry.permission_from_offset(bit_pos)
+                if perm:
+                    yield perm
+            mask >>= 1
+            bit_pos += 1
+
+    def __len__(self) -> int:
+        return bin(self.bitstring).count("1")

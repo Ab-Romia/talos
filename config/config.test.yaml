@@ -1,0 +1,2 @@
+auth:
+  permission_bitstring_length: 16

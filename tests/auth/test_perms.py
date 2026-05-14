@@ -6,21 +6,27 @@ from backend.auth.permissions.core import permission_registry, require_perms
 from backend.auth.permissions.model import (
     EVERYONE_ID,
     Permission,
-    PermissionRegistry,
     PermissionScope,
-    PermissionSet,
-    Role, BITSTRING_LENGTH,
+    Role, RolePermission
 )
+from backend.auth.permissions.registry import PermissionSet, ScopedPermission
 
 # TODO: define stable ordering of permissions
 
 test_permissions = [
-    ("message", "send", PermissionScope.OWN),
-    ("message", "send", PermissionScope.CHANNEL),
-    ("message", "send", PermissionScope.WORKSPACE),
-    ("message", "send", PermissionScope.ANY),
-    ("workspace", "read", PermissionScope.ANY)
+    ("message", "send", [PermissionScope.OWN, PermissionScope.CHANNEL,
+                         PermissionScope.WORKSPACE, PermissionScope.ANY]),
+    ("workspace", "read", [PermissionScope.ANY]),
+    ("workspace", "write", [PermissionScope.ANY])
 ]
+
+msg_send_channel_offset = PermissionScope.CHANNEL.offset
+
+
+@pytest.fixture(params=[True, False], scope="function")
+def permission_mode(request):
+    from config import cfg
+    cfg().auth.assert_ordered_permissions = request.param
 
 
 @pytest.fixture(autouse=True, scope="function")
@@ -45,17 +51,17 @@ def registry(db_session):
     )
     db_session.add_all(
         [
-            Permission(resource=resource, action=action, scope=scope, bit_offset=i)
-            for i, (resource, action, scope)
-            in enumerate(test_permissions)
+            Permission(resource=resource, action=action, allowed_scopes=allowed_scopes)
+            for resource, action, allowed_scopes
+            in test_permissions
         ]
     )
     db_session.flush()
     # add first permission to everyone
     everyone_role = db_session.get(Role, EVERYONE_ID)
+    perm = db_session.scalar(select(Permission).where(Permission.bit_offset == 0))
     everyone_role.permissions.append(
-        db_session.scalars(select(Permission))
-        .first()
+        RolePermission(permission_id=perm.id, scope=PermissionScope.OWN)
     )
     db_session.commit()
 
@@ -65,25 +71,32 @@ def registry(db_session):
 class TestPermissionRegistry:
 
     def test_get_permission(self, registry):
-        permission = registry.get_permission("message", "send", PermissionScope.CHANNEL)
+        permission = registry.db_permission("message", "send", PermissionScope.CHANNEL)
         assert permission is not None
         assert permission.resource == "message"
         assert permission.action == "send"
-        assert permission.scope == PermissionScope.CHANNEL
+        assert PermissionScope.CHANNEL in permission.allowed_scopes
 
     def test_method_caches(self, registry):
         """Generic cache test: verify a method's result is cached (same object on repeated calls)."""
         methods = [
-            ("default_base_permissions", ()),
-            ("bit_offset", ("message", "send", PermissionScope.CHANNEL)),
-            ("permission_from_offset", (1,)),
-            ("scope_mask", (PermissionScope.CHANNEL,)),
+            (registry.default_base_permissions, ()),
+            (registry.bit_offset, (
+                ScopedPermission(resource="message", action="send", scope=PermissionScope.CHANNEL),
+            )),
+            (registry.permission_from_offset, (msg_send_channel_offset,)),
         ]
-        for method_name, method_args in methods:
-            method = getattr(registry, method_name)
+        for method, method_args in methods:
             method.cache_clear()
 
             assert method(*method_args) is method(*method_args)
+
+        # test that bit_offset cache is the same as permission_from_offset cache for a valid permission
+        registry.permission_from_offset.cache_clear()
+        test_perm = ScopedPermission(resource="message", action="send", scope=PermissionScope.CHANNEL)
+
+        registry.bit_offset(test_perm)
+        assert registry.permission_from_offset(msg_send_channel_offset) is test_perm
 
     def test_default_base_permissions_returns_permission_set(self, registry):
         result = registry.default_base_permissions()
@@ -94,40 +107,49 @@ class TestPermissionRegistry:
         # Everyone role has the first permission (added in fixture)
         assert isinstance(result, PermissionSet)
         # The mask could be a string (BIT column) or int, so convert if needed
-        mask_value = int(result.mask, 2) if isinstance(result.mask, str) else result.mask
+        mask_value = int(result.bitstring, 2) if isinstance(result.bitstring, str) else result.bitstring
         assert isinstance(mask_value, int)
 
     def test_bit_offset_returns_valid_offset(self, registry):
-        offset = registry.bit_offset("message", "send", PermissionScope.CHANNEL)
-        assert offset == 1
+        offset = registry.bit_offset(
+            ScopedPermission(resource="message", action="send", scope=PermissionScope.CHANNEL)
+        )
+        assert offset == msg_send_channel_offset
 
     def test_bit_offset_for_all_scopes(self, registry):
-        for i, (resource, action, scope) in enumerate(test_permissions):
-            offset = registry.bit_offset(resource, action, scope)
-            assert offset == i
+        for base_offset, (resource, action, allowed_scopes) in enumerate(test_permissions):
+            for scope in allowed_scopes:
+                offset = registry.bit_offset(
+                    ScopedPermission(resource=resource, action=action, scope=scope)
+                )
+                expected_offset = base_offset + scope.offset
+                assert offset == expected_offset
 
     def test_bit_offset_returns_none_for_nonexistent_permission(self, registry):
-        offset = registry.bit_offset("nonexistent", "action", PermissionScope.ANY)
+        offset = registry.bit_offset(
+            ScopedPermission(resource="nonexistent", action="send", scope=PermissionScope.CHANNEL)
+        )
         assert offset is None
 
     def test_bit_offset_case_sensitive(self, registry):
-        offset = registry.bit_offset("MESSAGE", "send", PermissionScope.CHANNEL)
+        offset = registry.bit_offset(
+            ScopedPermission(resource="Message", action="Send", scope=PermissionScope.CHANNEL)
+        )
         assert offset is None
 
     def test_permission_from_offset_returns_valid_permission(self, registry):
-        perm = registry.permission_from_offset(1)
+        perm = registry.permission_from_offset(msg_send_channel_offset)
         assert perm is not None
         assert perm.resource == "message"
         assert perm.action == "send"
         assert perm.scope == PermissionScope.CHANNEL
 
     def test_permission_from_offset_returns_all_bits(self, registry):
-        for i, (resource, action, scope) in enumerate(test_permissions):
-            perm = registry.permission_from_offset(i)
-            assert perm is not None
-            assert perm.resource == resource
-            assert perm.action == action
-            assert perm.scope == scope
+        for offset, (resource, action, allowed_scopes) in enumerate(test_permissions):
+            for scope in allowed_scopes:
+                expected_perm = ScopedPermission(resource=resource, action=action, scope=scope)
+                actual_perm = registry.permission_from_offset(offset + scope.offset)
+                assert actual_perm == expected_perm
 
     def test_permission_from_offset_returns_none_for_invalid_bit(self, registry):
         perm = registry.permission_from_offset(999)
@@ -137,26 +159,18 @@ class TestPermissionRegistry:
         perm = registry.permission_from_offset(-1)
         assert perm is None
 
-    def test_scope_mask_own_scope(self, registry):
+    def test_scope_masks(self, registry):
         mask = registry.scope_mask(PermissionScope.OWN)
-        assert mask == 0b1
+        assert mask == 0b1111
 
-    def test_scope_mask_channel_scope(self, registry):
         mask = registry.scope_mask(PermissionScope.CHANNEL)
-        assert mask == 0b10
+        assert mask == 0b1111 << 4
 
-    def test_scope_mask_workspace_scope(self, registry):
         mask = registry.scope_mask(PermissionScope.WORKSPACE)
-        assert mask == 0b100
+        assert mask == 0b1111 << 8
 
-    def test_scope_mask_any_scope(self, registry):
         mask = registry.scope_mask(PermissionScope.ANY)
-        # Should include all bits: OWN (0), CHANNEL (1), WORKSPACE (2), ANY (3), read (4)
-        assert mask == 0b11111
-
-    def test_scope_mask_is_integer(self, registry):
-        mask = registry.scope_mask(PermissionScope.CHANNEL)
-        assert isinstance(mask, int)
+        assert mask == 0b1111 << 12
 
 
 class TestPermissionParsing:
@@ -168,7 +182,7 @@ class TestPermissionParsing:
         ],
     )
     def test_from_str_defaults_scope_to_any(self, raw_permission):
-        parsed = Permission.from_str(raw_permission)
+        parsed = ScopedPermission.from_str(raw_permission)
 
         assert parsed.scope == PermissionScope.ANY
         assert parsed.resource == "message"
@@ -178,38 +192,34 @@ class TestPermissionParsing:
 
 
 class TestPermissionSet:
-    @pytest.mark.parametrize(
-        "permission_source",
-        [
-            pytest.param("local", id="local_permission"),
-            pytest.param("registry", id="registry_permission"),
-        ],
-    )
-    def test_contains(self, db_session, registry: PermissionRegistry, permission_source):
-        permissions = [
-            Permission.from_str("message:send:workspace"),
-            registry.get_permission("message", "send", PermissionScope.WORKSPACE),
-            db_session.scalar(
-                select(Permission)
-                .where(Permission.resource == "message",
-                       Permission.action == "send",
-                       Permission.scope == PermissionScope.WORKSPACE)
-            )
-        ]
+    # TODO: parametrize
+    def test_set_any_bit(self, registry):
+        permission = ScopedPermission.from_str("message:send:own")
+        permission_any = ScopedPermission.from_str("message:send")
 
-        for permission in permissions:
-            assert permission is not None
-            granted = PermissionSet.from_permission_list([permission])
+        perm_set = PermissionSet.from_permission_list([permission])
 
-            assert Permission.from_str("message:send:workspace") in granted
-            assert Permission.from_str("message:send") not in granted
-            assert Permission.from_str("message:send") in granted.collapse_scope()
-            assert Permission.from_str("message:send:*") in granted.collapse_scope()
+        any_bit_set = perm_set.set_any_bit()
+
+        assert permission in any_bit_set
+        assert permission_any in any_bit_set
+
+    def test_contains(self, db_session, registry):
+        permission = ScopedPermission.from_str("message:send:workspace")
+
+        assert permission is not None
+        granted = PermissionSet.from_permission_list([permission])
+
+        assert ScopedPermission.from_str("message:send:workspace") in granted
+        assert ScopedPermission.from_str("message:send:own") not in granted
+        assert ScopedPermission.from_str("message:send") not in granted
+        assert ScopedPermission.from_str("message:send") in granted.set_any_bit()
+        assert ScopedPermission.from_str("message:send:*") in granted.set_any_bit()
 
     def test_bitwise_ops_round_trip_via_registry(self):
-        own = Permission.from_str("message:send:own")
-        channel = Permission.from_str("message:send:channel")
-        workspace_read = Permission.from_str("workspace:read")
+        own = ScopedPermission.from_str("message:send:own")
+        channel = ScopedPermission.from_str("message:send:channel")
+        workspace_read = ScopedPermission.from_str("workspace:read")
 
         first = PermissionSet.from_permission_list([own])
         first[workspace_read] = True
@@ -235,8 +245,8 @@ class TestPermissionSet:
 
     def test_iteration_returns_registered_permissions(self):
         granted = PermissionSet()
-        granted[Permission.from_str("message:send:own")] = True
-        granted[Permission.from_str("workspace:read")] = True
+        granted[ScopedPermission.from_str("message:send:own")] = True
+        granted[ScopedPermission.from_str("workspace:read")] = True
 
         assert {
                    (permission.resource, permission.action, permission.scope)
@@ -251,7 +261,7 @@ class TestRequirePerms:
     def test_message_send_allowed(self, db_session, registry):
         checker = require_perms("message:send")
 
-        permission = Permission.from_str("message:send:channel")
+        permission = ScopedPermission.from_str("message:send:channel")
         perm_set = PermissionSet.from_permission_list([permission])
 
         checker(user_permissions=perm_set, is_owner=False)
@@ -266,14 +276,14 @@ class TestRequirePerms:
 
     def test_owner_allows_own_scope(self, db_session):
         checker = require_perms("message:send")
-        permission = Permission.from_str("message:send:own")
+        permission = ScopedPermission.from_str("message:send:own")
         perm_set = PermissionSet.from_permission_list([permission])
 
         checker(user_permissions=perm_set, is_owner=True)
 
     def test_non_owner_denies_own_scope(self, db_session, registry):
         checker = require_perms("message:send")
-        permission = Permission.from_str("message:send:own")
+        permission = ScopedPermission.from_str("message:send:own")
         perm_set = PermissionSet.from_permission_list([permission])
 
         from backend.auth.utils.errors import Forbidden
@@ -284,7 +294,7 @@ class TestRequirePerms:
     def test_treats_scope_less_requirement_as_any(self, db_session, registry):
         checker = require_perms("message:send")
 
-        permission = Permission.from_str("message:send")
+        permission = ScopedPermission.from_str("message:send")
         granted = PermissionSet.from_permission_list([permission])
 
         checker(user_permissions=granted, is_owner=False)
@@ -297,13 +307,14 @@ class TestEndpoint:
     #  (allowed, denied, owner vs non-owner)
     #  channel, workspace
 
-    @pytest.fixture(scope="class")
-    def test_endpoint(self, client):
-        path = "/__/{workspace_id}/test_require_perms_endpoint"
+    @pytest.fixture(scope="function")
+    def test_endpoint(self, client, registry):
+        import uuid
+        path_name = f"test_require_perms_endpoint_{uuid.uuid4().hex}"
+        path = f"/__/{{workspace_id}}/{path_name}"
         router = APIRouter()
 
-        @router.get(path,
-                    dependencies=[Depends(require_perms("message:send"))])
+        @router.get(path, dependencies=[Depends(require_perms("message:send"))])
         def endpoint(workspace_id: str):
             return workspace_id
 
@@ -313,17 +324,14 @@ class TestEndpoint:
 
     def test_valid_workspace(self, db_session, client, registry, test_endpoint,
                              test_workspace, test_user, auth_token):
-        # Grant the user the required permission in the workspace
-        permission = registry.get_permission("message", "send", PermissionScope.WORKSPACE)
+        perm = ScopedPermission(resource="message", action="send", scope=PermissionScope.WORKSPACE)
+        db_perm = registry.db_permission(perm.resource, perm.action, perm.scope)
+        assert db_perm is not None
 
-        # TODO: this temporary until i add automatic mask generation
-        mask = (["0"] * BITSTRING_LENGTH)
-        mask[registry.bit_offset("message", "send", PermissionScope.WORKSPACE)] = "1"
-
-        role = Role(name="test_role", workspace_id=test_workspace.id, priority=1,
-                    # TODO:
-                    allow_mask="".join(mask))
-        role.permissions.append(permission)
+        role = Role(name="test_role", workspace_id=test_workspace.id, priority=1)
+        role.permissions.append(
+            RolePermission(permission_id=db_perm.id, scope=PermissionScope.WORKSPACE)
+        )
         role.users.append(test_user)
         db_session.add(role)
         db_session.commit()

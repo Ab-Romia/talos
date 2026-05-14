@@ -3,12 +3,13 @@ from typing import Annotated, Callable
 
 from cachetools import cached, LRUCache
 from fastapi import Path, Depends
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func
 
 from backend.auth.utils import errors
 from backend.auth.utils.session import SessionDep
 from model import DatabaseDep
-from .model import PermissionSet, Role, ChannelRoleOverride, Permission, PermissionScope, PermissionRegistry
+from .model import Role, ChannelRoleOverride, PermissionScope, DEFAULT_BITS
+from .registry import PermissionRegistry, PermissionSet, ScopedPermission
 
 # TODO: use reddis
 permission_cache = LRUCache(maxsize=2 ** 16)
@@ -32,7 +33,11 @@ def user_perms(
         allow_overrides = PermissionSet()
 
         roles_and_overrides = db.execute(
-            select(Role.allow_mask, ChannelRoleOverride.allow_mask, ChannelRoleOverride.deny_mask)
+            select(
+                Role.allow_mask,
+                func.coalesce(ChannelRoleOverride.allow_mask, DEFAULT_BITS),
+                func.coalesce(ChannelRoleOverride.deny_mask, DEFAULT_BITS),
+            )
             .join(ChannelRoleOverride,
                   and_(Role.id == ChannelRoleOverride.role_id,
                        ChannelRoleOverride.channel_id == channel_id),
@@ -45,8 +50,8 @@ def user_perms(
 
         for role_allow, override_allow, override_deny in roles_and_overrides:
             permissions |= PermissionSet.from_mask(role_allow)
-            deny_overrides |= PermissionSet.from_mask(override_deny or 0)
-            allow_overrides |= PermissionSet.from_mask(override_allow or 0)
+            deny_overrides |= PermissionSet.from_mask(override_deny)
+            allow_overrides |= PermissionSet.from_mask(override_allow)
 
         permissions -= deny_overrides
         permissions |= allow_overrides
@@ -74,7 +79,7 @@ def require_perms(*required_permissions: str, is_owner: Callable[..., bool] = la
         permissions are present within the user’s permissions based on the context.
     """
 
-    required_perms = PermissionSet.from_permission_list((Permission.from_str(p) for p in required_permissions))
+    required_perms = PermissionSet.from_permission_list(ScopedPermission.from_str(p) for p in required_permissions)
     own_scope_mask = PermissionSet.from_mask(permission_registry().scope_mask(PermissionScope.OWN))
 
     # TODO: implement caching for user permissions
@@ -85,7 +90,7 @@ def require_perms(*required_permissions: str, is_owner: Callable[..., bool] = la
             # Clear OWN scope permissions if the user is not the owner
             user_permissions -= own_scope_mask
 
-        user_permissions = user_permissions.collapse_scope()
+        user_permissions = user_permissions.set_any_bit()
         missing = required_perms - user_permissions
         if not missing.empty():
             raise errors.Forbidden(missing)

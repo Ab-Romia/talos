@@ -5,6 +5,11 @@ from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict, PydanticBaseSettingsSource, YamlConfigSettingsSource
 
 
+def is_pytest() -> bool:
+    import sys
+    return "pytest" in sys.modules
+
+
 class OAuthClient(BaseModel):
     client_id: str
     client_secret: str
@@ -31,6 +36,10 @@ class AuthConfig(BaseModel):
     session_cookie_key: str = "user_session"
 
     permission_bitstring_length: int = 64
+    # PERF:
+    #  Permissions scopes are assigned contiguously in the order they are registered.
+    #  Permissions have the same bit offset across scopes.
+    assert_ordered_permissions: bool = True
 
     model_config = SettingsConfigDict(
         val_json_bytes="base64"
@@ -127,6 +136,12 @@ class Config(BaseSettings):
             init_settings,
             env_settings,
             dotenv_settings,
+            # override during pytest
+            *([YamlConfigSettingsSource(
+                settings_cls,
+                yaml_file="config/config.test.yaml",
+                deep_merge=True
+            )] if is_pytest() else ()),
             YamlConfigSettingsSource(settings_cls),
             file_secret_settings,
         )

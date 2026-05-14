@@ -24,11 +24,13 @@ from model.messaging import Workspace, Channel
 @pytest.fixture(scope="session")
 def engine():
     """Create a single SQLAlchemy engine for the whole test session."""
+
     from model import Base as ModelBase
 
     engine = sqlalchemy.create_engine(
-        "postgresql+psycopg2://talos_app:kirowashere@localhost:5432/test"
+        "postgresql+psycopg://talos_app:kirowashere@localhost:5432/test"
     )
+    # Use a smaller bitstring length for tests
 
     # init db extension
     with Session(engine) as session:
