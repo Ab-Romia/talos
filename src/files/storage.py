@@ -26,8 +26,10 @@ class MinIOStorage:
         secret_key: str,
         secure: bool = False,
         bucket_name: str = "talos-uploads",
+        external_secure: bool | None = None,
     ):
         self.bucket_name = bucket_name
+        _ext_secure = secure if external_secure is None else external_secure
 
         http_client = urllib3.PoolManager(
             num_pools=10,
@@ -48,7 +50,7 @@ class MinIOStorage:
             external_endpoint,
             access_key=access_key,
             secret_key=secret_key,
-            secure=secure,
+            secure=_ext_secure,
         )
 
     async def ensure_bucket(self):

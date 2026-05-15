@@ -28,6 +28,7 @@ def _get_minio_storage() -> MinIOStorage:
         secret_key=minio_cfg.secret_key,
         secure=minio_cfg.secure,
         bucket_name=minio_cfg.bucket_name,
+        external_secure=minio_cfg.external_secure,
     )
 
 
@@ -71,7 +72,7 @@ app.include_router(files_router, prefix="/api")
 app.include_router(drive_router, prefix="/api")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "https://localhost"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

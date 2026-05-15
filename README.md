@@ -59,71 +59,128 @@ The module is covered by unit tests (service, storage, schemas, processing tasks
 ### Prerequisites
 
 - Python 3.13
-- Docker (or Podman with the Docker socket)
+- Node.js 18+
+- Docker or Podman + docker-compose
 - OpenAI API key
 
-### Install
+### 1 — Clone and configure
 
 ```bash
 git clone https://github.com/Ab-Romia/gp_artifact.git
 cd gp_artifact
 
 cp .env.example .env
-# Fill in OPENAI_API_KEY and the other secrets
+# Open .env and fill in at minimum:
+#   OPENAI_API_KEY, POSTGRES_PASSWORD, AUTH__JWE_SECRET
+```
 
-pip install uv
+### 2 — Python dependencies
+
+```bash
+pip install uv      # skip if uv is already on PATH
 uv sync
 ```
 
-### Start services
+### 3 — SSL certificates (one-time, local HTTPS)
+
+nginx terminates TLS on port 443. You need locally-trusted certs before starting.
+
+**On Fedora/RHEL:**
+```bash
+sudo dnf install mkcert
+```
+**On Ubuntu/Debian:**
+```bash
+sudo apt install mkcert
+```
+
+Then generate the certs:
+```bash
+mkcert -install                         # trust the local CA in your browser (run once)
+
+mkcert -cert-file nginx/certs/cert.pem \
+       -key-file  nginx/certs/key.pem  \
+       localhost 127.0.0.1 ::1
+```
+
+**Rootless Podman only (Fedora default):** ports 80 and 443 require a one-time sysctl:
+```bash
+echo 'net.ipv4.ip_unprivileged_port_start=80' | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+```
+
+### 4 — Build the frontend
+
+nginx serves the compiled React bundle. Build it before starting the stack:
+
+```bash
+cd frontend && npm install && npm run build && cd ..
+```
+
+### 5 — Start everything
 
 ```bash
 docker compose up -d
-# Starts: app, worker, postgres, milvus (+ etcd), minio, redis, adminer
 ```
 
-### Run the API and frontend
+This starts: **nginx** (80/443), **app** (internal), **worker**, **postgres**, **milvus** (+ etcd), **minio**, **redis**, **adminer** (8080).
 
-The backend is served by the `app` container on port 8000. The frontend is a separate Vite dev server:
+Open **https://localhost** — done.
+
+---
+
+### Development mode (hot-reload, no nginx)
+
+If you're actively changing backend or frontend code, skip nginx and run both locally:
 
 ```bash
-cd frontend
-npm install
-npm run dev
-# http://localhost:5173
+# Terminal 1 — backend (needs infra containers running)
+docker compose up -d postgres milvus-standalone minio redis
+uv run uvicorn app:app --reload --host 0.0.0.0 --port 8000
+
+# Terminal 2 — frontend (proxies /api and /auth to localhost:8000)
+cd frontend && npm run dev
+# Open http://localhost:5173
 ```
+
+---
 
 ## Tests
 
 ```bash
-# Unit tests (no external services required)
+# Unit tests — no external services needed
 uv run pytest tests/unit -q
 
-# Auth and integration tests (need Postgres, Redis, MinIO running)
+# Auth + integration tests — needs Postgres, Redis, MinIO running
 uv run pytest tests/auth tests/integration -q
+
+# Integration tests use a separate DB
+DATABASE_URL=postgresql://talos_app:password@localhost:5432/talos_test \
+  uv run pytest tests/integration -q
 ```
 
 ## Configuration
 
-Runtime config is loaded from `.env` (via pydantic-settings, nested delimiter `__`). See `.env.example` for the complete list.
+Runtime config is loaded from `.env` (pydantic-settings, nested delimiter `__`). See `.env.example` for the full list.
 
 Key settings:
 
-| Variable                       | Default                  | Description                                        |
-| ------------------------------ | ------------------------ | -------------------------------------------------- |
-| `OPENAI_API_KEY`               |                          | Required                                           |
-| `OPENAI_MODEL`                 | `gpt-4o-mini`            | LLM model                                          |
-| `EMBEDDING_MODEL`              | `text-embedding-3-small` | Embedding model                                    |
-| `MILVUS_HOST`                  | `localhost`              | Milvus host                                        |
-| `MILVUS_PORT`                  | `19530`                  | Milvus port                                        |
-| `USE_HYBRID_RETRIEVAL`         | `true`                   | Enable hybrid search                               |
-| `USE_RERANKING`                | `true`                   | Enable cross-encoder reranking                     |
-| `CHUNK_SIZE`                   | `1000`                   | Document chunk size                                |
-| `CHUNK_OVERLAP`                | `200`                    | Chunk overlap                                      |
-| `MINIO__INTERNAL_ENDPOINT`     | `localhost:9000`         | MinIO host used by the API and worker              |
-| `MINIO__EXTERNAL_ENDPOINT`     | `localhost:9000`         | MinIO host embedded in presigned URLs for browsers |
-| `MINIO__BUCKET_NAME`           | `talos-uploads`          | Object storage bucket                              |
-| `REDIS__URL`                   | `redis://localhost:6379` | ARQ broker URL                                     |
+| Variable                       | Default                  | Description                                               |
+| ------------------------------ | ------------------------ | --------------------------------------------------------- |
+| `OPENAI_API_KEY`               |                          | Required                                                  |
+| `OPENAI_MODEL`                 | `gpt-4o-mini`            | LLM model                                                 |
+| `EMBEDDING_MODEL`              | `text-embedding-3-small` | Embedding model                                           |
+| `MILVUS_HOST`                  | `localhost`              | Milvus host                                               |
+| `MILVUS_PORT`                  | `19530`                  | Milvus port                                               |
+| `USE_HYBRID_RETRIEVAL`         | `true`                   | Enable hybrid search                                      |
+| `USE_RERANKING`                | `true`                   | Enable cross-encoder reranking                            |
+| `CHUNK_SIZE`                   | `1000`                   | Document chunk size                                       |
+| `CHUNK_OVERLAP`                | `200`                    | Chunk overlap                                             |
+| `MINIO__INTERNAL_ENDPOINT`     | `minio:9000`             | MinIO host used by the API and worker (docker-internal)   |
+| `MINIO__EXTERNAL_ENDPOINT`     | `localhost`              | Host embedded in presigned URLs — set to your domain      |
+| `MINIO__EXTERNAL_SECURE`       | `true`                   | Generate `https://` presigned URLs (matches nginx)        |
+| `MINIO__BUCKET_NAME`           | `talos-uploads`          | Object storage bucket                                     |
+| `REDIS__URL`                   | `redis://redis:6379`     | ARQ broker URL                                            |
 
 ## Tech Stack
 

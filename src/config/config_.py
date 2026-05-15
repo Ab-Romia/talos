@@ -42,6 +42,7 @@ class MinIOConfig(BaseModel):
     access_key: str = "minioadmin"
     secret_key: str = "minioadmin"
     secure: bool = False
+    external_secure: bool = False
     bucket_name: str = "talos-uploads"
 
 
