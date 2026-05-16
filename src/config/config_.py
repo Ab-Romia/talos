@@ -36,10 +36,6 @@ class AuthConfig(BaseModel):
     session_cookie_key: str = "user_session"
 
     permission_bitstring_length: int = 64
-    # PERF:
-    #  Permissions scopes are assigned contiguously in the order they are registered.
-    #  Permissions have the same bit offset across scopes.
-    assert_ordered_permissions: bool = True
 
     model_config = SettingsConfigDict(
         val_json_bytes="base64"

@@ -23,12 +23,6 @@ test_permissions = [
 msg_send_channel_offset = PermissionScope.CHANNEL.offset
 
 
-@pytest.fixture(params=[True, False], scope="function")
-def permission_mode(request):
-    from config import cfg
-    cfg().auth.assert_ordered_permissions = request.param
-
-
 @pytest.fixture(autouse=True, scope="function")
 def clear_registry_cache(registry):
     registry.clear_caches()

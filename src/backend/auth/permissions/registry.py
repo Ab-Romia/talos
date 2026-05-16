@@ -7,7 +7,6 @@ from sqlalchemy import orm, select, exists
 from sqlalchemy.dialects.postgresql import BitString
 
 from backend.auth.permissions.model import Role, EVERYONE_ID, PermissionScope, Permission
-from config import cfg
 
 
 class PermissionRegistry:
@@ -79,21 +78,8 @@ class PermissionRegistry:
 
     def scope_mask(self, scope: PermissionScope) -> int:
         """Computes a bitmask for the given scope string."""
-        if cfg().auth.assert_ordered_permissions:
-            p = cfg().auth.permission_bitstring_length // len(PermissionScope)
-            mask = ((1 << p) - 1) << scope.offset
-            return mask
-        else:
-            bit_offsets = self.db.scalars(
-                select(Permission.bit_offset)
-                .where(Permission.allowed_scopes.contains(scope))
-            )
-
-            mask = 0
-            for offset in bit_offsets:
-                mask |= (1 << offset)
-
-            return mask
+        mask = ((1 << scope.max_bit_length()) - 1) << scope.offset
+        return mask
 
     def clear_caches(self):
         self.default_base_permissions.cache_clear()
@@ -101,6 +87,8 @@ class PermissionRegistry:
         self.permission_from_offset.cache_clear()
 
 
+# TODO: add fields for subresources, e.g. "document:read:own" vs "document.comment:read:own"
+# TODO: add field for specific resource instance
 class ScopedPermission(BaseModel):
     resource: str
     action: str
@@ -181,18 +169,12 @@ class PermissionSet:
         """
         any_set = PermissionSet(bitstring=self.bitstring, registry=self.registry)
 
-        if cfg().auth.assert_ordered_permissions:  # Fast path, use bitwise operations
-            p = PermissionScope.max_bit_length()
-            mask = (1 << p) - 1
-            temp = self.bitstring
-            for _scope in PermissionScope:
-                any_set.bitstring |= (temp & mask) << PermissionScope.ANY.offset
-                temp >>= p
-
-        else:  # Slow path, check each permission individually
-            for perm in self:
-                perm.scope = PermissionScope.ANY
-                any_set[perm] = True
+        p = PermissionScope.max_bit_length()
+        mask = (1 << p) - 1
+        temp = self.bitstring
+        for _scope in PermissionScope:
+            any_set.bitstring |= (temp & mask) << PermissionScope.ANY.offset
+            temp >>= p
 
         return any_set
 

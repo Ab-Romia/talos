@@ -79,6 +79,7 @@ def require_perms(*required_permissions: str, is_owner: Callable[..., bool] = la
         permissions are present within the user’s permissions based on the context.
     """
 
+    # TODO: assert permissions exist at startup, (or register them?)
     required_perms = PermissionSet.from_permission_list(ScopedPermission.from_str(p) for p in required_permissions)
     own_scope_mask = PermissionSet.from_mask(permission_registry().scope_mask(PermissionScope.OWN))
 
