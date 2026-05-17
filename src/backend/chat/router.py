@@ -34,7 +34,7 @@ WebSocket endpoint
 from typing import Sequence
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -73,6 +73,8 @@ def get_channel_members(channel_id: UUID, db: DatabaseDep) -> Sequence[UUID]:
         .where(User.deleted_at.is_(None))
     )
     return db.scalars(stmt).all()
+
+
 ##doneeee
 
 # ── REST: send ────────────────────────────────────────────────────────────────
@@ -189,12 +191,13 @@ async def websocket_channel(
             payload=event_payload,
         )
 
-        #ack the sender with delivery results so the frontend can show "delivered" status and optionally handle offline users (e.g. show "X users offline, will deliver when they're back online").
+        # ack the sender with delivery results so the frontend can show "delivered" status and optionally handle offline users (e.g. show "X users offline, will deliver when they're back online").
         await websocket.send_json({
             **event_payload,
             "delivered": True,
-            "delivered_to": delivered_users,
-            "offline_users": offline_users,# TODO: implement "to do" delivery for offline users (e.g. push notifications, or store undelivered events in cache for next time they come online).
+            "delivered_to": [str(uid) for uid in delivered_users],
+            "offline_users": [str(uid) for uid in offline_users],
+            # TODO: implement "to do" delivery for offline users (e.g. push notifications, or store undelivered events in cache for next time they come online).
         })
 
     async def handle_read_receipt(raw: dict) -> None:

@@ -11,13 +11,37 @@ from backend.chat.cache import HotColdCache, cache as default_cache
 from backend.chat.manager import ChannelConnectionManager, manager as default_manager
 from backend.chat.models import WSMessage, MessageRole
 from model.identity import User
+from model.messaging import Workspace
+
+
+# TODO: use existing fixtures for test_workspace that actually exists in DB
+@pytest.fixture
+def test_workspace(db_session):
+    """Create a test workspace in the database."""
+    workspace = Workspace(
+        name="Test Workspace",
+    )
+    db_session.add(workspace)
+    db_session.commit()
+    db_session.refresh(workspace)
+    return workspace
 
 
 # TODO: use existing fixtures for test_channel that actually exists in DB
 @pytest.fixture
-def test_channel_id() -> UUID:
-    """Generate a consistent test channel ID."""
-    return uuid4()
+def test_channel(db_session, test_workspace, test_users):
+    """Create a test chat channel in the database."""
+    from model.messaging import Chatroom
+
+    channel = Chatroom(
+        workspace_id=test_workspace.id,
+        name="Test Channel",
+    )
+    # TODO: join users to channel
+    db_session.add(channel)
+    db_session.commit()
+    db_session.refresh(channel)
+    return channel
 
 
 @pytest.fixture
