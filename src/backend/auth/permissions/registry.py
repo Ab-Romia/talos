@@ -1,8 +1,9 @@
-from typing import Self, Iterable
+from typing import Self, Iterable, Generator
 
 from bidict import bidict
 from cachetools import cached, TTLCache
 from pydantic import BaseModel
+from pydantic_core import core_schema
 from sqlalchemy import orm, select, exists
 from sqlalchemy.dialects.postgresql import BitString
 
@@ -76,11 +77,6 @@ class PermissionRegistry:
             .select()
         ).scalar_one()
 
-    def scope_mask(self, scope: PermissionScope) -> int:
-        """Computes a bitmask for the given scope string."""
-        mask = ((1 << scope.max_bit_length()) - 1) << scope.offset
-        return mask
-
     def clear_caches(self):
         self.default_base_permissions.cache_clear()
         self.bit_offset.cache_clear()
@@ -128,6 +124,14 @@ class ScopedPermission(BaseModel):
     def __hash__(self):
         return hash((self.resource, self.action, self.scope))
 
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type, handler):
+        # Parse permission strings directly into ScopedPermission.
+        return core_schema.no_info_before_validator_function(
+            lambda v: cls.from_str(v) if isinstance(v, str) else v,
+            handler(source_type),
+        )
+
 
 class PermissionSet:
     """
@@ -137,7 +141,7 @@ class PermissionSet:
     def __init__(self, bitstring: int = 0, registry: PermissionRegistry | None = None):
         from .core import permission_registry
         self.bitstring = bitstring
-        self.registry = registry if registry is not None else permission_registry()
+        self.registry = registry if registry is not None else permission_registry(None)
 
     @classmethod
     def from_mask(cls, mask: int | str | BitString) -> Self:
@@ -152,7 +156,7 @@ class PermissionSet:
         return instance
 
     @classmethod
-    def from_permission_list(cls, perms: Iterable[ScopedPermission]) -> Self:
+    def from_permissions(cls, perms: Iterable[ScopedPermission]) -> Self:
         """Creates a PermissionSet instance from a list of Permission objects."""
         instance = cls()
         for perm in perms:
@@ -204,13 +208,16 @@ class PermissionSet:
     def __or__(self, other: PermissionSet):
         return PermissionSet(bitstring=self.bitstring | other.bitstring, registry=self.registry)
 
+    def __xor__(self, other: PermissionSet):
+        return PermissionSet(bitstring=self.bitstring ^ other.bitstring, registry=self.registry)
+
     def __and__(self, other: PermissionSet):
         return PermissionSet(bitstring=self.bitstring & other.bitstring, registry=self.registry)
 
     def __sub__(self, other: PermissionSet):
         return PermissionSet(bitstring=self.bitstring & ~other.bitstring, registry=self.registry)
 
-    def __iter__(self):
+    def __iter__(self) -> Generator[ScopedPermission]:
         mask = self.bitstring
         bit_pos = 0
 

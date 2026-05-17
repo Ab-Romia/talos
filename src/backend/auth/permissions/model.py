@@ -39,6 +39,10 @@ class PermissionScope(PyEnum):
     def max_bit_length(cls) -> int:
         return cfg().auth.permission_bitstring_length // len(cls)
 
+    @cached_property
+    def mask(self) -> int:
+        return ((1 << self.max_bit_length()) - 1) << self.offset
+
     @classmethod
     def from_str(cls, raw_scope):
         if raw_scope is None or raw_scope == "*":
@@ -96,6 +100,7 @@ class Role(Base):
     name: Mapped[str] = mapped_column(unique=True, index=True)
     description: Mapped[str | None] = mapped_column()
 
+    # TODO: consider UUID = 0 instead?
     # `workspace_id` == None: a global role, applies to the entire app
     workspace_id: Mapped[uuid.UUID | None] = mapped_column(sql.ForeignKey(Workspace.id, ondelete="CASCADE"),
                                                            index=True,
@@ -106,9 +111,14 @@ class Role(Base):
     # PERF: Precomputed bitfields, recomputed on permission or role changes
     allow_mask: Mapped[BitString] = mapped_column(BIT(cfg().auth.permission_bitstring_length), default=DEFAULT_BITS)
 
+    workspace = relationship("Workspace", back_populates="roles")
     users = relationship("User", secondary=users_roles, back_populates="roles")
-    permissions: Mapped[list[RolePermission]] = relationship(RolePermission, back_populates="role",
-                                                             cascade="all, delete-orphan")
+    permissions: Mapped[list[RolePermission]] = relationship(
+        RolePermission,
+        back_populates="role",
+        cascade="all, delete-orphan",
+        overlaps="role,permission_overrides",
+    )
 
     __table_args__ = (
         UniqueConstraint(workspace_id, name),
@@ -128,6 +138,7 @@ class ChannelRoleOverride(Base):
             foreign(RolePermission.channel_id) == channel_id,
         ),
         cascade="all, delete-orphan",
+        overlaps="role,permissions,channel",
     )
 
     # PERF: Precomputed bitfield, recomputed on permission or role changes

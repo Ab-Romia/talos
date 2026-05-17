@@ -53,10 +53,12 @@ class Forbidden(AuthException):
 
     from backend.auth.permissions.registry import PermissionSet
 
-    def __init__(self, missing_perms: PermissionSet | None = None):
-        if missing_perms:
-            detail = f"Forbidden: Missing permissions: {', '.join(str(p) for p in missing_perms)}"
+    def __init__(self, missing_perms: PermissionSet | None = None, detail: str = ""):
+        if missing_perms is not None:
+            detail = f"""Forbidden: {detail + "\n" if detail else ""},
+            Missing permissions: {', '.join(str(perm) for perm in missing_perms)}
+            """
         else:
-            detail = self.detail
+            detail = detail or self.detail
 
         super().__init__(detail=detail, status_code=self.status_code)

@@ -222,7 +222,8 @@ def test_workspace(db_session: Session, test_user: User):
         owner_id=test_user.id,
     )
     db_session.add(ws)
-    db_session.flush()
+    db_session.commit()
+    db_session.refresh(ws)
     return ws
 
 
@@ -234,5 +235,6 @@ def test_channel(db_session: Session, test_workspace: Workspace):
         workspace_id=test_workspace.id,
     )
     db_session.add(cr)
-    db_session.flush()
+    db_session.commit()
+    db_session.refresh(cr)
     return cr

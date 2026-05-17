@@ -15,9 +15,12 @@ from .registry import PermissionRegistry, PermissionSet, ScopedPermission
 permission_cache = LRUCache(maxsize=2 ** 16)
 
 
-@cached({}, key=lambda *args: None)
+@cached({}, key=lambda db: None)
 def permission_registry(db: DatabaseDep):
     return PermissionRegistry(db)
+
+
+PermissionRegistryDep = Annotated[PermissionRegistry, Depends(permission_registry)]
 
 
 def user_perms(
@@ -79,20 +82,24 @@ def require_perms(*required_permissions: str, is_owner: Callable[..., bool] = la
         permissions are present within the user’s permissions based on the context.
     """
 
-    # TODO: assert permissions exist at startup, (or register them?)
-    required_perms = PermissionSet.from_permission_list(ScopedPermission.from_str(p) for p in required_permissions)
-    own_scope_mask = PermissionSet.from_mask(permission_registry().scope_mask(PermissionScope.OWN))
-
-    # TODO: implement caching for user permissions
-    # TODO: special case for `permission:edit`: user must have the permission to grant/revoke it
+    required_perms = None
+    own_scope_mask = PermissionScope.OWN.mask
 
     def helper(user_permissions: UserPermissionsDep, is_owner: Annotated[bool, Depends(is_owner)]):
+        nonlocal required_perms
+
+        if required_perms is None:
+            required_perms = PermissionSet.from_permissions(
+                ScopedPermission.from_str(p) for p in required_permissions
+            )
+
+        # Clear OWN scope permissions if the user is not the owner
         if not is_owner:
-            # Clear OWN scope permissions if the user is not the owner
-            user_permissions -= own_scope_mask
+            user_permissions -= PermissionSet(own_scope_mask)
 
         user_permissions = user_permissions.set_any_bit()
         missing = required_perms - user_permissions
+
         if not missing.empty():
             raise errors.Forbidden(missing)
 

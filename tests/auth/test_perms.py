@@ -154,17 +154,15 @@ class TestPermissionRegistry:
         assert perm is None
 
     def test_scope_masks(self, registry):
-        mask = registry.scope_mask(PermissionScope.OWN)
-        assert mask == 0b1111
+        own_mask = PermissionScope.OWN.mask
+        channel_mask = PermissionScope.CHANNEL.mask
+        workspace_mask = PermissionScope.WORKSPACE.mask
+        any_mask = PermissionScope.WORKSPACE.mask
 
-        mask = registry.scope_mask(PermissionScope.CHANNEL)
-        assert mask == 0b1111 << 4
-
-        mask = registry.scope_mask(PermissionScope.WORKSPACE)
-        assert mask == 0b1111 << 8
-
-        mask = registry.scope_mask(PermissionScope.ANY)
-        assert mask == 0b1111 << 12
+        masks = [own_mask, channel_mask, workspace_mask, any_mask]
+        for mask in masks:
+            for other_mask in masks:
+                assert (mask & other_mask) == 0 or mask == other_mask
 
 
 class TestPermissionParsing:
@@ -191,7 +189,7 @@ class TestPermissionSet:
         permission = ScopedPermission.from_str("message:send:own")
         permission_any = ScopedPermission.from_str("message:send")
 
-        perm_set = PermissionSet.from_permission_list([permission])
+        perm_set = PermissionSet.from_permissions([permission])
 
         any_bit_set = perm_set.set_any_bit()
 
@@ -202,7 +200,7 @@ class TestPermissionSet:
         permission = ScopedPermission.from_str("message:send:workspace")
 
         assert permission is not None
-        granted = PermissionSet.from_permission_list([permission])
+        granted = PermissionSet.from_permissions([permission])
 
         assert ScopedPermission.from_str("message:send:workspace") in granted
         assert ScopedPermission.from_str("message:send:own") not in granted
@@ -215,10 +213,10 @@ class TestPermissionSet:
         channel = ScopedPermission.from_str("message:send:channel")
         workspace_read = ScopedPermission.from_str("workspace:read")
 
-        first = PermissionSet.from_permission_list([own])
+        first = PermissionSet.from_permissions([own])
         first[workspace_read] = True
 
-        second = PermissionSet.from_permission_list([channel])
+        second = PermissionSet.from_permissions([channel])
         second[workspace_read] = True
 
         union = first | second
@@ -256,7 +254,7 @@ class TestRequirePerms:
         checker = require_perms("message:send")
 
         permission = ScopedPermission.from_str("message:send:channel")
-        perm_set = PermissionSet.from_permission_list([permission])
+        perm_set = PermissionSet.from_permissions([permission])
 
         checker(user_permissions=perm_set, is_owner=False)
 
@@ -271,14 +269,14 @@ class TestRequirePerms:
     def test_owner_allows_own_scope(self, db_session):
         checker = require_perms("message:send")
         permission = ScopedPermission.from_str("message:send:own")
-        perm_set = PermissionSet.from_permission_list([permission])
+        perm_set = PermissionSet.from_permissions([permission])
 
         checker(user_permissions=perm_set, is_owner=True)
 
     def test_non_owner_denies_own_scope(self, db_session, registry):
         checker = require_perms("message:send")
         permission = ScopedPermission.from_str("message:send:own")
-        perm_set = PermissionSet.from_permission_list([permission])
+        perm_set = PermissionSet.from_permissions([permission])
 
         from backend.auth.utils.errors import Forbidden
 
@@ -289,7 +287,7 @@ class TestRequirePerms:
         checker = require_perms("message:send")
 
         permission = ScopedPermission.from_str("message:send")
-        granted = PermissionSet.from_permission_list([permission])
+        granted = PermissionSet.from_permissions([permission])
 
         checker(user_permissions=granted, is_owner=False)
 

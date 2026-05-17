@@ -8,6 +8,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend.auth import auth_router
+from backend.auth.permissions.router import workspace as workspace_permissions_router, \
+    channel as channel_permissions_router
 from backend.auth.utils.session import SessionMiddleware
 from backend.chat import chat_router
 from config import cfg
@@ -68,6 +70,8 @@ app.include_router(auth_router, prefix="/api/auth")
 app.include_router(chat_router, prefix="/api")
 app.include_router(files_router, prefix="/api")
 app.include_router(drive_router, prefix="/api")
+app.include_router(workspace_permissions_router, prefix="/api")
+app.include_router(channel_permissions_router, prefix="/api")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],

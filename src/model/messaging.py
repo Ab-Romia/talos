@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, func, Uuid
+from sqlalchemy.ext.orderinglist import ordering_list
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 
 from files.model import FileAttachment
@@ -27,6 +28,14 @@ class Workspace(Base):
     channels: Mapped[list[Channel]] = relationship("Channel", back_populates="workspace")
     members = relationship("User", secondary="workspace_members", back_populates="workspaces")
     files: Mapped[list[FileAttachment]] = relationship("FileAttachment", back_populates="workspace")
+
+    roles: Mapped[list[Role]] = relationship(  # type: ignore[forward-reference]
+        "Role",
+        order_by="Role.priority",
+        collection_class=ordering_list("priority"),
+        back_populates="workspace",
+        cascade="all, delete-orphan"
+    )
 
 
 class Channel(Base):
