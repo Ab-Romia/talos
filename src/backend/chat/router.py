@@ -1,36 +1,3 @@
-"""
-Chat router
-───────────
-REST endpoints and WebSocket endpoint share the *same* service layer,
-so the frontend can choose its transport freely.
-
-REST endpoints
-──────────────
-  POST   /chat/channels/{channel_id}/messages          → send a message
-  GET    /chat/channels/{channel_id}/messages           → paginated history
-  GET    /chat/channels/{channel_id}/messages/hot       → only hot-cached msgs
-  GET    /chat/channels/{channel_id}/messages/{msg_id}  → single message
-
-WebSocket endpoint
-──────────────────
-  WS     /chat/ws
-
-  Client → Server payload:
-      { "channel_id": "...", "text": "..." }
-
-  Server → Client events:
-      { "event": "new_message",  "message": {...}, "delivered": true, "offline_recipients": [...] }
-      { "event": "error", "detail": "..." }
-
-  Flow when Alice sends a message to channel:
-    1.  Server receives { "channel_id": "…", "text": "…" }
-    2.  Calls send_message()  ← same function the REST POST uses
-    3.  Message hits hot cache + cold store
-    4.  Query database to get all channel members
-    5.  Send to online users via WebSocket
-    6.  Return offline users list for "to do" delivery handling
-"""
-
 from typing import Sequence
 from uuid import UUID
 
@@ -40,8 +7,7 @@ from sqlalchemy import select
 
 from backend.auth.utils.helpers import UserDep
 from model import DatabaseDep
-from model.identity import User
-from model.messaging import Chatroom, users_workspace
+from model.messaging import Channel, WorkspaceMember
 from .manager import manager
 from .models import MessageEvent, ReadReceiptEvent, ReadReceiptRequest, WSIncoming
 from .service import (
@@ -55,27 +21,15 @@ from .service import (
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
-# ── Helper: query channel members from database ────────────────────────────────
-
 def get_channel_members(channel_id: UUID, db: DatabaseDep) -> Sequence[UUID]:
-    """
-    Query the database to return all user IDs that belong to the chatroom's workspace.
+    """Returns the list of user_ids that are members of the channel."""
+    # TODO: select using permissions
+    return db.execute((
+        select(WorkspaceMember.user_id)
+        .join(Channel, Channel.workspace_id == WorkspaceMember.workspace_id)
+        .where(Channel.id == channel_id)
+    )).scalars().all()
 
-    The current schema does not track chatroom-specific memberships,
-    so channel membership is derived from workspace membership.
-    """
-    stmt = (
-        select(User.id)
-        .select_from(Chatroom)
-        .join(users_workspace, users_workspace.c.workspace_id == Chatroom.workspace_id)
-        .join(User, users_workspace.c.user_id == User.id)
-        .where(Chatroom.id == channel_id)
-        .where(User.deleted_at.is_(None))
-    )
-    return db.scalars(stmt).all()
-
-
-##doneeee
 
 # ── REST: send ────────────────────────────────────────────────────────────────
 
