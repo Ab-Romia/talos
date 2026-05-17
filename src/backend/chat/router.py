@@ -31,14 +31,19 @@ WebSocket endpoint
     6.  Return offline users list for "to do" delivery handling
 """
 
+from typing import Sequence
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
+from sqlalchemy import select
 
 from backend.auth.utils.helpers import UserDep
+from model import DatabaseDep
+from model.identity import User
+from model.messaging import Chatroom, users_workspace
 from .manager import manager
-from .models import MessageEvent, WSIncoming
+from .models import MessageEvent, ReadReceiptEvent, ReadReceiptRequest, WSIncoming
 from .service import (
     get_message_by_id,
     get_messages,
@@ -52,21 +57,23 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 # ── Helper: query channel members from database ────────────────────────────────
 
-def get_channel_members(channel_id: UUID) -> list[UUID]:
+def get_channel_members(channel_id: UUID, db: DatabaseDep) -> Sequence[UUID]:
     """
-    Query the database to get all user_ids in a channel.
-    
-    For now, returns all workspace users for this channel.
-    Adapt this based on your actual user-channel relationship in the DB.
+    Query the database to return all user IDs that belong to the chatroom's workspace.
+
+    The current schema does not track chatroom-specific memberships,
+    so channel membership is derived from workspace membership.
     """
-
-    # You'll need to pass a DB session here; for now this is a placeholder
-    # that shows the pattern. In a real app, inject the session via dependency.
-    return []
-
-
-# TODO: implement this function to return actual channel members based on your DB schema.
-
+    stmt = (
+        select(User.id)
+        .select_from(Chatroom)
+        .join(users_workspace, users_workspace.c.workspace_id == Chatroom.workspace_id)
+        .join(User, users_workspace.c.user_id == User.id)
+        .where(Chatroom.id == channel_id)
+        .where(User.deleted_at.is_(None))
+    )
+    return db.scalars(stmt).all()
+##doneeee
 
 # ── REST: send ────────────────────────────────────────────────────────────────
 
@@ -137,9 +144,9 @@ def get_single_message(channel_id: UUID, message_id: UUID):
     "/channels/{channel_id}/online",
     summary="List users currently online in a channel",
 )
-def get_online_users(channel_id: UUID):
+def get_online_users(channel_id: UUID, db: DatabaseDep):
     """Returns the list of user_ids that have an active WebSocket connection and are channel members."""
-    all_members = get_channel_members(channel_id)
+    all_members = get_channel_members(channel_id, db)
     online = manager.get_online_users(all_members)
     return {"channel_id": channel_id, "online_users": online}
 
@@ -150,13 +157,89 @@ def get_online_users(channel_id: UUID):
 async def websocket_channel(
         websocket: WebSocket,
         user: UserDep,
+        db: DatabaseDep,
 ):
     """
     Persistent WebSocket connection for a user.
 
     On message → send to all channel members (online via WebSocket, offline marked as "to do").
+    On read receipt → forward a receipt event back to the original sender.
     On disconnect → close the connection.
     """
+
+    async def handle_send_message(raw: dict) -> None:
+        try:
+            incoming = WSIncoming(**raw)
+        except Exception as exc:
+            await websocket.send_json({"event": "error", "detail": str(exc)})
+            return
+
+        msg = send_message(
+            channel_id=incoming.channel_id,
+            user_id=user.id,
+            text=incoming.text,
+        )
+
+        channel_members = get_channel_members(incoming.channel_id, db)
+        other_members = [uid for uid in channel_members if uid != user.id]
+
+        event_payload = MessageEvent(message=msg).model_dump(mode="json")
+        delivered_users, offline_users = await manager.broadcast(
+            user_ids=other_members,
+            payload=event_payload,
+        )
+
+        #ack the sender with delivery results so the frontend can show "delivered" status and optionally handle offline users (e.g. show "X users offline, will deliver when they're back online").
+        await websocket.send_json({
+            **event_payload,
+            "delivered": True,
+            "delivered_to": delivered_users,
+            "offline_users": offline_users,# TODO: implement "to do" delivery for offline users (e.g. push notifications, or store undelivered events in cache for next time they come online).
+        })
+
+    async def handle_read_receipt(raw: dict) -> None:
+        try:
+            receipt = ReadReceiptRequest(**raw)
+        except Exception as exc:
+            await websocket.send_json({"event": "error", "detail": str(exc)})
+            return
+
+        msg = get_message_by_id(receipt.channel_id, receipt.message_id)
+        if msg is None:
+            await websocket.send_json({"event": "error", "detail": "Message not found"})
+            return
+
+        channel_members = get_channel_members(receipt.channel_id, db)
+        if user.id not in channel_members:
+            await websocket.send_json({"event": "error", "detail": "User is not a member of this channel"})
+            return
+
+        # Read receipts are only forwarded to the original sender.
+        if msg.sender_id == user.id:
+            await websocket.send_json({
+                "event_type": "read_receipt_ack",
+                "channel_id": str(receipt.channel_id),
+                "message_id": str(receipt.message_id),
+                "sender_online": True,
+                "acknowledged": True,
+                "note": "self read receipts are ignored",
+            })
+            return
+
+        receipt_payload = ReadReceiptEvent(
+            channel_id=receipt.channel_id,
+            message_id=receipt.message_id,
+            reader_id=user.id,
+        ).model_dump(mode="json")
+
+        sender_online = await manager.send_to_user(msg.sender_id, receipt_payload)
+        await websocket.send_json({
+            "event_type": "read_receipt_ack",
+            "channel_id": str(receipt.channel_id),
+            "message_id": str(receipt.message_id),
+            "sender_online": sender_online,
+            "acknowledged": True,
+        })
 
     await manager.connect(websocket, user_id=user.id)
 
@@ -164,43 +247,14 @@ async def websocket_channel(
     try:
         while True:
             raw = await websocket.receive_json()
+            event_type = raw.get("event_type", "new_message")
 
-            # Validate incoming payload
-            try:
-                incoming = WSIncoming(**raw)
-            except Exception as exc:
-                await websocket.send_json({"event": "error", "detail": str(exc)})
-                continue
-
-            # ── Core business logic (identical to REST POST) ──────────────────
-            msg = send_message(
-                channel_id=incoming.channel_id,
-                user_id=user.id,
-                text=incoming.text,
-            )
-            # ─────────────────────────────────────────────────────────────────
-
-            # Get all channel members from database
-            channel_members = get_channel_members(incoming.channel_id)
-
-            # Filter to exclude sender and get online/offline split
-            other_members = [uid for uid in channel_members if uid != user.id]
-
-            # Broadcast to all other members
-            event_payload = MessageEvent(message=msg).model_dump(mode="json")
-            delivered_users, offline_users = await manager.broadcast(
-                user_ids=other_members,
-                payload=event_payload,
-            )
-
-            # ACK to sender with delivery info
-            await websocket.send_json({
-                **event_payload,
-                "delivered": True,
-                "delivered_to": delivered_users,
-                "offline_users": offline_users,  # TODO : for later delivery
-            })
-            # TODO : read receipt - el sa7 wel sa7en (sent w received)
+            if event_type == "new_message":
+                await handle_send_message(raw)
+            elif event_type == "read_receipt":
+                await handle_read_receipt(raw)
+            else:
+                await websocket.send_json({"event": "error", "detail": f"Unsupported event_type: {event_type}"})
 
     except WebSocketDisconnect:
         manager.disconnect(user.id)

@@ -15,7 +15,7 @@ Key guarantees
   • All public coroutines are safe to call from any async context.
 """
 
-from typing import Optional
+from typing import Iterable, Optional
 from uuid import UUID
 
 from fastapi import WebSocket
@@ -49,7 +49,7 @@ class ChannelConnectionManager:
 
     # ── presence ──────────────────────────────────────────────────────────────
 
-    def get_online_users(self, user_ids: list[UUID]) -> list[UUID]:
+    def get_online_users(self, user_ids: Iterable[UUID]) -> list[UUID]:
         """Filter a list of user_ids to only those with active connections."""
         return [uid for uid in user_ids if uid in self._connections]
 
