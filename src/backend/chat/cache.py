@@ -1,19 +1,3 @@
-"""
-Hot / Cold cache for chat messages.
-
-Hot  → in-memory deque per channel, capped by size and TTL.
-        Represents recently-active data that must be served with
-        the lowest possible latency.
-
-Cold → persistent store (currently an in-memory dict; swap the
-        _persist() / _load_cold() stubs for SQLAlchemy / Redis /
-        any real DB without changing the public interface).
-
-Write path  :  put()  writes to BOTH hot and cold atomically.
-Read path   :  get_hot()  serves only live cache.
-               get_all()  merges hot + cold, deduplicates, paginates.
-"""
-
 import time
 from collections import defaultdict, deque
 from uuid import UUID
@@ -64,7 +48,7 @@ class HotColdCache:
 
     def get_all(self, channel_id: UUID, limit: int | None = None, offset: int = 0, ) -> list[WSMessage]:
         """
-        Merge hot + cold, deduplicate by message id, sort by created_at,
+        Merge hot and cold, deduplicate by message id, sort by created_at,
         then return the requested page.
         """
         self._evict_stale(channel_id)
@@ -84,7 +68,7 @@ class HotColdCache:
                 seen.add(msg.id)
                 merged.append(msg)
 
-        merged.sort(key=lambda m: m.sent_at)
+        merged.sort(key=lambda m: m.sent_at, reverse=True)  # newest first
         if limit is None:
             return merged[offset:]
         return merged[offset: offset + limit]

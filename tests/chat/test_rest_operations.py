@@ -7,7 +7,7 @@ Validates message persistence, pagination, ordering, and single lookups.
 from uuid import uuid4
 
 from backend.chat.models import MessageRole
-from backend.chat.service import send_message, get_messages, get_message_by_id
+from backend.chat.service import store_message, get_messages, get_message_by_id
 
 
 class TestRestMessageSending:
@@ -18,7 +18,7 @@ class TestRestMessageSending:
         user = test_users[0]
         text = "Hello, this is a test message"
 
-        msg = send_message(
+        msg = store_message(
             channel_id=test_channel.id,
             user_id=user.id,
             text=text,
@@ -35,9 +35,9 @@ class TestRestMessageSending:
         """Send multiple messages to same channel."""
         user_a, user_b = test_users[0], test_users[1]
 
-        msg1 = send_message(test_channel.id, user_a.id, "Message 1")
-        msg2 = send_message(test_channel.id, user_b.id, "Message 2")
-        msg3 = send_message(test_channel.id, user_a.id, "Message 3")
+        msg1 = store_message(test_channel.id, user_a.id, "Message 1")
+        msg2 = store_message(test_channel.id, user_b.id, "Message 2")
+        msg3 = store_message(test_channel.id, user_a.id, "Message 3")
 
         assert msg1.id != msg2.id != msg3.id
         assert msg1.sender_id == user_a.id
@@ -48,8 +48,8 @@ class TestRestMessageSending:
         """Send messages to different channels are isolated."""
         user = test_users[0]
 
-        msg1 = send_message(test_channel_ids[0], user.id, "Channel 1 msg")
-        msg2 = send_message(test_channel_ids[1], user.id, "Channel 2 msg")
+        msg1 = store_message(test_channel_ids[0], user.id, "Channel 1 msg")
+        msg2 = store_message(test_channel_ids[1], user.id, "Channel 2 msg")
 
         assert msg1.channel_id == test_channel_ids[0]
         assert msg2.channel_id == test_channel_ids[1]
@@ -70,7 +70,7 @@ class TestRestMessageRetrieval:
         user = test_users[0]
         text = "Test message"
 
-        sent_msg = send_message(test_channel.id, user.id, text)
+        sent_msg = store_message(test_channel.id, user.id, text)
         retrieved = get_messages(test_channel.id)
 
         assert len(retrieved) == 1
@@ -84,7 +84,7 @@ class TestRestMessageRetrieval:
         # Send 10 messages
         msg_ids = []
         for i in range(10):
-            msg = send_message(test_channel.id, user.id, f"Message {i}")
+            msg = store_message(test_channel.id, user.id, f"Message {i}")
             msg_ids.append(msg.id)
 
         # Get first 5
@@ -105,7 +105,7 @@ class TestRestMessageRetrieval:
 
         # Send 13 messages
         for i in range(13):
-            send_message(test_channel.id, user.id, f"Message {i}")
+            store_message(test_channel.id, user.id, f"Message {i}")
 
         # Get with limit of 5
         page1 = get_messages(test_channel.id, limit=5, offset=0)
@@ -121,7 +121,7 @@ class TestRestMessageRetrieval:
         user = test_users[0]
 
         for i in range(5):
-            send_message(test_channel.id, user.id, f"Message {i}")
+            store_message(test_channel.id, user.id, f"Message {i}")
 
         page_out_of_bounds = get_messages(test_channel.id, limit=5, offset=100)
 
@@ -132,7 +132,7 @@ class TestRestMessageRetrieval:
         user = test_users[0]
 
         for i in range(250):
-            send_message(test_channel.id, user.id, f"Message {i}")
+            store_message(test_channel.id, user.id, f"Message {i}")
 
         # Request with limit > 200 should still be capped
         # (This would be validated in the REST route, but service layer doesn't cap)
@@ -147,9 +147,9 @@ class TestRestMessageOrdering:
         """Messages returned in ascending chronological order (oldest first)."""
         user = test_users[0]
 
-        msg1 = send_message(test_channel.id, user.id, "First")
-        msg2 = send_message(test_channel.id, user.id, "Second")
-        msg3 = send_message(test_channel.id, user.id, "Third")
+        msg1 = store_message(test_channel.id, user.id, "First")
+        msg2 = store_message(test_channel.id, user.id, "Second")
+        msg3 = store_message(test_channel.id, user.id, "Third")
 
         retrieved = get_messages(test_channel.id)
 
@@ -166,7 +166,7 @@ class TestRestMessageOrdering:
         # Send 50 messages rapidly
         sent_msgs = []
         for i in range(50):
-            msg = send_message(test_channel.id, user.id, f"Message {i}")
+            msg = store_message(test_channel.id, user.id, f"Message {i}")
             sent_msgs.append(msg)
 
         retrieved = get_messages(test_channel.id, limit=50, offset=0)
@@ -184,7 +184,7 @@ class TestRestSingleMessageLookup:
         user = test_users[0]
         text = "Unique message for lookup"
 
-        sent_msg = send_message(test_channel.id, user.id, text)
+        sent_msg = store_message(test_channel.id, user.id, text)
         retrieved = get_message_by_id(test_channel.id, sent_msg.id)
 
         assert retrieved is not None
@@ -204,7 +204,7 @@ class TestRestSingleMessageLookup:
         """Message in channel A not found when looking up in channel B."""
         user = test_users[0]
 
-        msg = send_message(test_channel_ids[0], user.id, "In channel A")
+        msg = store_message(test_channel_ids[0], user.id, "In channel A")
         retrieved = get_message_by_id(test_channel_ids[1], msg.id)
 
         assert retrieved is None
@@ -213,8 +213,8 @@ class TestRestSingleMessageLookup:
         """Same message lookup works independently per channel."""
         user = test_users[0]
 
-        msg_ch1 = send_message(test_channel_ids[0], user.id, "Channel 1")
-        msg_ch2 = send_message(test_channel_ids[1], user.id, "Channel 2")
+        msg_ch1 = store_message(test_channel_ids[0], user.id, "Channel 1")
+        msg_ch2 = store_message(test_channel_ids[1], user.id, "Channel 2")
 
         retrieved_ch1 = get_message_by_id(test_channel_ids[0], msg_ch1.id)
         retrieved_ch2 = get_message_by_id(test_channel_ids[1], msg_ch2.id)
@@ -231,11 +231,11 @@ class TestRestChannelIsolation:
         user = test_users[0]
 
         # Send to channel 0
-        msg_ch0_1 = send_message(test_channel_ids[0], user.id, "Ch0 Msg1")
-        msg_ch0_2 = send_message(test_channel_ids[0], user.id, "Ch0 Msg2")
+        msg_ch0_1 = store_message(test_channel_ids[0], user.id, "Ch0 Msg1")
+        msg_ch0_2 = store_message(test_channel_ids[0], user.id, "Ch0 Msg2")
 
         # Send to channel 1
-        msg_ch1_1 = send_message(test_channel_ids[1], user.id, "Ch1 Msg1")
+        msg_ch1_1 = store_message(test_channel_ids[1], user.id, "Ch1 Msg1")
 
         # Retrieve from each channel
         ch0_msgs = get_messages(test_channel_ids[0])
@@ -252,7 +252,7 @@ class TestRestChannelIsolation:
         user_a, user_b = test_users[0], test_users[1]
 
         # Send as user_a
-        msg = send_message(test_channel.id, user_a.id, "Message")
+        msg = store_message(test_channel.id, user_a.id, "Message")
 
         assert msg.sender_id == user_a.id
         retrieved = get_message_by_id(test_channel.id, msg.id)
@@ -267,8 +267,8 @@ class TestRestMessageMetadata:
         """Each message gets unique UUID."""
         user = test_users[0]
 
-        msg1 = send_message(test_channel.id, user.id, "Msg1")
-        msg2 = send_message(test_channel.id, user.id, "Msg2")
+        msg1 = store_message(test_channel.id, user.id, "Msg1")
+        msg2 = store_message(test_channel.id, user.id, "Msg2")
 
         assert msg1.id != msg2.id
         assert isinstance(msg1.id, uuid4().__class__)
@@ -280,7 +280,7 @@ class TestRestMessageMetadata:
         user = test_users[0]
         before = datetime.now(timezone.utc)
 
-        msg = send_message(test_channel.id, user.id, "Test")
+        msg = store_message(test_channel.id, user.id, "Test")
 
         after = datetime.now(timezone.utc)
 
@@ -291,6 +291,6 @@ class TestRestMessageMetadata:
         """Messages default to USER role."""
         user = test_users[0]
 
-        msg = send_message(test_channel.id, user.id, "Test")
+        msg = store_message(test_channel.id, user.id, "Test")
 
         assert msg.role == MessageRole.USER

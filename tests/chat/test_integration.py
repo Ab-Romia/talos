@@ -10,7 +10,7 @@ Tests complex flows like:
 import pytest
 
 from backend.chat.models import MessageEvent
-from backend.chat.service import send_message, get_messages, get_message_by_id
+from backend.chat.service import store_message, get_messages, get_message_by_id
 
 
 # TODO: add tests for edge cases like:
@@ -25,8 +25,8 @@ class TestRestServiceParity:
         """Messages sent via service have consistent metadata."""
         user = test_users[0]
 
-        msg1 = send_message(test_channel.id, user.id, "Message 1")
-        msg2 = send_message(test_channel.id, user.id, "Message 2")
+        msg1 = store_message(test_channel.id, user.id, "Message 1")
+        msg2 = store_message(test_channel.id, user.id, "Message 2")
 
         # Both have valid structure
         assert msg1.id != msg2.id
@@ -41,7 +41,7 @@ class TestRestServiceParity:
         user = test_users[0]
         text = "Test message for consistency"
 
-        sent = send_message(test_channel.id, user.id, text)
+        sent = store_message(test_channel.id, user.id, text)
         retrieved_list = get_messages(test_channel.id)
         retrieved_single = get_message_by_id(test_channel.id, sent.id)
 
@@ -61,7 +61,7 @@ class TestMessageLifecycleCaching:
         """Recent messages accessible via hot cache."""
         user = test_users[0]
 
-        msg = send_message(test_channel.id, user.id, "Recent message")
+        msg = store_message(test_channel.id, user.id, "Recent message")
 
         # Immediately retrievable
         retrieved = get_message_by_id(test_channel.id, msg.id)
@@ -74,7 +74,7 @@ class TestMessageLifecycleCaching:
         # Send 120 messages to force eviction
         msg_ids = []
         for i in range(120):
-            msg = send_message(test_channel.id, user.id, f"Message {i}")
+            msg = store_message(test_channel.id, user.id, f"Message {i}")
             msg_ids.append(msg.id)
 
         # First message should be evicted but still retrievable
@@ -88,7 +88,7 @@ class TestMessageLifecycleCaching:
 
         # Send 120 messages
         for i in range(120):
-            send_message(test_channel.id, user.id, f"Message {i}")
+            store_message(test_channel.id, user.id, f"Message {i}")
 
         # Get page starting in cold, ending in hot
         page = get_messages(test_channel.id, limit=30, offset=50)
@@ -109,10 +109,10 @@ class TestMultiChannelIsolation:
         ch1, ch2, ch3 = test_channel.id
 
         # Send messages to different channels
-        send_message(ch1, user_a.id, "Channel 1 from A")
-        send_message(ch1, user_b.id, "Channel 1 from B")
-        send_message(ch2, user_a.id, "Channel 2 from A")
-        send_message(ch3, user_b.id, "Channel 3 from B")
+        store_message(ch1, user_a.id, "Channel 1 from A")
+        store_message(ch1, user_b.id, "Channel 1 from B")
+        store_message(ch2, user_a.id, "Channel 2 from A")
+        store_message(ch3, user_b.id, "Channel 3 from B")
 
         # Each channel has only its own messages
         ch1_msgs = get_messages(ch1)
@@ -136,7 +136,7 @@ class TestMessageEventFormatting:
         """Message converts to MessageEvent with correct format."""
         user = test_users[0]
 
-        msg = send_message(test_channel.id, user.id, "Test")
+        msg = store_message(test_channel.id, user.id, "Test")
 
         # Create event as would be sent via WebSocket
         event = MessageEvent(message=msg)
@@ -154,7 +154,7 @@ class TestMessageEventFormatting:
         """MessageEvent includes delivery tracking."""
         user = test_users[0]
 
-        msg = send_message(test_channel.id, user.id, "Test")
+        msg = store_message(test_channel.id, user.id, "Test")
         event = MessageEvent(message=msg)
 
         event_dict = event.model_dump(mode="json")
@@ -172,9 +172,9 @@ class TestMessageSenderVerification:
         """Sender ID correctly attributed to original sender."""
         user_a, user_b = test_users[0], test_users[1]
 
-        msg_a1 = send_message(test_channel.id, user_a.id, "From A")
-        msg_b1 = send_message(test_channel.id, user_b.id, "From B")
-        msg_a2 = send_message(test_channel.id, user_a.id, "From A again")
+        msg_a1 = store_message(test_channel.id, user_a.id, "From A")
+        msg_b1 = store_message(test_channel.id, user_b.id, "From B")
+        msg_a2 = store_message(test_channel.id, user_a.id, "From A again")
 
         history = get_messages(test_channel.id)
 
@@ -187,11 +187,11 @@ class TestMessageSenderVerification:
         user_a, user_b, user_c = test_users
 
         for i in range(5):
-            send_message(test_channel.id, user_a.id, f"A-{i}")
+            store_message(test_channel.id, user_a.id, f"A-{i}")
         for i in range(5):
-            send_message(test_channel.id, user_b.id, f"B-{i}")
+            store_message(test_channel.id, user_b.id, f"B-{i}")
         for i in range(5):
-            send_message(test_channel.id, user_c.id, f"C-{i}")
+            store_message(test_channel.id, user_c.id, f"C-{i}")
 
         history = get_messages(test_channel.id, limit=100, offset=0)
 
@@ -213,11 +213,11 @@ class TestMessageOrderingScenarios:
         users = test_users
 
         # Simulate realistic conversation
-        send_message(test_channel.id, users[0].id, "Hello")
-        send_message(test_channel.id, users[1].id, "Hi there")
-        send_message(test_channel.id, users[2].id, "Hey everyone")
-        send_message(test_channel.id, users[0].id, "How are you?")
-        send_message(test_channel.id, users[1].id, "Doing great!")
+        store_message(test_channel.id, users[0].id, "Hello")
+        store_message(test_channel.id, users[1].id, "Hi there")
+        store_message(test_channel.id, users[2].id, "Hey everyone")
+        store_message(test_channel.id, users[0].id, "How are you?")
+        store_message(test_channel.id, users[1].id, "Doing great!")
 
         history = get_messages(test_channel.id)
 
@@ -239,7 +239,7 @@ class TestMessageOrderingScenarios:
 
         # Send 150 messages
         for i in range(150):
-            send_message(test_channel.id, user.id, f"Message {i:03d}")
+            store_message(test_channel.id, user.id, f"Message {i:03d}")
 
         # Get in pages and verify consistent order
         page1 = get_messages(test_channel.id, limit=50, offset=0)
@@ -293,7 +293,7 @@ class TestIntegrationBroadcastFlow:
         await fresh_manager.connect(ws, user_recipient.id)
 
         # Sender sends message
-        msg = send_message(test_channel.id, user_sender.id, "Hello recipient!")
+        msg = store_message(test_channel.id, user_sender.id, "Hello recipient!")
 
         # Prepare event as broadcast would
         event = MessageEvent(message=msg)

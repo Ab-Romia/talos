@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 
+import socketio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
@@ -11,6 +12,7 @@ from backend.auth import auth_router
 from backend.auth.utils.session import SessionMiddleware
 from backend.router import workspace as workspace_router, channel as channel_router
 from backend.chat import router as chat_router
+from backend.chat.realtime import sio
 from config import cfg
 from files.router import router as files_router
 from files.storage import MinIOStorage
@@ -64,6 +66,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title='Talos', lifespan=lifespan)
+
+app.mount('/ws', socketio.ASGIApp(sio), name='socketio')
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(chat_router, prefix="/api")
 app.include_router(files_router, prefix="/api")

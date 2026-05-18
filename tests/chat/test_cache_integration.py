@@ -8,7 +8,7 @@ import time
 
 from backend.chat import WSMessage
 from backend.chat.cache import HotColdCache
-from backend.chat.service import send_message, get_messages, get_message_by_id
+from backend.chat.service import store_message, get_messages, get_message_by_id
 
 
 class TestCacheHotStorage:
@@ -283,7 +283,7 @@ class TestCacheWithServiceLayer:
         """Service layer send_message uses cache automatically."""
         user = test_users[0]
 
-        msg = send_message(test_channel.id, user.id, "Test via service")
+        msg = store_message(test_channel.id, user.id, "Test via service")
 
         # Verify in cache
         retrieved = get_message_by_id(test_channel.id, msg.id)
@@ -298,7 +298,7 @@ class TestCacheWithServiceLayer:
         # Send 120 messages (creates hot/cold split)
         msg_ids = []
         for i in range(120):
-            msg = send_message(test_channel.id, user.id, f"Message {i}")
+            msg = store_message(test_channel.id, user.id, f"Message {i}")
             msg_ids.append(msg.id)
 
         # Get all via service
@@ -315,7 +315,7 @@ class TestCacheWithServiceLayer:
 
         # Create hot/cold split
         for i in range(120):
-            send_message(test_channel.id, user.id, f"Message {i}")
+            store_message(test_channel.id, user.id, f"Message {i}")
 
         # Paginate with offset crossing boundary
         page = get_messages(test_channel.id, limit=30, offset=50)

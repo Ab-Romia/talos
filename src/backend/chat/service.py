@@ -1,26 +1,11 @@
-"""
-Service layer — pure business logic.
-
-Every function here is intentionally framework-agnostic so it can be called
-from a REST endpoint *or* from inside a WebSocket handler without duplication.
-
-Hot / cold persistence is handled transparently by the cache layer.
-Swap cache._persist() / cache._load_cold() for real DB calls and this
-file needs zero changes.
-"""
-
 from uuid import UUID
 
 from .cache import cache
 from .models import WSMessage, MessageRole
 
 
-# ── write ─────────────────────────────────────────────────────────────────────
-
-def send_message(channel_id: UUID, user_id: UUID, text: str) -> WSMessage:
-    """
-    Persist a user message (hot cache + cold store) and return it.
-    """
+def store_message(channel_id: UUID, user_id: UUID, text: str) -> WSMessage:
+    """Persist a user message"""
 
     msg = WSMessage(
         channel_id=channel_id,
@@ -32,26 +17,13 @@ def send_message(channel_id: UUID, user_id: UUID, text: str) -> WSMessage:
     return msg
 
 
-# ── read ──────────────────────────────────────────────────────────────────────
-
 def get_messages(
         channel_id: UUID,
         limit: int | None = None,
         offset: int = 0,
 ) -> list[WSMessage]:
-    """
-    Paginated message history for a channel.
-    Merges hot cache + cold store, deduplicates, sorts by sent_at.
-    """
+    """ Paginated message history for a channel. """
     return cache.get_all(channel_id, limit=limit, offset=offset)
-
-
-def get_hot_messages(channel_id: UUID) -> list[WSMessage]:
-    """
-    Return only messages still sitting in the hot (in-memory) cache.
-    Useful for a 'recent activity' feed with minimal latency.
-    """
-    return cache.get_hot(channel_id)
 
 
 def get_message_by_id(channel_id: UUID, message_id: UUID) -> WSMessage | None:

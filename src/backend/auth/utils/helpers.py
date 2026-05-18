@@ -4,7 +4,6 @@ from typing import Annotated
 from fastapi import Depends
 from fastapi.exception_handlers import http_exception_handler as fastapi_http_exception_handler
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
 
@@ -37,7 +36,7 @@ async def auth_exception_handler(request: Request, exc: errors.AuthException):
     return await fastapi_http_exception_handler(request, exc)
 
 
-def active_user(session: UnverifiedSessionDep, db: DatabaseDep):
+def active_user(session: UnverifiedSessionDep, db: DatabaseDep) -> User:
     user = db.scalar(select(User)
                      .join(Session, User.id == Session.user_id)
                      .where(User.id == session.sub)
@@ -64,7 +63,7 @@ def optional_active_user(request: Request, db: DatabaseDep):
             authorization=request.headers.get("Authorization"),
             user_session=request.cookies.get("user_session"),
         )
-        sess = unverified_session(request, token)
+        sess = unverified_session(token, request)
         return active_user(next(sess), db)
     except errors.AuthException:
         return None

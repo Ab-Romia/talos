@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from backend.auth.model import User
 from backend.chat.cache import HotColdCache, cache as default_cache
-from backend.chat.manager import ChannelConnectionManager, manager as default_manager
 from backend.chat.models import WSMessage, MessageRole
 from model.messaging import Workspace, Channel
 
@@ -88,12 +87,6 @@ def fresh_cache():
     return HotColdCache()
 
 
-@pytest.fixture
-def fresh_manager():
-    """Provide a fresh connection manager for isolated WebSocket tests."""
-    return ChannelConnectionManager()
-
-
 @pytest.fixture(autouse=True)
 def clear_default_cache():
     """Clear the default cache before each test to prevent cross-test contamination."""
@@ -102,14 +95,6 @@ def clear_default_cache():
     yield
     default_cache._hot.clear()
     default_cache._cold.clear()
-
-
-@pytest.fixture(autouse=True)
-def clear_default_manager():
-    """Clear the default manager before each test to prevent connection leaks."""
-    default_manager._connections.clear()
-    yield
-    default_manager._connections.clear()
 
 
 def create_test_message(

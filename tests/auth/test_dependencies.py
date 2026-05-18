@@ -125,7 +125,7 @@ class TestGetSessionDependency:
         req = Request({"type": "http", "state": {}})
         req.state.set_session = None  # Initialize
 
-        unverified_sess = unverified_session(req, token)
+        unverified_sess = unverified_session(token, req)
         result = verified_session(next(unverified_sess), db_session)
 
         assert result.jti == test_session.jti
