@@ -1,6 +1,6 @@
 from typing import Self, Iterable, Generator
 
-from bidict import bidict
+from bidict import bidict, ON_DUP_DROP_OLD
 from cachetools import cached, TTLCache
 from pydantic import BaseModel
 from pydantic_core import core_schema
@@ -12,6 +12,7 @@ from backend.auth.permissions.model import Role, EVERYONE_ID, PermissionScope, P
 
 class PermissionRegistry:
     _permission_registry = bidict()
+    _permission_registry.on_dup = ON_DUP_DROP_OLD  # Multiple values may map to None
 
     def __init__(self, db: orm.Session):
         self.db = db
@@ -166,10 +167,6 @@ class PermissionSet:
     def set_any_bit(self):
         """
         Sets the ANY scope bit for a resource-action pair if the user has that permission in any scope.
-        Clears other bits.
-
-        1) Fast path if the permissions for each scope are contiguous using bitwise operations.
-        2) Slow path if not, check each permission individually.
         """
         any_set = PermissionSet(bitstring=self.bitstring, registry=self.registry)
 

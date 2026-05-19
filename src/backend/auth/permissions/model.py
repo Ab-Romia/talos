@@ -21,7 +21,7 @@ class PermissionScope(PyEnum):
     OWN = 0
     CHANNEL = 1
     WORKSPACE = 2
-    ANY = 3  # Any must be last
+    ANY = 3
 
     def __lt__(self, other: PermissionScope) -> bool:
         return self.value < other.value

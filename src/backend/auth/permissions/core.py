@@ -8,6 +8,7 @@ from sqlalchemy import select, and_, func
 from backend.auth.utils import errors
 from backend.auth.utils.session import SessionDep
 from model import DatabaseDep
+from model.messaging import Channel
 from .model import Role, ChannelRoleOverride, PermissionScope, DEFAULT_BITS
 from .registry import PermissionRegistry, PermissionSet, ScopedPermission
 
@@ -35,6 +36,12 @@ def user_perms(
         deny_overrides = PermissionSet()
         allow_overrides = PermissionSet()
 
+        if workspace_id is None:
+            workspace_id = db.scalar(
+                select(Channel.workspace_id)
+                .where(Channel.id == channel_id)
+            )
+
         roles_and_overrides = db.execute(
             select(
                 Role.allow_mask,
@@ -46,10 +53,26 @@ def user_perms(
                        ChannelRoleOverride.channel_id == channel_id),
                   isouter=True
                   )
+            .join(Channel, Channel.id == channel_id, isouter=True)
             .where(Role.users.any(id=user_id))
             .where(Role.workspace_id == workspace_id)
             .order_by(Role.priority.desc())
         ).all()
+
+        # permissions = db.execute(
+        #     select(
+        #         func.bit_or(
+        #             Role.allow_mask.bitwise_and(
+        #                 func.coalesce(ChannelRoleOverride.allow_mask, DEFAULT_BITS).bitwise_not()
+        #             ).bitwise_or(
+        #                 func.coalesce(ChannelRoleOverride.deny_mask, DEFAULT_BITS),
+        #             )
+        #         )
+        #     )
+        #     .select_from(Role)
+        #     .order_by(Role.priority.desc())
+        #     .group_by('*')
+        # )
 
         for role_allow, override_allow, override_deny in roles_and_overrides:
             permissions |= PermissionSet.from_mask(role_allow)

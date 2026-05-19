@@ -351,7 +351,7 @@ def create_channel_roles_override(
     except exc.IntegrityError:
         db.rollback()
         # TODO:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Override already exists")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Override already exists")
 
     return override
 
@@ -431,7 +431,10 @@ def get_override(db, channel_id, role_id):
     return override
 
 
-@channel.delete("/roles/{role_id}", dependencies=[Depends(require_perms("role:delete"))])
+@channel.delete(
+    "/roles/{role_id}",
+    dependencies=[Depends(require_perms("role:delete"))],
+    status_code=HTTP_204_NO_CONTENT)
 def delete_channel_roles_override(channel_id: uuid.UUID, role_id: RoleID, db: DatabaseDep):
     """Delete channel role override."""
     override = get_override(db, channel_id, role_id)

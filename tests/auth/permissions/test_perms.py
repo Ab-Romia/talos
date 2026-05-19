@@ -1,24 +1,10 @@
 import pytest
 from fastapi import APIRouter, Depends
-from sqlalchemy import delete, select
 
-from backend.auth.permissions.core import permission_registry, require_perms
-from backend.auth.permissions.model import (
-    EVERYONE_ID,
-    Permission,
-    PermissionScope,
-    Role, RolePermission
-)
+from auth.permissions.conftest import test_permissions
+from backend.auth.permissions.core import require_perms
+from backend.auth.permissions.model import PermissionScope, Role, RolePermission
 from backend.auth.permissions.registry import PermissionSet, ScopedPermission
-
-# TODO: define stable ordering of permissions
-
-test_permissions = [
-    ("message", "send", [PermissionScope.OWN, PermissionScope.CHANNEL,
-                         PermissionScope.WORKSPACE, PermissionScope.ANY]),
-    ("workspace", "read", [PermissionScope.ANY]),
-    ("workspace", "write", [PermissionScope.ANY])
-]
 
 msg_send_channel_offset = PermissionScope.CHANNEL.offset
 
@@ -26,40 +12,6 @@ msg_send_channel_offset = PermissionScope.CHANNEL.offset
 @pytest.fixture(autouse=True, scope="function")
 def clear_registry_cache(registry):
     registry.clear_caches()
-
-
-@pytest.fixture(scope="session")
-def registry(db_session):
-    registry = permission_registry(db_session)
-
-    db_session.execute(delete(Role))
-    db_session.execute(delete(Permission))
-    db_session.add(
-        Role(
-            id=EVERYONE_ID,
-            name="everyone",
-            description=None,
-            workspace_id=None,
-            priority=0,
-        )
-    )
-    db_session.add_all(
-        [
-            Permission(resource=resource, action=action, allowed_scopes=allowed_scopes)
-            for resource, action, allowed_scopes
-            in test_permissions
-        ]
-    )
-    db_session.flush()
-    # add first permission to everyone
-    everyone_role = db_session.get(Role, EVERYONE_ID)
-    perm = db_session.scalar(select(Permission).where(Permission.bit_offset == 0))
-    everyone_role.permissions.append(
-        RolePermission(permission_id=perm.id, scope=PermissionScope.OWN)
-    )
-    db_session.commit()
-
-    return registry
 
 
 class TestPermissionRegistry:

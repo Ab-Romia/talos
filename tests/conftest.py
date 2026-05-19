@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app import app
 from backend.auth.model import User, IdentityProvider, Issuer
 from backend.auth.password import hash_password
+from backend.auth.permissions.model import Role, RolePermission, PermissionScope, Permission
 from backend.auth.utils.jwt import create_token
 from backend.auth.utils.session import SessionClaims, Session as UserSession
 from files.model import FileAttachment, ProcessingStatus
@@ -35,6 +36,7 @@ def engine():
     # init db extension
     with Session(engine) as session:
         session.execute(text("CREATE EXTENSION IF NOT EXISTS citext;"))
+        session.execute(text("ALTER SEQUENCE permission_bit_offset_seq RESTART WITH 0"))
         session.commit()
 
     # create schema for tests
@@ -215,26 +217,59 @@ def sample_file_record():
 
 
 @pytest.fixture
-def test_workspace(db_session: Session, test_user: User):
+def get_perm(db_session):
+    def helper(resource, action):
+        return db_session.scalar(
+            select(Permission)
+            .where(Permission.resource == resource)
+            .where(Permission.action == action)
+        )
+
+    return helper
+
+
+@pytest.fixture
+def test_workspace(db_session: Session, test_user: User, get_perm):
     ws = Workspace(
-        id=uuid.uuid4(),
         name=f"ws_{uuid.uuid4().hex[:8]}",
         owner_id=test_user.id,
     )
     db_session.add(ws)
+    db_session.flush()
+
+    role = Role(name=f"test_role_{ws.id.hex[:8]}", workspace_id=ws.id, priority=1)
+    role.users.append(test_user)
+
+    perms = [
+        get_perm("workspace", "view"),
+        get_perm("role", "view"),
+        get_perm("channel", "view"),
+        get_perm("role", "edit"),
+        get_perm("role", "create"),
+    ]
+    for perm in perms:
+        role.permissions.append(
+            RolePermission(permission_id=perm.id, scope=PermissionScope.WORKSPACE)
+        )
+
+    db_session.add(role)
     db_session.commit()
-    db_session.refresh(ws)
-    return ws
+
+    yield ws
+
+    db_session.delete(ws)
+    db_session.commit()
 
 
 @pytest.fixture
 def test_channel(db_session: Session, test_workspace: Workspace):
     cr = Channel(
-        id=uuid.uuid4(),
-        name="general",
+        name="general123",
         workspace_id=test_workspace.id,
     )
     db_session.add(cr)
     db_session.commit()
-    db_session.refresh(cr)
-    return cr
+
+    yield cr
+    db_session.delete(cr)
+    db_session.commit()

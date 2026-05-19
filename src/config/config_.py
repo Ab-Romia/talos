@@ -109,7 +109,7 @@ class Config(BaseSettings):
 
     auth: AuthConfig = None
     minio: MinIOConfig = MinIOConfig()
-    redis: RedisConfig = None
+    # redis: RedisConfig = None
     files: FilesConfig = FilesConfig()
 
     model_config = SettingsConfigDict(
