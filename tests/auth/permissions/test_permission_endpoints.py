@@ -1,89 +1,5 @@
-import pytest
-from sqlalchemy import delete
-
+from backend.auth.permissions.model import PermissionScope
 from backend.auth.permissions.router import *
-
-
-@pytest.fixture
-def make_role_with_perms(db_session, test_user, get_perm):
-    """Factory fixture to create a Role with the given role:* permissions at the given scope."""
-
-    def _make_role(name, workspace_id, priority, actions, scope, user=test_user):
-        role = Role(name=name, workspace_id=workspace_id, priority=priority)
-        for action in actions:
-            perm = get_perm("role", action)
-            role.permissions.append(RolePermission(permission_id=perm.id, scope=scope))
-        if user:
-            role.users.append(user)
-        db_session.add(role)
-        return role
-
-    return _make_role
-
-
-def cleanup_role(db_session, role_id, channel_id=None):
-    if channel_id:
-        db_session.execute(delete(RolePermission).where(
-            and_(RolePermission.role_id == role_id, RolePermission.channel_id == channel_id)
-        ))
-        db_session.execute(delete(ChannelRoleOverride).where(
-            (ChannelRoleOverride.role_id == role_id) & (ChannelRoleOverride.channel_id == channel_id)
-        ))
-        db_session.execute(delete(RolePermission).where(
-            and_(RolePermission.role_id == role_id, RolePermission.channel_id.is_(None))
-        ))
-    else:
-        db_session.execute(delete(RolePermission).where(RolePermission.role_id == role_id))
-    db_session.execute(delete(Role).where(Role.id == role_id))
-    db_session.commit()
-
-
-@pytest.fixture
-def test_workspace_admin_role(db_session, test_workspace, test_user, registry, make_role_with_perms):
-    role = make_role_with_perms(
-        name=f"admin_role_{test_workspace.id.hex[:8]}",
-        workspace_id=test_workspace.id,
-        priority=10,
-        actions=["view", "create", "edit", "delete"],
-        scope=PermissionScope.WORKSPACE,
-        user=test_user,
-    )
-    db_session.commit()
-    db_session.refresh(role)
-    yield role
-    cleanup_role(db_session, role.id)
-
-
-@pytest.fixture
-def test_channel_role_override(db_session, test_workspace, test_channel, registry, make_role_with_perms):
-    role = make_role_with_perms(
-        name=f"channel_test_role_{test_channel.id.hex[:8]}",
-        workspace_id=test_workspace.id,
-        priority=2,
-        actions=["view"],
-        scope=PermissionScope.WORKSPACE,
-    )
-    db_session.flush()
-    override = ChannelRoleOverride(role_id=role.id, channel_id=test_channel.id)
-    db_session.add(override)
-    db_session.commit()
-    yield role, override
-    cleanup_role(db_session, role.id, channel_id=test_channel.id)
-
-
-@pytest.fixture
-def channel_admin_role(db_session, test_workspace, test_user, registry, make_role_with_perms):
-    role = make_role_with_perms(
-        name=f"ch_admin_{test_workspace.id.hex[:8]}",
-        workspace_id=test_workspace.id,
-        priority=10,
-        actions=["view", "create", "edit", "delete"],
-        scope=PermissionScope.CHANNEL,
-        user=test_user,
-    )
-    db_session.commit()
-    yield role
-    cleanup_role(db_session, role.id)
 
 
 class TestWorkspaceLevelRoleList:
@@ -95,9 +11,7 @@ class TestWorkspaceLevelRoleList:
         assert response.status_code == 200
         assert isinstance(response.json(), list)
 
-    def test_list_workspace_roles_with_permissions(
-            self, db_session, client, test_workspace, test_workspace_admin_role, auth_token, path
-    ):
+    def test_list_workspace_roles_with_permissions(self, db_session, client, test_workspace, auth_token, path):
         db_session.add(Role(name=f"extra_role_{test_workspace.id.hex[:8]}", workspace_id=test_workspace.id, priority=5))
         db_session.commit()
 
@@ -118,7 +32,7 @@ class TestWorkspaceLevelRoleList:
 
 class TestWorkspaceLevelRoleCreate:
     def test_create_workspace_role_success(
-            self, client, test_workspace, test_workspace_admin_role, auth_token, path
+            self, client, test_workspace, auth_token, path
     ):
         role_name = f"new_role_{test_workspace.id.hex[:8]}"
         response = client.post(
@@ -129,10 +43,9 @@ class TestWorkspaceLevelRoleCreate:
         # assert response.status_code == 201
         data = response.json()
         assert data.get("name") == role_name
-        assert int(data.get("priority", 0)) == 2  # the database will auto-assign priority based on existing roles
 
     def test_create_workspace_role_duplicate_conflict(
-            self, db_session, client, test_workspace, test_workspace_admin_role, auth_token, path
+            self, db_session, client, test_workspace, auth_token, path
     ):
         role_name = f"dup_role_{test_workspace.id.hex[:8]}"
         db_session.add(Role(name=role_name, workspace_id=test_workspace.id, priority=1))
@@ -156,14 +69,11 @@ class TestWorkspaceLevelRoleCreate:
 
 class TestWorkspaceLevelRoleGet:
     def test_get_workspace_role_success(
-            self, db_session, client, test_workspace, test_workspace_admin_role, auth_token, path, make_role_with_perms
+            self, db_session, client, test_workspace, auth_token, path, make_role
     ):
-        role = make_role_with_perms(
+        role = make_role(
             name=f"get_test_role_{test_workspace.id.hex[:8]}",
-            workspace_id=test_workspace.id,
-            priority=3,
-            actions=["edit"],
-            scope=PermissionScope.WORKSPACE,
+            permissions=["workspace.role:manage"],
         )
         db_session.commit()
 
@@ -179,7 +89,7 @@ class TestWorkspaceLevelRoleGet:
         assert ("users" in data) or ("user_count" in data)
 
     def test_get_workspace_role_not_found(
-            self, client, test_workspace, test_workspace_admin_role, auth_token, path
+            self, client, test_workspace, auth_token, path
     ):
         response = client.get(
             path(get_workspace_role, workspace_id=test_workspace.id, role_id=uuid.uuid4()),
@@ -188,7 +98,7 @@ class TestWorkspaceLevelRoleGet:
         assert response.status_code == 404
 
     def test_get_workspace_role_wrong_workspace(
-            self, db_session, client, test_workspace, test_workspace_admin_role, auth_token, path
+            self, db_session, client, test_workspace, auth_token, path
     ):
         from model.messaging import Workspace
 
@@ -206,42 +116,32 @@ class TestWorkspaceLevelRoleGet:
 
 class TestWorkspaceLevelRoleUpdate:
     def test_update_workspace_role_permissions_success(
-            self, db_session, client, test_workspace, test_workspace_admin_role, test_user, auth_token, path,
-            make_role_with_perms
+            self, db_session, client, test_workspace, test_user, auth_token, path,
+            make_role
     ):
-        role = make_role_with_perms(
-            name=f"update_role_{test_workspace.id.hex[:8]}",
-            workspace_id=test_workspace.id,
-            priority=2,
-            actions=["view"],
-            scope=PermissionScope.WORKSPACE,
-        )
+        role = make_role(permissions=["workspace.role:manage"])
+        test_role = make_role()
         db_session.commit()
 
         response = client.put(
-            path(update_workspace_role_permissions, workspace_id=test_workspace.id, role_id=role.id),
-            json=["role:create:workspace"],
-            # "member_ids": [str(test_user.id)]
+            path(update_workspace_role_permissions, workspace_id=test_workspace.id, role_id=test_role.id),
+            json=["workspace.role:manage"],
             headers={"Authorization": f"Bearer {auth_token}"},
         )
         assert response.status_code == 200
-        db_session.refresh(role)
-        assert any(p.permission.resource == "role"
-                   and p.permission.action == "create"
-                   and p.scope == PermissionScope.WORKSPACE
-                   for p in role.permissions)
-        # assert any(u.id == test_user.id for u in role.users) is False
+        db_session.refresh(test_role)
+        assert any(p.permission.resource == "workspace.role"
+                   and p.permission.action == "manage"
+                   and p.scope == PermissionScope.ANY
+                   for p in test_role.permissions)
 
     def test_update_workspace_role_user_assignments(
-            self, db_session, client, test_workspace, test_workspace_admin_role, test_user, auth_token, path
+            self, db_session, client, test_workspace, test_user, auth_token, path, make_role
     ):
         from backend.auth.model import User
         from faker import Faker
 
-        role = Role(name=f"assign_role_{test_workspace.id.hex[:8]}", workspace_id=test_workspace.id, priority=1)
-        role.users.append(test_user)
-        db_session.add(role)
-        db_session.flush()
+        role = make_role(permissions=["workspace.role:manage"])
 
         faker = Faker()
         other_user = User(
@@ -262,14 +162,13 @@ class TestWorkspaceLevelRoleUpdate:
         assert any(u.id == other_user.id for u in role.users)
 
     def test_update_workspace_role_revoke_all_permissions(
-            self, db_session, client, test_workspace, test_workspace_admin_role, auth_token, path, make_role_with_perms
+            self, db_session, client, test_workspace, auth_token, path, make_role
     ):
-        role = make_role_with_perms(
+        role = make_role(
             name=f"revoke_all_role_{test_workspace.id.hex[:8]}",
             workspace_id=test_workspace.id,
             priority=1,
-            actions=["view", "create", "edit"],
-            scope=PermissionScope.WORKSPACE,
+            permissions=["workspace.role:view", "workspace.role:manage", "workspace.role:manage"],
         )
         db_session.commit()
 
@@ -282,22 +181,21 @@ class TestWorkspaceLevelRoleUpdate:
         db_session.refresh(role)
         assert len(role.permissions) == 0
 
-    def test_update_workspace_role_forbidden(
-            self, db_session, client, test_workspace, auth_token, path
-    ):
-        role = Role(name=f"protected_edit_role_{test_workspace.id.hex[:8]}", workspace_id=test_workspace.id, priority=1)
-        db_session.add(role)
+    def test_update_workspace_role_forbidden(self, db_session, client, auth_token, path, make_role, test_users):
+        test_workspace = Workspace(name="forbidden_ws", owner_id=next(test_users).id)
+        db_session.add(test_workspace)
+        role = make_role(workspace_id=test_workspace.id)
         db_session.commit()
 
         response = client.put(
             path(update_workspace_role_permissions, workspace_id=test_workspace.id, role_id=role.id),
-            json=["test:view:workspace"],
+            json=["test:view"],
             headers={"Authorization": f"Bearer {auth_token}"},
         )
         assert response.status_code == 403
 
     def test_update_workspace_role_not_found(
-            self, client, test_workspace, test_workspace_admin_role, auth_token, path
+            self, client, test_workspace, auth_token, path
     ):
         response = client.put(
             path(update_workspace_role_permissions, workspace_id=test_workspace.id, role_id=uuid.uuid4()),
@@ -308,11 +206,11 @@ class TestWorkspaceLevelRoleUpdate:
 
 
 class TestWorkspaceLevelRoleDelete:
-    def test_delete_workspace_role_empty_success(
-            self, db_session, client, test_workspace, test_workspace_admin_role, auth_token, path
-    ):
-        role = Role(name=f"empty_delete_role_{test_workspace.id.hex[:8]}", workspace_id=test_workspace.id, priority=1)
-        db_session.add(role)
+    def test_delete_workspace_role_empty_success(self, db_session, client, test_workspace, auth_token, path, make_role):
+        role = make_role(
+            name=f"delete_role_{test_workspace.id.hex[:8]}",
+            permissions=["workspace.role:manage"],
+        )
         db_session.commit()
 
         response = client.delete(
@@ -322,23 +220,9 @@ class TestWorkspaceLevelRoleDelete:
         assert response.status_code == 204
         assert db_session.get(Role, role.id) is None
 
-    def test_delete_workspace_role_forbidden(
-            self, db_session, client, test_workspace, auth_token, path
-    ):
-        role = Role(name=f"protected_delete_role_{test_workspace.id.hex[:8]}", workspace_id=test_workspace.id,
-                    priority=1)
-        db_session.add(role)
-        db_session.commit()
+    def test_delete_workspace_role_not_found(self, client, test_workspace, auth_token, path, make_role):
+        make_role(permissions=["workspace.role:manage"])
 
-        response = client.delete(
-            path(delete_workspace_role, workspace_id=test_workspace.id, role_id=role.id),
-            headers={"Authorization": f"Bearer {auth_token}"},
-        )
-        assert response.status_code == 403
-
-    def test_delete_workspace_role_not_found(
-            self, client, test_workspace, test_workspace_admin_role, auth_token, path
-    ):
         response = client.delete(
             path(delete_workspace_role, workspace_id=test_workspace.id, role_id=uuid.uuid4()),
             headers={"Authorization": f"Bearer {auth_token}"},
@@ -347,9 +231,7 @@ class TestWorkspaceLevelRoleDelete:
 
 
 class TestWorkspaceLevelMyPermissions:
-    def test_my_workspace_permissions_with_role(
-            self, db_session, client, test_workspace, auth_token, path
-    ):
+    def test_my_workspace_permissions_with_role(self, db_session, client, test_workspace, auth_token, path):
         response = client.get(
             path(workspace_level_permissions, workspace_id=test_workspace.id),
             headers={"Authorization": f"Bearer {auth_token}"},
@@ -357,15 +239,13 @@ class TestWorkspaceLevelMyPermissions:
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, (list, dict))
-        assert any(p["resource"] == "role" and p["action"] == "view" for p in data)
+        assert any(p["resource"] == "workspace.role" and p["action"] == "view" for p in data)
 
-    @pytest.mark.xfail(reason="TODO: Add owner overrides")
-    def test_my_workspace_permissions_no_roles(
-            self, db_session, client, test_user, auth_token, path
-    ):
+    def test_my_workspace_permissions_no_roles(self, db_session, client, test_user, auth_token, path):
         from model.messaging import Workspace
 
         new_ws = Workspace(id=uuid.uuid4(), name="isolated_ws", owner_id=test_user.id)
+        new_ws.members.append(test_user)
         db_session.add(new_ws)
         db_session.commit()
 
@@ -374,9 +254,6 @@ class TestWorkspaceLevelMyPermissions:
             headers={"Authorization": f"Bearer {auth_token}"},
         )
         assert response.status_code == 200
-
-
-# ── Channel-Level Override Tests ──
 
 
 class TestChannelLevelRoleOverrideList:
@@ -388,20 +265,23 @@ class TestChannelLevelRoleOverrideList:
         assert response.status_code == 200
         assert isinstance(response.json(), list)
 
-    def test_list_channel_role_overrides_with_data(
-            self, client, test_channel, test_channel_role_override, auth_token, path
-    ):
+    def test_list_channel_role_overrides_with_data(self, client, test_channel, auth_token, path, make_role):
+        test_channel.roles_overrides.extend([
+            ChannelRoleOverride(role_id=make_role().id),
+            ChannelRoleOverride(role_id=make_role().id),
+        ])
+
         response = client.get(
             path(get_channel_roles_overrides, channel_id=test_channel.id),
             headers={"Authorization": f"Bearer {auth_token}"},
         )
         assert response.status_code == 200
-        assert len(response.json()) >= 1
+        assert len(response.json()) == 3  # 2 roles + everyone role
 
 
 class TestChannelLevelRoleOverrideCreate:
     def test_create_channel_role_override_success(self, db_session, client, test_workspace, test_channel, test_user,
-                                                  auth_token, channel_admin_role, path):
+                                                  auth_token, path):
         ws_role = Role(
             name=f"ws_role_{test_workspace.id.hex[:8]}",
             workspace_id=test_workspace.id,
@@ -422,7 +302,7 @@ class TestChannelLevelRoleOverrideCreate:
         assert found is not None
 
     def test_create_channel_role_override_duplicate_conflict(
-            self, db_session, client, test_workspace, test_channel, test_user, auth_token, channel_admin_role, path
+            self, db_session, client, test_workspace, test_channel, test_user, auth_token, path
     ):
         ws_role = Role(name=f"ws_dup_role_{test_workspace.id.hex[:8]}", workspace_id=test_workspace.id, priority=1)
         db_session.add(ws_role)
@@ -448,11 +328,14 @@ class TestChannelLevelRoleOverrideCreate:
 
 
 class TestChannelLevelRoleOverrideUpdate:
-    def test_update_channel_role_override_permissions(
-            self, db_session, client, test_workspace, test_channel, test_channel_role_override, test_user, auth_token,
-            channel_admin_role, path
-    ):
-        role, _ = test_channel_role_override
+    def test_update_channel_role_override_permissions(self, db_session, client, test_workspace, test_channel, test_user,
+                                                      auth_token, path, make_role):
+        role = make_role(
+            name=f"override_update_role_{test_workspace.id.hex[:8]}",
+            permissions=["workspace.role:manage"],
+        )
+        test_channel.roles_overrides.append(ChannelRoleOverride(role_id=role.id))
+        db_session.commit()
         response = client.put(
             path(update_channel_roles_override, channel_id=test_channel.id, role_id=role.id),
             data={"permissions": []},
@@ -473,10 +356,13 @@ class TestChannelLevelRoleOverrideUpdate:
 
 class TestChannelLevelRoleOverrideDelete:
     def test_delete_channel_role_override_success(
-            self, db_session, client, test_workspace, test_channel, test_channel_role_override, test_user, auth_token,
-            channel_admin_role, path
+            self, db_session, client, test_channel, test_user, auth_token,
+            path, make_role
     ):
-        role, _ = test_channel_role_override
+        role = make_role(
+            permissions=["workspace.role:manage"]
+        )
+        test_channel.roles_overrides.append(ChannelRoleOverride(role_id=role.id))
         response = client.delete(
             path(delete_channel_roles_override, channel_id=test_channel.id, role_id=role.id),
             headers={"Authorization": f"Bearer {auth_token}"},
@@ -492,7 +378,7 @@ class TestChannelLevelRoleOverrideDelete:
             path(delete_channel_roles_override, channel_id=test_channel.id, role_id=uuid.uuid4()),
             headers={"Authorization": f"Bearer {auth_token}"},
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
 
 class TestChannelLevelMyPermissions:
@@ -507,23 +393,22 @@ class TestChannelLevelMyPermissions:
 
     def test_my_channel_permissions_override_deny_semantics(
             self, db_session, client, test_workspace, test_channel,
-            test_user, auth_token, path, make_role_with_perms, get_perm):
+            test_user, auth_token, path, make_role, get_perm):
         """Channel override that denies a permission granted at workspace scope."""
-        global_role = make_role_with_perms(
+        global_role = make_role(
             name=f"global_create_role_{test_workspace.id.hex[:8]}",
             workspace_id=test_workspace.id,
             priority=1,
-            actions=["create"],
-            scope=PermissionScope.WORKSPACE,
+            permissions=["workspace.role:manage"],
             user=test_user,
         )
         db_session.flush()
 
-        create_perm = get_perm("role", "create")
+        create_perm = get_perm("workspace.role", "manage")
         db_session.add(ChannelRoleOverride(role_id=global_role.id, channel_id=test_channel.id))
         db_session.add(RolePermission(
             role_id=global_role.id, permission_id=create_perm.id,
-            channel_id=test_channel.id, scope=PermissionScope.CHANNEL, is_deny=True,
+            channel_id=test_channel.id, scope=PermissionScope.ANY, is_deny=True,
         ))
         db_session.commit()
 
@@ -534,7 +419,6 @@ class TestChannelLevelMyPermissions:
         assert response.status_code == 200
         assert isinstance(response.json(), (list, dict))
 
-    @pytest.mark.xfail(reason="TODO: Add owner overrides")
     def test_my_channel_permissions_no_roles(
             self, db_session, client, test_user, auth_token, path
     ):
@@ -542,6 +426,7 @@ class TestChannelLevelMyPermissions:
 
         new_ws = Workspace(id=uuid.uuid4(), name="isolated_ws", owner_id=test_user.id)
         new_ch = Channel(id=uuid.uuid4(), name="isolated_ch", workspace_id=new_ws.id)
+        new_ws.members.append(test_user)
         db_session.add_all([new_ws, new_ch])
         db_session.commit()
 

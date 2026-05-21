@@ -18,6 +18,23 @@ class WorkspaceMember(Base):
 class Workspace(Base):
     __tablename__ = "workspaces"
 
+    def __init__(self, **kwargs):
+        from backend.auth.permissions.model import Role
+        from backend.auth.permissions import permission_registry
+
+        if "id" not in kwargs:
+            kwargs["id"] = uuid.uuid4()
+        super().__init__(**kwargs)
+
+        default_everyone = permission_registry(None).default_everyone_role()
+        self.roles.append(Role(
+            id=self.id,
+            name="everyone",
+            permissions=default_everyone.permissions,
+            # This must be set here as the event listener won't trigger for bulk inserts
+            allow_mask=default_everyone.allow_mask,
+        ))
+
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(unique=True, index=True)
     owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
@@ -40,6 +57,12 @@ class Workspace(Base):
 
 class Channel(Base):
     __tablename__ = "channels"
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        from backend.auth.permissions.model import ChannelRoleOverride
+        self.roles_overrides.append(ChannelRoleOverride(role_id=self.workspace_id, channel_id=self.id))
+
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(index=True)
     workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
@@ -50,6 +73,11 @@ class Channel(Base):
     messages: Mapped[list[Message]] = relationship("Message", back_populates="channel")
     workspace: Mapped[Workspace] = relationship("Workspace", back_populates="channels")
     files: Mapped[list[FileAttachment]] = relationship("FileAttachment", back_populates="channel")
+    roles_overrides: Mapped[list["ChannelOverrides"]] = relationship(  # type: ignore[forward-reference]
+        "ChannelRoleOverride",
+        back_populates="channel",
+        cascade="all, delete-orphan"
+    )
 
 
 class Message(Base):

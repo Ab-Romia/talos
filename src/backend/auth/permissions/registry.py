@@ -1,45 +1,34 @@
 from typing import Self, Iterable, Generator
 
-from bidict import bidict, ON_DUP_DROP_OLD
-from cachetools import cached, TTLCache
+from bidict import bidict, OnDup, RAISE, DROP_OLD
+from cachetools import cached
 from pydantic import BaseModel
 from pydantic_core import core_schema
-from sqlalchemy import orm, select, exists
+from sqlalchemy import orm, select
 from sqlalchemy.dialects.postgresql import BitString
 
-from backend.auth.permissions.model import Role, EVERYONE_ID, PermissionScope, Permission
+from backend.auth.permissions.model import PermissionScope, Permission, DEFAULT_EVERYONE_ROLE_ID, Role
 
 
 class PermissionRegistry:
+    # offset <-> permission
     _permission_registry = bidict()
-    _permission_registry.on_dup = ON_DUP_DROP_OLD  # Multiple values may map to None
 
     def __init__(self, db: orm.Session):
+        self._permission_registry.on_dup = OnDup(key=RAISE, val=DROP_OLD)
         self.db = db
 
-    @cached(TTLCache(ttl=60, maxsize=1))
-    def default_base_permissions(self) -> PermissionSet:
-        allow = self.db.execute(
-            select(Role.allow_mask)
-            .where(Role.id == EVERYONE_ID)
-        ).scalar()
-        assert allow is not None
-
-        return PermissionSet.from_mask(allow)
+    def default_everyone_role(self):
+        return self.db.get(Role, DEFAULT_EVERYONE_ROLE_ID)
 
     @cached(_permission_registry.inverse, key=lambda self, permission: permission)
     def bit_offset(self, permission: ScopedPermission) -> int | None:
-        offset = self.db.scalar(
-            select(Permission.bit_offset)
-            .where(Permission.resource == permission.resource)
-            .where(Permission.action == permission.action)
-            .where(Permission.allowed_scopes.contains([permission.scope]))
-        )
+        perm = self.db_permission(permission.resource, permission.action, permission.scope)
 
-        if offset is None:
+        if perm is None:
             return None
-        else:
-            return offset + (permission.scope.value * PermissionScope.max_bit_length())
+
+        return perm.bit_offset + permission.scope.offset
 
     @cached(_permission_registry, key=lambda self, key: key)
     def permission_from_offset(self, key: int) -> ScopedPermission | None:
@@ -56,10 +45,11 @@ class PermissionRegistry:
 
         if perm is None:
             return None
-        else:
-            return ScopedPermission(resource=perm.resource, action=perm.action, scope=scope)
 
-    def db_permission(self, resource: str, action: str, scope: PermissionScope) -> Permission | None:
+        return ScopedPermission(resource=perm.resource, action=perm.action, scope=scope)
+
+    def db_permission(self, resource: str, action: str,
+                      scope: PermissionScope = PermissionScope.ANY) -> Permission | None:
         """Fetches the Permission object from the database for the given resource, action, and scope."""
         return self.db.scalar(
             select(Permission)
@@ -68,24 +58,11 @@ class PermissionRegistry:
             .where(Permission.allowed_scopes.contains([scope]))
         )
 
-    def validate(self, permission: ScopedPermission) -> bool:
-        """Validates that the permission exists in the database."""
-        return self.db.execute(
-            exists()
-            .where(Permission.resource == permission.resource)
-            .where(Permission.action == permission.action)
-            .where(Permission.allowed_scopes.contains([permission.scope]))
-            .select()
-        ).scalar_one()
-
     def clear_caches(self):
-        self.default_base_permissions.cache_clear()
         self.bit_offset.cache_clear()
         self.permission_from_offset.cache_clear()
 
 
-# TODO: add fields for subresources, e.g. "document:read:own" vs "document.comment:read:own"
-# TODO: add field for specific resource instance
 class ScopedPermission(BaseModel):
     resource: str
     action: str
@@ -164,21 +141,6 @@ class PermissionSet:
             instance[perm] = True
         return instance
 
-    def set_any_bit(self):
-        """
-        Sets the ANY scope bit for a resource-action pair if the user has that permission in any scope.
-        """
-        any_set = PermissionSet(bitstring=self.bitstring, registry=self.registry)
-
-        p = PermissionScope.max_bit_length()
-        mask = (1 << p) - 1
-        temp = self.bitstring
-        for _scope in PermissionScope:
-            any_set.bitstring |= (temp & mask) << PermissionScope.ANY.offset
-            temp >>= p
-
-        return any_set
-
     def empty(self):
         return self.bitstring == 0
 
@@ -228,3 +190,14 @@ class PermissionSet:
 
     def __len__(self) -> int:
         return bin(self.bitstring).count("1")
+
+    def as_owner(self, is_owner):
+        """Set OWN permissions as ANY permissions if the user is an owner."""
+        if is_owner:
+            self.bitstring |= (
+                    (self.bitstring & PermissionScope.OWN.mask)
+                    >> PermissionScope.OWN.offset
+                    << PermissionScope.ANY.offset
+            )
+
+        return self

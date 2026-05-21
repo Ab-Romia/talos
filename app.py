@@ -4,18 +4,18 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import text
+from sqlalchemy import text, exc
 from sqlalchemy.orm import Session
 
 from backend.auth import auth_router
-from backend.auth.permissions.router import workspace as workspace_permissions_router, \
-    channel as channel_permissions_router
 from backend.auth.utils.session import SessionMiddleware
 from backend.chat import chat_router
+from backend.router import workspace as workspace_router, channel as channel_router
 from config import cfg
 from files.router import router as files_router
 from files.storage import MinIOStorage
 from integrations.drive import drive_router
+from utils.exceptions import dbapi_error_handler
 
 templates = Jinja2Templates(directory="frontend/templates")
 
@@ -64,14 +64,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title='Talos', lifespan=lifespan)
+
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
-app.add_middleware(SessionMiddleware)
-app.include_router(auth_router, prefix="/api/auth")
 app.include_router(chat_router, prefix="/api")
 app.include_router(files_router, prefix="/api")
 app.include_router(drive_router, prefix="/api")
-app.include_router(workspace_permissions_router, prefix="/api")
-app.include_router(channel_permissions_router, prefix="/api")
+app.include_router(workspace_router, prefix="/api")
+app.include_router(channel_router, prefix="/api")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
@@ -80,6 +80,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(SessionMiddleware)
+
+app.exception_handler(exc.DBAPIError)(dbapi_error_handler)
 
 
 @app.get('/', response_class=HTMLResponse)

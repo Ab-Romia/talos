@@ -8,13 +8,13 @@ import pytest
 import sqlalchemy
 import sqlalchemy.exc
 from fastapi.testclient import TestClient
-from sqlalchemy import select, text, delete
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app import app
 from backend.auth.model import User, IdentityProvider, Issuer
 from backend.auth.password import hash_password
-from backend.auth.permissions.model import Role, RolePermission, PermissionScope, Permission
+from backend.auth.permissions.model import Role, RolePermission, Permission
 from backend.auth.utils.jwt import create_token
 from backend.auth.utils.session import SessionClaims, Session as UserSession
 from files.model import FileAttachment, ProcessingStatus
@@ -31,7 +31,9 @@ def engine():
     engine = sqlalchemy.create_engine(
         "postgresql+psycopg://talos_app:kirowashere@localhost:5432/test"
     )
-    # Use a smaller bitstring length for tests
+
+    # create schema for tests
+    ModelBase.metadata.create_all(engine)
 
     # init db extension
     with Session(engine) as session:
@@ -39,27 +41,34 @@ def engine():
         session.execute(text("ALTER SEQUENCE permission_bit_offset_seq RESTART WITH 0"))
         session.commit()
 
-    # create schema for tests
-    ModelBase.metadata.drop_all(engine)
-    ModelBase.metadata.create_all(engine)
-
     try:
         yield engine
     finally:
+        ModelBase.metadata.drop_all(engine)
         engine.dispose()
 
 
 @pytest.fixture(autouse=True, scope="session")
 def db_session(engine):
-    """Provide a per-test DB session and override app dependency to return it."""
+    """Provide a per-test DB and override app dependency to return it."""
     from model import get_db
 
-    try:
-        with Session(engine) as db:
-            app.dependency_overrides[get_db] = lambda: db
+    with Session(engine) as db:
+        def _db():
+            try:
+                yield db
+            except Exception:
+                db.rollback()
+                raise
+
+        try:
+            app.dependency_overrides[get_db] = _db
             yield db
-    finally:
-        app.dependency_overrides.pop(get_db, None)
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            app.dependency_overrides.pop(get_db, None)
 
 
 @pytest.fixture(scope="session")
@@ -78,34 +87,38 @@ def path(client: TestClient):
 
 
 @pytest.fixture
-def test_user(db_session: Session):
+def test_users(db_session: Session):
     from faker import Faker
     faker = Faker()
+    users = []
 
-    user_name = faker.user_name()
-    try:
-        user = User(
-            username=user_name,
-            primary_email=faker.email(),
-            signup_complete=True,
-            name=faker.name(),
-            data={},
-            roles=[],
-        )
-        db_session.add(user)
-        db_session.commit()
-        db_session.refresh(user)
-    except sqlalchemy.exc.IntegrityError:
-        user = db_session.execute(
-            select(User)
-            .where(User.username == user_name)
-        ).one()
+    def _create_user():
+        while True:
+            user = User(
+                username=faker.user_name(),
+                primary_email=faker.email(),
+                signup_complete=True,
+                name=faker.name(),
+                data={},
+                roles=[],
+            )
+            db_session.add(user)
+            db_session.commit()
+            db_session.refresh(user)
 
-    yield user
+            users.append(user)
+            yield user
 
-    # Cleanup
-    db_session.execute(delete(User).where(User.id == user.id))
+    yield _create_user()
+
+    db_session.delete_all(users)
     db_session.commit()
+
+
+@pytest.fixture
+def test_user(test_users):
+    """A single test user. Use test_users if you need multiple."""
+    return next(test_users)
 
 
 @lru_cache
@@ -235,22 +248,19 @@ def test_workspace(db_session: Session, test_user: User, get_perm):
         owner_id=test_user.id,
     )
     db_session.add(ws)
-    db_session.flush()
+    db_session.commit()
 
     role = Role(name=f"test_role_{ws.id.hex[:8]}", workspace_id=ws.id, priority=1)
     role.users.append(test_user)
 
     perms = [
         get_perm("workspace", "view"),
-        get_perm("role", "view"),
         get_perm("channel", "view"),
-        get_perm("role", "edit"),
-        get_perm("role", "create"),
+        get_perm("workspace.role", "view"),
+        get_perm("workspace.role", "manage"),
     ]
     for perm in perms:
-        role.permissions.append(
-            RolePermission(permission_id=perm.id, scope=PermissionScope.WORKSPACE)
-        )
+        role.permissions.append(RolePermission(permission_id=perm.id))
 
     db_session.add(role)
     db_session.commit()

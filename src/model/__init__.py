@@ -19,7 +19,11 @@ engine = create_engine(
 
 def get_db() -> Generator[Session]:
     with SessionLocal() as session:
-        yield session
+        try:
+            yield session
+        except Exception:
+            session.rollback()
+            raise
 
 
 DatabaseDep = Annotated[Session, Depends(get_db)]

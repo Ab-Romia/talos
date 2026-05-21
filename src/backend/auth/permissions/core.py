@@ -3,13 +3,15 @@ from typing import Annotated, Callable
 
 from cachetools import cached, LRUCache
 from fastapi import Path, Depends
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, func
+from sqlalchemy.dialects.postgresql import BitString
 
 from backend.auth.utils import errors
 from backend.auth.utils.session import SessionDep
+from config import cfg
 from model import DatabaseDep
 from model.messaging import Channel
-from .model import Role, ChannelRoleOverride, PermissionScope, DEFAULT_BITS
+from .model import Role, ChannelRoleOverride as Override, STATIC_ROLE_ID
 from .registry import PermissionRegistry, PermissionSet, ScopedPermission
 
 # TODO: use reddis
@@ -32,57 +34,32 @@ def user_perms(
 ):
     @cached(permission_cache)
     def helper(workspace_id, channel_id, user_id):
-        permissions = PermissionSet()
-        deny_overrides = PermissionSet()
-        allow_overrides = PermissionSet()
+        zero_bits = BitString.from_int(0, length=cfg().auth.permission_bitstring_length)
+        channel_override_deny = func.coalesce(Override.deny_mask, zero_bits)
+        channel_override_allow = func.coalesce(Override.allow_mask, zero_bits)
+        static_role_mask = select(Role.allow_mask).where(Role.id == STATIC_ROLE_ID).scalar_subquery()
 
-        if workspace_id is None:
-            workspace_id = db.scalar(
-                select(Channel.workspace_id)
-                .where(Channel.id == channel_id)
-            )
-
-        roles_and_overrides = db.execute(
+        # perm |= (role.perms & ~override.allow | override.deny) for all roles
+        permissions = db.scalar(
             select(
-                Role.allow_mask,
-                func.coalesce(ChannelRoleOverride.allow_mask, DEFAULT_BITS),
-                func.coalesce(ChannelRoleOverride.deny_mask, DEFAULT_BITS),
+                static_role_mask.bitwise_or(
+                    func.bit_or(
+                        Role.allow_mask
+                        .bitwise_and(channel_override_deny.bitwise_not())
+                        .bitwise_or(channel_override_allow)
+                    )
+                )
             )
-            .join(ChannelRoleOverride,
-                  and_(Role.id == ChannelRoleOverride.role_id,
-                       ChannelRoleOverride.channel_id == channel_id),
-                  isouter=True
-                  )
+            .select_from(Role)
             .join(Channel, Channel.id == channel_id, isouter=True)
-            .where(Role.users.any(id=user_id))
-            .where(Role.workspace_id == workspace_id)
-            .order_by(Role.priority.desc())
-        ).all()
-
-        # permissions = db.execute(
-        #     select(
-        #         func.bit_or(
-        #             Role.allow_mask.bitwise_and(
-        #                 func.coalesce(ChannelRoleOverride.allow_mask, DEFAULT_BITS).bitwise_not()
-        #             ).bitwise_or(
-        #                 func.coalesce(ChannelRoleOverride.deny_mask, DEFAULT_BITS),
-        #             )
-        #         )
-        #     )
-        #     .select_from(Role)
-        #     .order_by(Role.priority.desc())
-        #     .group_by('*')
-        # )
-
-        for role_allow, override_allow, override_deny in roles_and_overrides:
-            permissions |= PermissionSet.from_mask(role_allow)
-            deny_overrides |= PermissionSet.from_mask(override_deny)
-            allow_overrides |= PermissionSet.from_mask(override_allow)
-
-        permissions -= deny_overrides
-        permissions |= allow_overrides
-
-        return permissions
+            .join(Override, (Override.role_id == Role.id) & (Override.channel_id == channel_id), isouter=True)
+            .where(Role.users.any(id=user_id) | (Role.id == Role.workspace_id))  # Include workspace base permissions
+            .where(Role.workspace_id == func.coalesce(workspace_id, Channel.workspace_id))
+            .group_by()
+        )
+        if permissions is None:
+            return PermissionSet()
+        return PermissionSet.from_mask(permissions)
 
     return helper(workspace_id, channel_id, session.sub)
 
@@ -105,8 +82,7 @@ def require_perms(*required_permissions: str, is_owner: Callable[..., bool] = la
         permissions are present within the user’s permissions based on the context.
     """
 
-    required_perms = None
-    own_scope_mask = PermissionScope.OWN.mask
+    required_perms = None  # Lazy initialization to avoid import time issues
 
     def helper(user_permissions: UserPermissionsDep, is_owner: Annotated[bool, Depends(is_owner)]):
         nonlocal required_perms
@@ -116,12 +92,7 @@ def require_perms(*required_permissions: str, is_owner: Callable[..., bool] = la
                 ScopedPermission.from_str(p) for p in required_permissions
             )
 
-        # Clear OWN scope permissions if the user is not the owner
-        if not is_owner:
-            user_permissions -= PermissionSet(own_scope_mask)
-
-        user_permissions = user_permissions.set_any_bit()
-        missing = required_perms - user_permissions
+        missing = required_perms - user_permissions.as_owner(is_owner)
 
         if not missing.empty():
             raise errors.Forbidden(missing)

@@ -76,5 +76,10 @@ def sudo(session: SessionDep):
         raise errors.SudoRequired()
 
 
+def user_id(session: SessionDep):
+    """Dependency to get the user ID from the session. This can be used for actions that require authentication but not necessarily the full user object."""
+    return session.sub
+
+
 UserDep = Annotated[User, Depends(active_user)]
 OptionalUserDep = Annotated[User | None, Depends(optional_active_user)]

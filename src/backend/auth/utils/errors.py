@@ -7,6 +7,14 @@ class AuthException(HTTPException):
     detail = "Authentication Error"
 
     def __init__(self, detail: str = None, status_code: int = None):
+        from utils.logger import get_logger
+
+        get_logger(__name__) \
+            .debug(
+            f"Raising {self.__class__.__name__}\n" +
+            f"detail: {detail} and status_code: {status_code}"
+        )
+
         super().__init__(
             status_code=status_code or self.status_code,
             detail=detail or self.detail

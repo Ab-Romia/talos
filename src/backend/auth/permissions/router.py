@@ -2,36 +2,24 @@ import uuid
 from itertools import chain, repeat
 from typing import Annotated
 
-from fastapi import APIRouter, Form, HTTPException, status, Depends, Body
-from psycopg import IntegrityError
+from fastapi import Form, HTTPException, Depends, Body, Request, APIRouter
 from pydantic import BaseModel
-from sqlalchemy import select, exc, and_
+from sqlalchemy import select, and_
+from starlette import status
 from starlette.status import HTTP_201_CREATED, HTTP_204_NO_CONTENT
 
 from backend.auth.model import User
-from backend.auth.permissions.core import require_perms, UserPermissionsDep, PermissionRegistryDep
-from backend.auth.permissions.model import Role, RolePermission, ChannelRoleOverride, PermissionScope
+from backend.auth.permissions import UserPermissionsDep, PermissionRegistryDep
+from backend.auth.permissions.model import Role, RolePermission, ChannelRoleOverride
 from backend.auth.permissions.registry import PermissionSet, ScopedPermission
 from backend.auth.utils import errors
-from backend.auth.utils.session import SessionDep
+from backend.auth.utils.helpers import user_id
+from backend.workspace import is_owner, require_perms, WorkspaceID, RoleID
 from model import DatabaseDep
 from model.messaging import Channel, Workspace
 
-workspace = APIRouter(prefix="/workspaces/{workspace_id}", tags=["permissions"])
-channel = APIRouter(prefix="/channels/{channel_id}", tags=["permissions"])
-
-WorkspaceID = uuid.UUID  # TODO: move to common types
-RoleID = uuid.UUID  # TODO: move to common types
-
-
-# TODO: add special role handling (everyone, admin, workspace_owner)
-
-
-class PermissionResp(BaseModel):
-    resource: str
-    action: str
-    scope: str
-    is_deny: bool
+workspace = APIRouter(tags=["permissions"])
+channel = APIRouter(tags=["permissions"])
 
 
 class RoleResp(BaseModel):
@@ -88,7 +76,7 @@ def get_role(db: DatabaseDep, workspace_id: WorkspaceID, role_id: RoleID) -> Rol
 
 @workspace.get(
     "/roles",
-    dependencies=[Depends(require_perms("role:view"))],
+    dependencies=[require_perms("workspace.role:view")],
     response_model=list[RoleResp]
 )
 def list_workspace_roles(workspace_id: WorkspaceID, db: DatabaseDep):
@@ -99,11 +87,12 @@ def list_workspace_roles(workspace_id: WorkspaceID, db: DatabaseDep):
 
 @workspace.post(
     "/roles",
-    dependencies=[Depends(require_perms("role:create:workspace"))],
+    dependencies=[require_perms("workspace.role:manage")],
     response_model=RoleResp,
     status_code=status.HTTP_201_CREATED,
 )
 def create_workspace_role(
+        request: Request,
         workspace_id: WorkspaceID,
         name: Annotated[str, Form()],
         priority: Annotated[int, Form(ge=0)],
@@ -126,29 +115,28 @@ def create_workspace_role(
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
 
+    request.state.db_error_context = {
+        "item": "role",
+        "operation": "create",
+        "workspace_id": str(workspace_id),
+        "name": name,
+        "priority": priority,
+    }
+
     role = Role(
         name=name,
         description=description,
     )
 
-    try:
-        workspace.roles.insert(priority, role)
-        db.commit()
-    except exc.DBAPIError as e:
-        db.rollback()
-        if isinstance(e.orig, IntegrityError):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                                detail="Role name must be unique within the workspace")
-
-        # TODO: More specific error handling
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to create role")
+    workspace.roles.insert(priority, role)
+    db.commit()
 
     return RoleResp.from_attributes(role)
 
 
 @workspace.get(
     "/roles/{role_id}",
-    dependencies=[Depends(require_perms("role:view:workspace"))],
+    dependencies=[require_perms("workspace.role:view")],
     response_model=RoleResp,
 )
 def get_workspace_role(workspace_id: WorkspaceID, role_id: RoleID, db: DatabaseDep):
@@ -159,7 +147,7 @@ def get_workspace_role(workspace_id: WorkspaceID, role_id: RoleID, db: DatabaseD
 
 @workspace.put(
     "/roles/{role_id}",
-    dependencies=[Depends(require_perms("role:edit:workspace"))],
+    dependencies=[require_perms("workspace.role:manage")],
     response_model=RoleResp,
 )
 def update_workspace_role_metadata(
@@ -195,32 +183,30 @@ def update_workspace_role_metadata(
 
 @workspace.put(
     "/roles/{role_id}/permissions",
-    dependencies=[Depends(require_perms("role:edit:workspace"))],
+    dependencies=[require_perms("workspace.role:manage")],
     response_model=RoleResp,
 )
 def update_workspace_role_permissions(
         workspace_id: WorkspaceID,
         role_id: RoleID,
         permissions: Annotated[list[ScopedPermission], Body()],
-        user_permissions: UserPermissionsDep,  # noqa
-        session: SessionDep,  # noqa
-        permission_registry: PermissionRegistryDep,  # noqa
-        db: DatabaseDep,  # noqa
+
+        user_id: Annotated[uuid.UUID, Depends(user_id)],
+        user_permissions: UserPermissionsDep,
+        permission_registry: PermissionRegistryDep,
+        db: DatabaseDep,
 ):
     """
     Updates the specified role's permissions and user assignments.
     Permissions not included in the request will be revoked.
-
-    :param workspace_id: The ID of the workspace the role belongs to.
-    :param role_id: The ID of the role to update.
-    :param permissions: List of permissions to grant with this role (as strings "resource:action:scope").
-         Unspecified permissions will be revoked.
-         Note: Users can only grant permissions they themselves have.
+    Note: Users can only grant permissions they themselves have.
     """
     role = get_role(db, workspace_id, role_id)
     request_permissions = PermissionSet.from_permissions(permissions)
 
-    missing = request_permissions - user_permissions
+    missing = request_permissions - user_permissions.as_owner(
+        is_owner(user_id, workspace_id, None, db)
+    )
 
     if not missing.empty():
         raise errors.Forbidden(
@@ -248,28 +234,21 @@ def update_workspace_role_permissions(
 
 @workspace.put(
     "/roles/{role_id}/members",
-    dependencies=[Depends(require_perms("role:edit:workspace"))],
+    dependencies=[require_perms("workspace.role:manage")],
     response_model=RoleResp,
 )
 def update_workspace_role_members(
         workspace_id: WorkspaceID,
         role_id: RoleID,
         member_ids: Annotated[list[uuid.UUID], Form()],
-        user_permissions: UserPermissionsDep,  # noqa
-        session: SessionDep,  # noqa
-        db: DatabaseDep,  # noqa
+        db: DatabaseDep,
 ):
     """
     Updates the specified role's user assignments.
     Users not included in the request will be unassigned from the role.
 
-    :param workspace_id: The ID of the workspace the role belongs to.
-    :param role_id: The ID of the role to update.
-    :param member_ids: List of user IDs to assign this role to.
-         Users not included in the request will be unassigned from the role.
-         Warning: Do not remove yourself from the role that grants you the permission to edit roles,
-          or you may lose access to edit this role until another user with permissions assigns it back to you.
-    :return:
+    Warning: Do not remove yourself from the role that grants you the permission to edit roles,
+      or you may lose access to edit this role until another user with permissions assigns it back to you.
     """
     role = get_role(db, workspace_id, role_id)
     new_members = (db.get(User, user_id) for user_id in set(member_ids))
@@ -284,7 +263,7 @@ def update_workspace_role_members(
 
 @workspace.delete(
     "/roles/{role_id}",
-    dependencies=[Depends(require_perms("role:delete:workspace"))],
+    dependencies=[require_perms("workspace.role:manage")],
     status_code=HTTP_204_NO_CONTENT
 )
 def delete_workspace_role(workspace_id: WorkspaceID, role_id: RoleID, db: DatabaseDep):
@@ -292,12 +271,14 @@ def delete_workspace_role(workspace_id: WorkspaceID, role_id: RoleID, db: Databa
     Deletes the specified role. This action is irreversible and will unassign the role from all users.
     """
     role = get_role(db, workspace_id, role_id)
+    if role.id == role.workspace_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete workspace base role")
 
     db.delete(role)
     db.commit()
 
 
-@workspace.get("/my_permissions", dependencies=[Depends(require_perms("workspace:view"))])
+@workspace.get("/my_permissions")
 def workspace_level_permissions(user_permissions: UserPermissionsDep):
     """
     Get the user's effective permissions for the specified workspace,
@@ -306,7 +287,7 @@ def workspace_level_permissions(user_permissions: UserPermissionsDep):
     return list(user_permissions)
 
 
-@channel.get("/roles", dependencies=[Depends(require_perms("channel:view"))])
+@channel.get("/roles", dependencies=[require_perms("workspace.role:view")])
 def get_channel_roles_overrides(channel_id: uuid.UUID, db: DatabaseDep):
     overrides = db.scalars(
         select(ChannelRoleOverride)
@@ -326,10 +307,11 @@ def get_channel(db, channel_id):
 
 @channel.post(
     "/roles/{role_id}",
-    dependencies=[Depends(require_perms("role:create:workspace"))],
+    dependencies=[require_perms("workspace.role:manage")],
     status_code=HTTP_201_CREATED
 )
 def create_channel_roles_override(
+        request: Request,
         channel_id: uuid.UUID,
         role_id: RoleID,
         db: DatabaseDep,
@@ -344,19 +326,21 @@ def create_channel_roles_override(
     channel = get_channel(db, channel_id)
     role = get_role(db, channel.workspace_id, role_id)
 
+    request.state.db_error_context = {
+        "item": "channel role override",
+        "operation": "create",
+        "channel_id": str(channel_id),
+        "role_id": str(role_id),
+    }
+
     override = ChannelRoleOverride(role_id=role.id, channel_id=channel_id)
-    try:
-        db.add(override)
-        db.commit()
-    except exc.IntegrityError:
-        db.rollback()
-        # TODO:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Override already exists")
+    db.add(override)
+    db.commit()
 
     return override
 
 
-@channel.get("/roles/{role_id}", dependencies=[Depends(require_perms("role:view:workspace"))])
+@channel.get("/roles/{role_id}", dependencies=[require_perms("workspace.role:view")])
 def get_channel_role_override(channel_id: uuid.UUID, role_id: RoleID, db: DatabaseDep):
     """Get specific channel role override."""
     override = db.execute(
@@ -371,12 +355,14 @@ def get_channel_role_override(channel_id: uuid.UUID, role_id: RoleID, db: Databa
     return override
 
 
-@channel.put("/roles/{role_id}", dependencies=[Depends(require_perms("role:edit:workspace"))])
+@channel.put("/roles/{role_id}", dependencies=[require_perms("workspace.role:manage")])
 def update_channel_roles_override(
         channel_id: uuid.UUID,
         role_id: RoleID,
         allow_permissions: Annotated[list[ScopedPermission], Form(default_factory=list)],
         deny_permissions: Annotated[list[ScopedPermission], Form(default_factory=list)],
+
+        user_id: Annotated[uuid.UUID, Depends(user_id)],
         user_permissions: UserPermissionsDep,
         db: DatabaseDep,
         permission_registry: PermissionRegistryDep,
@@ -384,12 +370,22 @@ def update_channel_roles_override(
     """
         Updates the specified role's permissions for a specific channel.
         Unspecified permissions will be set to "no override" (i.e., inherit from global role permissions).
-        Permissions with scope > "channel" will be ignored.
         Note: Users can only grant or revoke permissions they themselves have.
     """
-    override = get_override(db, channel_id, role_id)
+    override = db.execute(
+        select(ChannelRoleOverride)
+        .where(
+            ChannelRoleOverride.role_id == role_id,
+            ChannelRoleOverride.channel_id == channel_id
+        )
+    ).scalar()
+    if override is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Override not found")
 
-    missing_perms = PermissionSet.from_permissions(allow_permissions + deny_permissions) - user_permissions
+    missing_perms = PermissionSet.from_permissions(allow_permissions + deny_permissions) - user_permissions.as_owner(
+        is_owner(user_id, None, channel_id, db)
+    )
+
     if missing_perms:
         raise errors.Forbidden(missing_perms,
                                detail="To grant or revoke a permission, you must have that permission yourself.")
@@ -409,44 +405,48 @@ def update_channel_roles_override(
             is_deny=is_deny
         ) for p, scope, is_deny in new_permissions
         if p is not None
-        if scope <= PermissionScope.CHANNEL  # silently ignore invalid permissions
     )
 
     db.commit()
     return override
 
 
-def get_override(db, channel_id, role_id):
-    override = db.execute(
+@channel.delete(
+    "/roles/{role_id}",
+    dependencies=[require_perms("workspace.role:manage")],
+    status_code=HTTP_204_NO_CONTENT)
+def delete_channel_roles_override(channel_id: uuid.UUID, role_id: RoleID, db: DatabaseDep):
+    """Delete channel role override."""
+    override = db.scalar(
         select(ChannelRoleOverride)
         .where(
             ChannelRoleOverride.role_id == role_id,
             ChannelRoleOverride.channel_id == channel_id
         )
-    ).scalar()
+    )
 
     if override is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Override not found")
 
-    return override
-
-
-@channel.delete(
-    "/roles/{role_id}",
-    dependencies=[Depends(require_perms("role:delete"))],
-    status_code=HTTP_204_NO_CONTENT)
-def delete_channel_roles_override(channel_id: uuid.UUID, role_id: RoleID, db: DatabaseDep):
-    """Delete channel role override."""
-    override = get_override(db, channel_id, role_id)
+    if override.role_id == override.channel.workspace_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Cannot delete override for workspace base role")
 
     db.delete(override)
     db.commit()
 
 
-@channel.get("/my_permissions", dependencies=[Depends(require_perms("channel:view"))])
+@channel.get("/my_permissions")
 def channel_level_permissions(user_permissions: UserPermissionsDep):
     """
     Get the user's effective permissions for the specified channel,
      including all global and channel-level overrides.
     """
     return list(user_permissions)
+
+
+class PermissionResp(BaseModel):
+    resource: str
+    action: str
+    scope: str
+    is_deny: bool

@@ -1,52 +1,80 @@
+import uuid
+
 import pytest
-from sqlalchemy import delete, select
 
 from backend.auth.permissions.core import permission_registry
-from backend.auth.permissions.model import PermissionScope, Role, Permission, EVERYONE_ID, RolePermission
+from backend.auth.permissions.model import PermissionScope, Role, Permission, DEFAULT_EVERYONE_ROLE_ID, RolePermission, \
+    STATIC_ROLE_ID
+from backend.auth.permissions.registry import ScopedPermission
 
 test_permissions = [
     ("message", "send", [*PermissionScope]),
-    ("workspace", "read", [PermissionScope.ANY]),
-    ("workspace", "write", [PermissionScope.ANY]),
-    ("role", "view", [PermissionScope.WORKSPACE, PermissionScope.CHANNEL, PermissionScope.ANY]),
-    ("role", "create", [PermissionScope.WORKSPACE, PermissionScope.CHANNEL, PermissionScope.ANY]),
-    ("role", "edit", [PermissionScope.WORKSPACE, PermissionScope.CHANNEL, PermissionScope.ANY]),
-    ("role", "delete", [PermissionScope.WORKSPACE, PermissionScope.CHANNEL, PermissionScope.ANY]),
-    ("workspace", "view", [PermissionScope.ANY]),
-    ("channel", "view", [PermissionScope.ANY]),
+    ("workspace", "view", [*PermissionScope]),
+    ("channel", "view", [*PermissionScope]),
+    ("workspace.role", "view", [*PermissionScope]),
+    ("workspace.role", "manage", [*PermissionScope]),
     ("test", "view", [*PermissionScope]),
 ]
+
+
+@pytest.fixture
+def make_role(db_session, test_user, get_perm, test_workspace):
+    """Factory fixture to create a Role with permissions from "resource:action:scope" strings."""
+
+    def _make_role(name=None, permissions=None, workspace_id=test_workspace.id, priority=1, user=test_user):
+        if name is None:
+            name = f"role_{uuid.uuid4().hex[:8]}"
+
+        if permissions is None:
+            permissions = []
+
+        role = Role(name=name, workspace_id=workspace_id, priority=priority)
+
+        for perm_str in permissions:
+            scoped_perm = ScopedPermission.from_str(perm_str)
+            perm = get_perm(scoped_perm.resource, scoped_perm.action)
+            role.permissions.append(RolePermission(permission_id=perm.id, scope=scoped_perm.scope))
+
+        db_session.add(role)
+        db_session.flush()
+        if user:
+            role.users.append(user)
+        return role
+
+    return _make_role
 
 
 @pytest.fixture(scope="session", autouse=True)
 def registry(db_session):
     registry = permission_registry(db_session)
+    everyone = Role(
+        id=DEFAULT_EVERYONE_ROLE_ID,
+        name="everyone",
+        description=None,
+        workspace_id=None,
+        priority=0,
+    )
 
-    db_session.execute(delete(Role))
-    db_session.execute(delete(Permission))
-    db_session.add(
-        Role(
-            id=EVERYONE_ID,
-            name="everyone",
-            description=None,
-            workspace_id=None,
-            priority=0,
-        )
+    static = Role(
+        id=STATIC_ROLE_ID,
+        name="static",
+        description="Static role, contains permissions that are always active regardless of workspace or channel.",
+        workspace_id=None,
+        priority=0,
     )
-    db_session.add_all(
-        [
-            Permission(resource=resource, action=action, allowed_scopes=allowed_scopes)
-            for resource, action, allowed_scopes
-            in test_permissions
-        ]
-    )
+    permissions = [
+        Permission(resource=resource, action=action, allowed_scopes=scopes)
+        for resource, action, scopes
+        in test_permissions
+    ]
+    db_session.add_all(permissions)
     db_session.flush()
-    # add first permission to everyone
-    everyone_role = db_session.get(Role, EVERYONE_ID)
-    perm = db_session.scalar(select(Permission).where(Permission.bit_offset == 0))
-    everyone_role.permissions.append(
-        RolePermission(permission_id=perm.id, scope=PermissionScope.OWN)
-    )
+
+    for perm in permissions:
+        if PermissionScope.OWN in perm.allowed_scopes:
+            static.permissions.append(RolePermission(permission_id=perm.id, scope=PermissionScope.OWN))
+
+    db_session.add_all([everyone, static])
     db_session.commit()
 
     return registry
