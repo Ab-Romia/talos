@@ -36,8 +36,11 @@ class User(Base):
 
     data: Mapped[dict[str, Any]] = mapped_column(default={})
 
+    identity_providers: Mapped[list["IdentityProvider"]] = relationship("IdentityProvider",
+                                                                        back_populates="user",
+                                                                        cascade="all, delete-orphan")
     workspaces: Mapped[list[Workspace]] = relationship(secondary="workspace_members", back_populates="members")
-    roles: Mapped[list[Role]] = relationship(secondary=users_roles, back_populates=__tablename__)
+    roles: Mapped[list[Role]] = relationship(secondary=users_roles, back_populates="users")
     uploaded_files: Mapped[list[FileAttachment]] = relationship(
         FileAttachment,
         back_populates="uploader",
@@ -75,7 +78,7 @@ class IdentityProvider(Base):
     created_at: Mapped[datetime] = mapped_column(sql.DateTime(timezone=True), default=sql.func.now())
     deleted_at: Mapped[datetime | None] = mapped_column(sql.DateTime(), default=None)
 
-    user = relationship("User", backref="identity_providers")
+    user = relationship("User", back_populates="identity_providers")
 
 
 class ProviderToken(Base):

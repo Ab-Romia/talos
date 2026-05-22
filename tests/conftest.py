@@ -22,7 +22,7 @@ from files.storage import MinIOStorage
 from model.messaging import Workspace, Channel
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="session", autouse=True)
 def engine():
     """Create a single SQLAlchemy engine for the whole test session."""
 
@@ -32,14 +32,13 @@ def engine():
         "postgresql+psycopg://talos_app:kirowashere@localhost:5432/test"
     )
 
-    # create schema for tests
-    ModelBase.metadata.create_all(engine)
-
     # init db extension
     with Session(engine) as session:
         session.execute(text("CREATE EXTENSION IF NOT EXISTS citext;"))
-        session.execute(text("ALTER SEQUENCE permission_bit_offset_seq RESTART WITH 0"))
         session.commit()
+
+    # create schema for tests
+    ModelBase.metadata.create_all(engine)
 
     try:
         yield engine
