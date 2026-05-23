@@ -5,6 +5,11 @@ from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict, PydanticBaseSettingsSource, YamlConfigSettingsSource
 
 
+def is_pytest() -> bool:
+    import sys
+    return "pytest" in sys.modules
+
+
 class OAuthClient(BaseModel):
     client_id: str
     client_secret: str
@@ -104,7 +109,7 @@ class Config(BaseSettings):
 
     auth: AuthConfig = None
     minio: MinIOConfig = MinIOConfig()
-    redis: RedisConfig = None
+    # redis: RedisConfig = None
     files: FilesConfig = FilesConfig()
 
     model_config = SettingsConfigDict(
@@ -127,6 +132,12 @@ class Config(BaseSettings):
             init_settings,
             env_settings,
             dotenv_settings,
+            # override during pytest
+            *([YamlConfigSettingsSource(
+                settings_cls,
+                yaml_file="config/config.test.yaml",
+                deep_merge=True
+            )] if is_pytest() else ()),
             YamlConfigSettingsSource(settings_cls),
             file_secret_settings,
         )

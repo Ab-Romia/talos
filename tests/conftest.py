@@ -8,12 +8,13 @@ import pytest
 import sqlalchemy
 import sqlalchemy.exc
 from fastapi.testclient import TestClient
-from sqlalchemy import select, text, delete
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app import app
 from backend.auth.model import User, IdentityProvider, Issuer
 from backend.auth.password import hash_password
+from backend.auth.permissions.model import Role, RolePermission, Permission
 from backend.auth.utils.jwt import create_token
 from backend.auth.utils.session import SessionClaims, Session as UserSession
 from files.model import FileAttachment, ProcessingStatus
@@ -21,13 +22,14 @@ from files.storage import MinIOStorage
 from model.messaging import Workspace, Channel
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="session", autouse=True)
 def engine():
     """Create a single SQLAlchemy engine for the whole test session."""
+
     from model import Base as ModelBase
 
     engine = sqlalchemy.create_engine(
-        "postgresql+psycopg2://talos_app:kirowashere@localhost:5432/test"
+        "postgresql+psycopg://talos_app:kirowashere@localhost:5432/test"
     )
 
     # init db extension
@@ -36,26 +38,36 @@ def engine():
         session.commit()
 
     # create schema for tests
-    ModelBase.metadata.drop_all(engine)
     ModelBase.metadata.create_all(engine)
 
     try:
         yield engine
     finally:
+        ModelBase.metadata.drop_all(engine)
         engine.dispose()
 
 
 @pytest.fixture(autouse=True, scope="session")
 def db_session(engine):
-    """Provide a per-test DB session and override app dependency to return it."""
+    """Provide a per-test DB and override app dependency to return it."""
     from model import get_db
 
-    try:
-        with Session(engine) as db:
-            app.dependency_overrides[get_db] = lambda: db
+    with Session(engine) as db:
+        def _db():
+            try:
+                yield db
+            except Exception:
+                db.rollback()
+                raise
+
+        try:
+            app.dependency_overrides[get_db] = _db
             yield db
-    finally:
-        app.dependency_overrides.pop(get_db, None)
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            app.dependency_overrides.pop(get_db, None)
 
 
 @pytest.fixture(scope="session")
@@ -74,34 +86,38 @@ def path(client: TestClient):
 
 
 @pytest.fixture
-def test_user(db_session: Session):
+def test_users(db_session: Session):
     from faker import Faker
     faker = Faker()
+    users = []
 
-    user_name = faker.user_name()
-    try:
-        user = User(
-            username=user_name,
-            primary_email=faker.email(),
-            signup_complete=True,
-            name=faker.name(),
-            data={},
-            roles=[],
-        )
-        db_session.add(user)
-        db_session.commit()
-        db_session.refresh(user)
-    except sqlalchemy.exc.IntegrityError:
-        user = db_session.execute(
-            select(User)
-            .where(User.username == user_name)
-        ).one()
+    def _create_user():
+        while True:
+            user = User(
+                username=faker.user_name(),
+                primary_email=faker.email(),
+                signup_complete=True,
+                name=faker.name(),
+                data={},
+                roles=[],
+            )
+            db_session.add(user)
+            db_session.commit()
+            db_session.refresh(user)
 
-    yield user
+            users.append(user)
+            yield user
 
-    # Cleanup
-    db_session.execute(delete(User).where(User.id == user.id))
+    yield _create_user()
+
+    db_session.delete_all(users)
     db_session.commit()
+
+
+@pytest.fixture
+def test_user(test_users):
+    """A single test user. Use test_users if you need multiple."""
+    return next(test_users)
 
 
 @lru_cache
@@ -213,24 +229,56 @@ def sample_file_record():
 
 
 @pytest.fixture
-def test_workspace(db_session: Session, test_user: User):
+def get_perm(db_session):
+    def helper(resource, action):
+        return db_session.scalar(
+            select(Permission)
+            .where(Permission.resource == resource)
+            .where(Permission.action == action)
+        )
+
+    return helper
+
+
+@pytest.fixture
+def test_workspace(db_session: Session, test_user: User, get_perm):
     ws = Workspace(
-        id=uuid.uuid4(),
         name=f"ws_{uuid.uuid4().hex[:8]}",
         owner_id=test_user.id,
     )
     db_session.add(ws)
-    db_session.flush()
-    return ws
+    db_session.commit()
+
+    role = Role(name=f"test_role_{ws.id.hex[:8]}", workspace_id=ws.id, priority=1)
+    role.users.append(test_user)
+
+    perms = [
+        get_perm("workspace", "view"),
+        get_perm("channel", "view"),
+        get_perm("workspace.role", "view"),
+        get_perm("workspace.role", "manage"),
+    ]
+    for perm in perms:
+        role.permissions.append(RolePermission(permission_id=perm.id))
+
+    db_session.add(role)
+    db_session.commit()
+
+    yield ws
+
+    db_session.delete(ws)
+    db_session.commit()
 
 
 @pytest.fixture
 def test_channel(db_session: Session, test_workspace: Workspace):
     cr = Channel(
-        id=uuid.uuid4(),
-        name="general",
+        name="general123",
         workspace_id=test_workspace.id,
     )
     db_session.add(cr)
-    db_session.flush()
-    return cr
+    db_session.commit()
+
+    yield cr
+    db_session.delete(cr)
+    db_session.commit()

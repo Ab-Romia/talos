@@ -144,7 +144,7 @@ class TestGetSessionDependency:
         req = Request({"type": "http", "state": {}})
 
         with pytest.raises(Exception):
-            gen = verified_session(req, db_session, token)
+            gen = verified_session(next(unverified_session(req, token)), db_session)
             next(gen)
 
 
@@ -187,5 +187,5 @@ class TestSudoTokenDependency:
         req = Request({"type": "http", "state": {}})
 
         with pytest.raises(Exception):
-            gen = verified_session(req, db_session, token)
+            gen = verified_session(next(unverified_session(req, token)), db_session)
             next(gen)

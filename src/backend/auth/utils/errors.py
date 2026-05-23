@@ -7,6 +7,14 @@ class AuthException(HTTPException):
     detail = "Authentication Error"
 
     def __init__(self, detail: str = None, status_code: int = None):
+        from utils.logger import get_logger
+
+        get_logger(__name__) \
+            .debug(
+            f"Raising {self.__class__.__name__}\n" +
+            f"detail: {detail} and status_code: {status_code}"
+        )
+
         super().__init__(
             status_code=status_code or self.status_code,
             detail=detail or self.detail
@@ -48,13 +56,17 @@ class ExpiredToken(AuthException):
 
 
 class Forbidden(AuthException):
-    from backend.auth.permissions.model import PermissionSet
     status_code = status.HTTP_403_FORBIDDEN
     detail = "Forbidden"
 
-    def __init__(self, missing_perms: PermissionSet = None):
-        if missing_perms:
-            detail = f"Forbidden. Required permissions: {', '.join(missing_perms)}"
+    from backend.auth.permissions.registry import PermissionSet
+
+    def __init__(self, missing_perms: PermissionSet | None = None, detail: str = ""):
+        if missing_perms is not None:
+            detail = f"""Forbidden: {detail + "\n" if detail else ""},
+            Missing permissions: {', '.join(str(perm) for perm in missing_perms)}
+            """
         else:
-            detail = self.detail
-        super().__init__(status_code=self.status_code, detail=detail)
+            detail = detail or self.detail
+
+        super().__init__(detail=detail, status_code=self.status_code)

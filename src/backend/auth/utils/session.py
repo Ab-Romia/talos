@@ -1,13 +1,13 @@
 import uuid
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, override
 
 import sqlalchemy as sql
 from fastapi import Request, Depends, Header, Cookie
 from pydantic import ConfigDict
 from sqlalchemy import select, func, delete
 from sqlalchemy.orm import Mapped, mapped_column
-from starlette.middleware.base import RequestResponseEndpoint, BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from config import cfg
 from model import DatabaseDep, Base
@@ -52,7 +52,8 @@ class SessionClaims(BaseJWTClaims):
 
 
 class SessionMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
+    @override
+    async def dispatch(self, request, call_next):
         response = await call_next(request)
 
         if "set_session" in request.state:
