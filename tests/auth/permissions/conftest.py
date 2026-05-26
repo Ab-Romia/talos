@@ -2,10 +2,8 @@ import uuid
 
 import pytest
 
-from backend.auth.permissions.core import permission_registry
 from backend.auth.permissions.model import PermissionScope, Role, Permission, DEFAULT_EVERYONE_ROLE_ID, RolePermission, \
-    STATIC_ROLE_ID
-from backend.auth.permissions.registry import ScopedPermission
+    STATIC_ROLE_ID, ScopedPermission
 
 test_permissions = [
     ("message", "send", [*PermissionScope]),
@@ -45,8 +43,7 @@ def make_role(db_session, test_user, get_perm, test_workspace):
 
 
 @pytest.fixture(scope="session", autouse=True)
-def registry(db_session):
-    registry = permission_registry(db_session)
+def register_permissions(db_session):
     everyone = Role(
         id=DEFAULT_EVERYONE_ROLE_ID,
         name="everyone",
@@ -76,5 +73,3 @@ def registry(db_session):
 
     db_session.add_all([everyone, static])
     db_session.commit()
-
-    return registry

@@ -425,9 +425,10 @@ class TestChannelLevelMyPermissions:
         from model.messaging import Workspace, Channel
 
         new_ws = Workspace(id=uuid.uuid4(), name="isolated_ws", owner_id=test_user.id)
+        db_session.add(new_ws)
+        db_session.flush()
         new_ch = Channel(id=uuid.uuid4(), name="isolated_ch", workspace_id=new_ws.id)
-        new_ws.members.append(test_user)
-        db_session.add_all([new_ws, new_ch])
+        db_session.add(new_ch)
         db_session.commit()
 
         response = client.get(

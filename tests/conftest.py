@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app import app
 from backend.auth.model import User, IdentityProvider, Issuer
 from backend.auth.password import hash_password
-from backend.auth.permissions.model import Role, RolePermission, Permission
+from backend.auth.permissions.model import Role, RolePermission, Permission, PermissionScope
 from backend.auth.utils.jwt import create_token
 from backend.auth.utils.session import SessionClaims, Session as UserSession
 from files.model import FileAttachment, ProcessingStatus
@@ -37,7 +37,7 @@ def engine():
         session.execute(text("CREATE EXTENSION IF NOT EXISTS citext;"))
         session.commit()
 
-    # create schema for tests
+    ModelBase.metadata.drop_all(engine)
     ModelBase.metadata.create_all(engine)
 
     try:
@@ -230,11 +230,12 @@ def sample_file_record():
 
 @pytest.fixture
 def get_perm(db_session):
-    def helper(resource, action):
+    def helper(resource, action, scope=PermissionScope.ANY):
         return db_session.scalar(
             select(Permission)
             .where(Permission.resource == resource)
             .where(Permission.action == action)
+            .where(Permission.allowed_scopes.contains([scope]))
         )
 
     return helper

@@ -1,9 +1,9 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, func, Uuid
+from sqlalchemy import DateTime, ForeignKey, func, Uuid, event
 from sqlalchemy.ext.orderinglist import ordering_list
-from sqlalchemy.orm import mapped_column, Mapped, relationship
+from sqlalchemy.orm import mapped_column, Mapped, relationship, object_session
 
 from files.model import FileAttachment
 from model import Base
@@ -18,23 +18,6 @@ class WorkspaceMember(Base):
 class Workspace(Base):
     __tablename__ = "workspaces"
 
-    def __init__(self, **kwargs):
-        from backend.auth.permissions.model import Role
-        from backend.auth.permissions import permission_registry
-
-        if "id" not in kwargs:
-            kwargs["id"] = uuid.uuid4()
-        super().__init__(**kwargs)
-
-        default_everyone = permission_registry(None).default_everyone_role()
-        self.roles.append(Role(
-            id=self.id,
-            name="everyone",
-            permissions=default_everyone.permissions,
-            # This must be set here as the event listener won't trigger for bulk inserts
-            allow_mask=default_everyone.allow_mask,
-        ))
-
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(unique=True, index=True)
     owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
@@ -42,6 +25,7 @@ class Workspace(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column()
 
+    owner = relationship("User")
     channels: Mapped[list[Channel]] = relationship("Channel", back_populates="workspace")
     members = relationship("User", secondary="workspace_members", back_populates="workspaces")
     files: Mapped[list[FileAttachment]] = relationship("FileAttachment", back_populates="workspace")
@@ -58,10 +42,10 @@ class Workspace(Base):
 class Channel(Base):
     __tablename__ = "channels"
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        from backend.auth.permissions.model import ChannelRoleOverride
-        self.roles_overrides.append(ChannelRoleOverride(role_id=self.workspace_id, channel_id=self.id))
+    # def __init__(self, **kwargs):
+    #     super().__init__(**kwargs)
+    #     from backend.auth.permissions.model import ChannelRoleOverride
+    #     self.roles_overrides.append(ChannelRoleOverride(role_id=self.workspace_id, channel_id=self.id))
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(index=True)
@@ -93,3 +77,32 @@ class Message(Base):
     channel: Mapped[Channel] = relationship("Channel", back_populates="messages")
     files: Mapped[list[FileAttachment]] = relationship("FileAttachment", secondary="message_files",
                                                        back_populates="messages")
+
+
+@event.listens_for(Workspace, "after_insert")
+def after_insert_ws(_mapper, _connection, target):
+    from backend.auth.permissions.model import Role, DEFAULT_EVERYONE_ROLE_ID
+    db_session = object_session(target)
+
+    if db_session is None:
+        raise RuntimeError("No session found for after_insert event. This should not happen.")
+
+    default_everyone = db_session.get(Role, DEFAULT_EVERYONE_ROLE_ID)
+    target.roles.append(
+        Role(id=target.id,
+             name="everyone",
+             permissions=default_everyone.permissions,
+             allow_mask=default_everyone.allow_mask,
+             workspace_id=target.id,
+             priority=0)
+    )
+    target.members.append(target.owner)
+
+
+@event.listens_for(Channel, "after_insert")
+def after_insert_channel(_mapper, _connection, target):
+    from backend.auth.permissions.model import ChannelRoleOverride
+
+    target.roles_overrides.append(
+        ChannelRoleOverride(role_id=target.workspace_id, channel_id=target.id)
+    )

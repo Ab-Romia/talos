@@ -1,29 +1,21 @@
 import uuid
 from typing import Annotated, Callable
 
+from bidict import bidict, OnDup, RAISE, DROP_OLD
 from cachetools import cached, LRUCache
 from fastapi import Path, Depends
-from sqlalchemy import select, func
+from sqlalchemy import select, func, orm
 from sqlalchemy.dialects.postgresql import BitString
 
-from backend.auth.utils import errors
 from backend.auth.utils.session import SessionDep
 from config import cfg
 from model import DatabaseDep
 from model.messaging import Channel
-from .model import Role, ChannelRoleOverride as Override, STATIC_ROLE_ID
-from .registry import PermissionRegistry, PermissionSet, ScopedPermission
+from .model import Role, ChannelRoleOverride as Override, STATIC_ROLE_ID, PermissionScope, Permission, PermissionSet, \
+    ScopedPermission
 
 # TODO: use reddis
 permission_cache = LRUCache(maxsize=2 ** 16)
-
-
-@cached({}, key=lambda db: None)
-def permission_registry(db: DatabaseDep):
-    return PermissionRegistry(db)
-
-
-PermissionRegistryDep = Annotated[PermissionRegistry, Depends(permission_registry)]
 
 
 def user_perms(
@@ -57,9 +49,7 @@ def user_perms(
             .where(Role.workspace_id == func.coalesce(workspace_id, Channel.workspace_id))
             .group_by()
         )
-        if permissions is None:
-            return PermissionSet()
-        return PermissionSet.from_mask(permissions)
+        return PermissionSet(permissions or 0)
 
     return helper(workspace_id, channel_id, session.sub)
 
@@ -84,17 +74,66 @@ def require_perms(*required_permissions: str, is_owner: Callable[..., bool] = la
 
     required_perms = None  # Lazy initialization to avoid import time issues
 
-    def helper(user_permissions: UserPermissionsDep, is_owner: Annotated[bool, Depends(is_owner)]):
+    def assert_permissions(user_permissions: UserPermissionsDep,
+                           is_owner: Annotated[bool, Depends(is_owner)],
+                           db: DatabaseDep):
         nonlocal required_perms
 
+        # initialize required_perms
         if required_perms is None:
-            required_perms = PermissionSet.from_permissions(
-                ScopedPermission.from_str(p) for p in required_permissions
-            )
+            required_perms = PermissionSet.from_permissions(required_permissions, db)
 
         missing = required_perms - user_permissions.as_owner(is_owner)
 
         if not missing.empty():
-            raise errors.Forbidden(missing)
+            from backend.auth.utils import errors
+            raise errors.Forbidden(missing.iter(db))
 
-    return helper
+    return assert_permissions
+
+
+class Bidict(bidict):
+    on_dup = OnDup(key=RAISE, val=DROP_OLD)
+
+
+_permission_registry = Bidict()
+
+
+@cached(_permission_registry.inverse, key=lambda db, permission: permission)
+def bit_offset(db: orm.Session, permission: ScopedPermission) -> int | None:
+    perm = db_permission(db, permission.resource, permission.action, permission.scope)
+
+    if perm is None:
+        return None
+
+    return perm.bit_offset + permission.scope.offset
+
+
+@cached(_permission_registry, key=lambda db, key: key)
+def permission_from_offset(db: orm.Session, key: int) -> ScopedPermission | None:
+    try:
+        scope = PermissionScope(key // PermissionScope.max_bit_length())
+    except ValueError:
+        return None
+
+    perm = db.scalar(
+        select(Permission)
+        .where(Permission.bit_offset == key % PermissionScope.max_bit_length())
+        .where(Permission.allowed_scopes.contains([scope]))
+    )
+
+    if perm is None:
+        return None
+
+    return ScopedPermission(resource=perm.resource, action=perm.action, scope=scope)
+
+
+def db_permission(db: orm.Session, resource: str, action: str,
+                  scope: PermissionScope = PermissionScope.ANY, ) -> Permission | None:
+    """Fetches the Permission object from the database for the given resource, action, and scope."""
+    return db.scalar(
+        select(Permission)
+        .where(Permission.resource == resource)
+        .where(Permission.action == action)
+        .where(Permission.allowed_scopes.contains([scope]))
+    )
