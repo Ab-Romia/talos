@@ -45,6 +45,7 @@ dependencies = [
     "pydantic>=2.12.5",
     "psycopg[binary]>=3.3.4",
     "pydantic-settings>=2.14.1",
+    "python-socketio[client]>=5.16.2",
 ]
 
 [dependency-groups]
@@ -76,6 +77,7 @@ eval = [
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]
+asyncio_mode = "auto"
 
 [tool.pyright]
 extraPaths = ["src", "."]

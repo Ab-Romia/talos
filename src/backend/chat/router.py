@@ -36,7 +36,6 @@ def post_message(channel_id: UUID, req: SendRequest, session: SessionDep):
 
     sio.send(
         {"message": message.model_dump_json()},
-        namespace="/chat",
         room=f"channel:{channel_id}"
     )
 

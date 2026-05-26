@@ -26,8 +26,12 @@ def permission_registry(db: DatabaseDep):
 PermissionRegistryDep = Annotated[PermissionRegistry, Depends(permission_registry)]
 
 
+def user_id(session: SessionDep):
+    return session.sub
+
+
 def user_perms(
-        session: SessionDep,
+        user_id: Annotated[uuid.UUID, Depends(user_id)],
         db: DatabaseDep,
         workspace_id: Annotated[uuid.UUID | None, Path(default_factory=lambda: None)],
         channel_id: Annotated[uuid.UUID | None, Path(default_factory=lambda: None)],
@@ -61,7 +65,7 @@ def user_perms(
             return PermissionSet()
         return PermissionSet.from_mask(permissions)
 
-    return helper(workspace_id, channel_id, session.sub)
+    return helper(workspace_id, channel_id, user_id)
 
 
 UserPermissionsDep = Annotated[PermissionSet, Depends(user_perms)]

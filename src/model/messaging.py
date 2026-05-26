@@ -42,7 +42,7 @@ class Workspace(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column()
 
-    channels: Mapped[list[Channel]] = relationship("Channel", back_populates="workspace")
+    channels: Mapped[list[Channel]] = relationship("Channel", back_populates="workspace", cascade="all, delete-orphan")
     members = relationship("User", secondary="workspace_members", back_populates="workspaces")
     files: Mapped[list[FileAttachment]] = relationship("FileAttachment", back_populates="workspace")
 

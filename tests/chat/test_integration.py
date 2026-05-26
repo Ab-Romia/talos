@@ -7,9 +7,8 @@ Tests complex flows like:
 - Message lifecycle across cache layers with presence tracking
 - Concurrent operations and isolation
 """
-import pytest
+from itertools import islice
 
-from backend.chat.models import MessageEvent
 from backend.chat.service import store_message, get_messages, get_message_by_id
 
 
@@ -21,9 +20,9 @@ from backend.chat.service import store_message, get_messages, get_message_by_id
 class TestRestServiceParity:
     """REST and service layer share identical business logic."""
 
-    def test_send_message_consistent_metadata(self, test_users, test_channel):
+    def test_send_message_consistent_metadata(self, test_user, test_channel):
         """Messages sent via service have consistent metadata."""
-        user = test_users[0]
+        user = test_user
 
         msg1 = store_message(test_channel.id, user.id, "Message 1")
         msg2 = store_message(test_channel.id, user.id, "Message 2")
@@ -36,9 +35,9 @@ class TestRestServiceParity:
         assert msg2.sender_id == user.id
         assert msg1.sent_at <= msg2.sent_at
 
-    def test_send_and_retrieve_consistency(self, test_users, test_channel):
+    def test_send_and_retrieve_consistency(self, test_user, test_channel):
         """Message retrieved via get_messages matches sent message."""
-        user = test_users[0]
+        user = test_user
         text = "Test message for consistency"
 
         sent = store_message(test_channel.id, user.id, text)
@@ -57,9 +56,9 @@ class TestRestServiceParity:
 class TestMessageLifecycleCaching:
     """Complete message lifecycle through cache layers."""
 
-    def test_recent_message_in_hot_cache(self, test_users, test_channel):
+    def test_recent_message_in_hot_cache(self, test_user, test_channel):
         """Recent messages accessible via hot cache."""
-        user = test_users[0]
+        user = test_user
 
         msg = store_message(test_channel.id, user.id, "Recent message")
 
@@ -67,9 +66,9 @@ class TestMessageLifecycleCaching:
         retrieved = get_message_by_id(test_channel.id, msg.id)
         assert retrieved is not None
 
-    def test_old_message_in_cold_cache(self, test_users, test_channel):
+    def test_old_message_in_cold_cache(self, test_user, test_channel):
         """Old messages (evicted from hot) still retrievable from cold."""
-        user = test_users[0]
+        user = test_user
 
         # Send 120 messages to force eviction
         msg_ids = []
@@ -82,9 +81,9 @@ class TestMessageLifecycleCaching:
         assert first_msg is not None
         assert first_msg.text == "Message 0"
 
-    def test_pagination_across_cache_boundary_retrieval(self, test_users, test_channel):
+    def test_pagination_across_cache_boundary_retrieval(self, test_user, test_channel):
         """Pagination works when data spans hot and cold."""
-        user = test_users[0]
+        user = test_user
 
         # Send 120 messages
         for i in range(120):
@@ -94,19 +93,19 @@ class TestMessageLifecycleCaching:
         page = get_messages(test_channel.id, limit=30, offset=50)
 
         assert len(page) == 30
-        assert page[0].text == "Message 50"
-        assert page[29].text == "Message 79"
+        assert page[0].text == "Message 69"
+        assert page[29].text == "Message 40"
 
 
 # TODO
-@pytest.mark.xfail(reason="TODO: Requires permissions and channel membership")
+# @pytest.mark.xfail(reason="TODO: Requires permissions and channel membership")
 class TestMultiChannelIsolation:
     """Message isolation across channels."""
 
-    def test_channels_independent_message_storage(self, test_users, test_channel):
+    def test_channels_independent_message_storage(self, test_users, make_channel):
         """Messages in channel A don't appear in channel B."""
-        user_a, user_b = test_users[0], test_users[1]
-        ch1, ch2, ch3 = test_channel.id
+        user_a, user_b = islice(test_users, 2)
+        ch1, ch2, ch3 = make_channel().id, make_channel().id, make_channel().id
 
         # Send messages to different channels
         store_message(ch1, user_a.id, "Channel 1 from A")
@@ -123,8 +122,9 @@ class TestMultiChannelIsolation:
         assert len(ch2_msgs) == 1
         assert len(ch3_msgs) == 1
 
-        assert ch1_msgs[0].text == "Channel 1 from A"
-        assert ch1_msgs[1].text == "Channel 1 from B"
+        # reverse chronological order, newest first
+        assert ch1_msgs[0].text == "Channel 1 from B"
+        assert ch1_msgs[1].text == "Channel 1 from A"
         assert ch2_msgs[0].text == "Channel 2 from A"
         assert ch3_msgs[0].text == "Channel 3 from B"
 
@@ -132,37 +132,28 @@ class TestMultiChannelIsolation:
 class TestMessageEventFormatting:
     """Message event payload structure for WebSocket delivery."""
 
-    def test_message_event_structure(self, test_users, test_channel):
+    def test_message_event_structure(self, test_user, test_channel):
         """Message converts to MessageEvent with correct format."""
-        user = test_users[0]
+        msg = store_message(test_channel.id, test_user.id, "Test")
 
-        msg = store_message(test_channel.id, user.id, "Test")
+        # Message payload as currently sent over Socket.IO is the raw WSMessage JSON
+        event_dict = msg.model_dump(mode="json")
 
-        # Create event as would be sent via WebSocket
-        event = MessageEvent(message=msg)
+        # Basic structure checks
+        assert "id" in event_dict
+        assert event_dict["id"] == str(msg.id)
+        assert event_dict["channel_id"] == str(test_channel.id)
+        assert event_dict["sender_id"] == str(test_user.id)
+        assert event_dict["text"] == "Test"
 
-        event_dict = event.model_dump(mode="json")
-
-        assert event_dict["event_type"] == "new_message"
-        assert "message" in event_dict
-        assert event_dict["message"]["id"] == str(msg.id)
-        assert event_dict["message"]["channel_id"] == str(test_channel.id)
-        assert event_dict["message"]["sender_id"] == str(user.id)
-        assert event_dict["message"]["text"] == "Test"
-
-    def test_message_event_with_delivery_info(self, test_users, test_channel):
+    def test_message_event_with_delivery_info(self, test_user, test_channel):
         """MessageEvent includes delivery tracking."""
-        user = test_users[0]
+        msg = store_message(test_channel.id, test_user.id, "Test")
+        event_dict = msg.model_dump(mode="json")
 
-        msg = store_message(test_channel.id, user.id, "Test")
-        event = MessageEvent(message=msg)
-
-        event_dict = event.model_dump(mode="json")
-
-        # Structure matches WebSocket response pattern
-        assert "event_type" in event_dict
-        assert "message" in event_dict
-        assert event_dict["event_type"] == "new_message"
+        # Structure matches expected message payload
+        assert "id" in event_dict
+        assert "text" in event_dict
 
 
 class TestMessageSenderVerification:
@@ -170,7 +161,7 @@ class TestMessageSenderVerification:
 
     def test_sender_id_preserved(self, test_users, test_channel):
         """Sender ID correctly attributed to original sender."""
-        user_a, user_b = test_users[0], test_users[1]
+        user_a, user_b = islice(test_users, 2)
 
         msg_a1 = store_message(test_channel.id, user_a.id, "From A")
         msg_b1 = store_message(test_channel.id, user_b.id, "From B")
@@ -181,10 +172,13 @@ class TestMessageSenderVerification:
         assert history[0].sender_id == user_a.id
         assert history[1].sender_id == user_b.id
         assert history[2].sender_id == user_a.id
+        assert history[0].text == "From A again"
+        assert history[1].text == "From B"
+        assert history[2].text == "From A"
 
     def test_sender_id_unique_per_message(self, test_users, test_channel):
         """Each user's messages correctly tracked separately."""
-        user_a, user_b, user_c = test_users
+        user_a, user_b, user_c = islice(test_users, 3)
 
         for i in range(5):
             store_message(test_channel.id, user_a.id, f"A-{i}")
@@ -210,18 +204,8 @@ class TestMessageOrderingScenarios:
 
     def test_chronological_ordering_complex(self, test_users, test_channel):
         """Complex scenario: many users, many messages maintain order."""
-        users = test_users
-
-        # Simulate realistic conversation
-        store_message(test_channel.id, users[0].id, "Hello")
-        store_message(test_channel.id, users[1].id, "Hi there")
-        store_message(test_channel.id, users[2].id, "Hey everyone")
-        store_message(test_channel.id, users[0].id, "How are you?")
-        store_message(test_channel.id, users[1].id, "Doing great!")
-
-        history = get_messages(test_channel.id)
-
-        expected_order = [
+        users = [u for u, _ in zip(test_users, range(3))]
+        messages = [
             "Hello",
             "Hi there",
             "Hey everyone",
@@ -229,13 +213,21 @@ class TestMessageOrderingScenarios:
             "Doing great!",
         ]
 
+        store_message(test_channel.id, users[0].id, messages[0])
+        store_message(test_channel.id, users[1].id, messages[1])
+        store_message(test_channel.id, users[2].id, messages[2])
+        store_message(test_channel.id, users[0].id, messages[3])
+        store_message(test_channel.id, users[1].id, messages[4])
+
+        history = get_messages(test_channel.id)
+
         assert len(history) == 5
-        for i, expected_text in enumerate(expected_order):
+        for i, expected_text in enumerate(reversed(messages)):
             assert history[i].text == expected_text
 
-    def test_pagination_ordering_consistency(self, test_users, test_channel):
+    def test_pagination_ordering_consistency(self, test_user, test_channel):
         """Ordering consistent across paginated requests."""
-        user = test_users[0]
+        user = test_user
 
         # Send 150 messages
         for i in range(150):
@@ -248,13 +240,13 @@ class TestMessageOrderingScenarios:
 
         # Each page ordered correctly
         for i, msg in enumerate(page1):
-            assert msg.text == f"Message {i:03d}"
+            assert msg.text == f"Message {149 - i:03d}"
 
         for i, msg in enumerate(page2):
-            assert msg.text == f"Message {50 + i:03d}"
+            assert msg.text == f"Message {99 - i:03d}"
 
         for i, msg in enumerate(page3):
-            assert msg.text == f"Message {100 + i:03d}"
+            assert msg.text == f"Message {49 - i:03d}"
 
         # Pages don't overlap
         last_msg_p1 = page1[-1]
@@ -262,51 +254,5 @@ class TestMessageOrderingScenarios:
         last_msg_p2 = page2[-1]
         first_msg_p3 = page3[0]
 
-        assert last_msg_p1.sent_at <= first_msg_p2.sent_at
-        assert last_msg_p2.sent_at <= first_msg_p3.sent_at
-
-
-@pytest.mark.asyncio
-class TestIntegrationBroadcastFlow:
-    """Integration of service layer with WebSocket broadcasting."""
-
-    async def test_send_message_then_broadcast(self, fresh_manager, test_users, test_channel):
-        """Service layer send → broadcast to other users."""
-        user_sender, user_recipient = test_users[0], test_users[1]
-
-        # Mock WebSocket
-        received_payload = None
-
-        class MockWebSocket:
-            async def accept(self):
-                pass
-
-            async def send_json(self, data):
-                nonlocal received_payload
-                received_payload = data
-
-            async def close(self):
-                pass
-
-        # Recipient connected
-        ws = MockWebSocket()
-        await fresh_manager.connect(ws, user_recipient.id)
-
-        # Sender sends message
-        msg = store_message(test_channel.id, user_sender.id, "Hello recipient!")
-
-        # Prepare event as broadcast would
-        event = MessageEvent(message=msg)
-        event_payload = event.model_dump(mode="json")
-
-        # Broadcast to recipient
-        delivered, offline = await fresh_manager.broadcast(
-            [user_recipient.id],
-            event_payload,
-        )
-
-        # Recipient got the message
-        assert len(delivered) == 1
-        assert received_payload is not None
-        assert received_payload["message"]["text"] == "Hello recipient!"
-        assert received_payload["message"]["sender_id"] == str(user_sender.id)
+        assert last_msg_p1.sent_at >= first_msg_p2.sent_at
+        assert last_msg_p2.sent_at >= first_msg_p3.sent_at

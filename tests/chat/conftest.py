@@ -1,47 +1,12 @@
-"""
-Chat test fixtures and utilities.
-"""
-from typing import Generator
+import asyncio
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy.orm import Session
+import pytest_asyncio
+import socketio
 
-from backend.auth.model import User
-from backend.chat.cache import HotColdCache, cache as default_cache
+from backend.chat.cache import HotColdCache
 from backend.chat.models import WSMessage, MessageRole
-from model.messaging import Workspace, Channel
-
-
-# TODO: use existing fixtures for test_workspace that actually exists in DB
-@pytest.fixture
-def test_workspace(db_session, test_users):
-    """Create a test workspace in the database."""
-    workspace = Workspace(
-        name="Test Workspace",
-        owner_id=test_users[0].id,
-    )
-    workspace.members.extend(test_users)
-    db_session.add(workspace)
-    db_session.commit()
-    db_session.refresh(workspace)
-    return workspace
-
-
-# TODO: use existing fixtures for test_channel that actually exists in DB
-@pytest.fixture
-def test_channel(db_session, test_workspace, test_users):
-    """Create a test chat channel in the database."""
-
-    channel = Channel(
-        workspace_id=test_workspace.id,
-        name="Test Channel",
-    )
-    # TODO: Join all test users to the channel via roles
-    db_session.add(channel)
-    db_session.commit()
-    db_session.refresh(channel)
-    return channel
 
 
 @pytest.fixture
@@ -51,50 +16,114 @@ def test_channel_ids() -> list[UUID]:
 
 
 @pytest.fixture
-def test_users(db_session: Session) -> Generator[list[User]]:
-    """Create 3 test users for multi-user chat scenarios."""
-    from faker import Faker
-    from sqlalchemy import delete
-
-    faker = Faker()
-    users = []
-
-    for i in range(3):
-        user = User(
-            username="test-" + faker.user_name(),
-            primary_email=faker.email(),
-            name=faker.name(),
-            signup_complete=True,
-            data={},
-            roles=[],
-        )
-        db_session.add(user)
-        db_session.commit()
-        db_session.refresh(user)
-        users.append(user)
-
-    yield users
-
-    # Cleanup
-    for user in users:
-        db_session.execute(delete(User).where(User.id == user.id))
-    db_session.commit()
-
-
-@pytest.fixture
 def fresh_cache():
     """Provide a fresh cache instance for isolated cache tests."""
     return HotColdCache()
 
 
-@pytest.fixture(autouse=True)
-def clear_default_cache():
-    """Clear the default cache before each test to prevent cross-test contamination."""
-    default_cache._hot.clear()
-    default_cache._cold.clear()
-    yield
-    default_cache._hot.clear()
-    default_cache._cold.clear()
+@pytest.fixture(scope="session")
+def live_server():
+    import threading
+    import time
+    import uvicorn
+    from app import app
+
+    server = uvicorn.Server(uvicorn.Config(
+        app, host="127.0.0.1", port=8765, log_level="error")
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+
+    deadline = time.monotonic() + 15
+    while not server.started:
+        if not thread.is_alive():
+            raise RuntimeError("Socket.IO test server stopped during startup")
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Socket.IO test server did not start")
+        time.sleep(0.05)
+
+    yield "http://127.0.0.1:8765"
+    server.should_exit = True
+
+
+@pytest.fixture
+def override_get_db(db_session, monkeypatch):
+    """Override get_db for Socket.IO handlers."""
+    from backend.chat import realtime
+
+    def get_db_override():
+        yield db_session
+
+    monkeypatch.setattr(realtime, "get_db", get_db_override)
+
+
+@pytest_asyncio.fixture
+async def sio_client(live_server, override_get_db):
+    clients: list["_ClientContext"] = []
+
+    class _ClientContext:
+        def __init__(self, namespace: str, connect_kwargs: dict):
+            self._namespace = namespace
+            self._connect_kwargs = connect_kwargs
+            self._client = socketio.AsyncClient()
+            self._connected = False
+            self._queues: dict[str, asyncio.Queue] = {}
+
+        async def _ensure_connected(self):
+            if not self._connected:
+                await self._client.connect(live_server, namespaces=[self._namespace], **self._connect_kwargs)
+                self._connected = True
+                clients.append(self)
+            return self
+
+        def _ensure_handler(self, event: str) -> asyncio.Queue:
+            if event not in self._queues:
+                queue: asyncio.Queue = asyncio.Queue()
+
+                async def _handler(data):
+                    await queue.put(data)
+
+                self._client.on(event, _handler)
+                self._queues[event] = queue
+            return self._queues[event]
+
+        @property
+        def connected(self) -> bool:
+            return self._client.connected
+
+        async def disconnect(self) -> None:
+            if self._client.connected:
+                await self._client.disconnect()
+
+        async def wait_for(self, event: str, timeout: float = 5.0):
+            queue = self._ensure_handler(event)
+            return await asyncio.wait_for(queue.get(), timeout=timeout)
+
+        async def emit(self, event: str, data=None):
+            await self._ensure_connected()
+            await self._client.emit(event, data)
+
+        async def call(self, event: str, data=None, timeout: float = 5.0):
+            await self._ensure_connected()
+            return await self._client.call(event, data, timeout=timeout)
+
+        def __await__(self):
+            return self._ensure_connected().__await__()
+
+        async def __aenter__(self):
+            return await self._ensure_connected()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            await self.disconnect()
+
+    def _factory(namespace="/", **connect_kwargs) -> _ClientContext:
+        return _ClientContext(namespace, connect_kwargs)
+
+    yield _factory
+
+    for client in clients:
+        if client.connected:
+            await client.disconnect()
 
 
 def create_test_message(
@@ -110,9 +139,3 @@ def create_test_message(
         text=text,
         role=role,
     )
-
-
-@pytest.fixture
-def message_factory():
-    """Factory to create test messages with default values."""
-    return create_test_message

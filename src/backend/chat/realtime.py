@@ -1,5 +1,6 @@
 import asyncio
 import functools
+import os
 from http.cookies import SimpleCookie
 from typing import Any
 from uuid import UUID
@@ -11,26 +12,29 @@ from sqlalchemy.orm import Session
 
 from backend.auth.utils.session import unverified_session
 from config import cfg
-from model import SessionLocal
+from model import get_db
 from model.messaging import Channel, WorkspaceMember
+from utils.logger import get_logger
 from . import WSMessage
 from .service import get_message_by_id, store_message
 from ..auth import active_user
-from ..auth.permissions.model import PermissionSet
-from ..auth.permissions.sio import require_perms
+from ..auth.permissions import PermissionSet, ScopedPermission
+from ..auth.utils import errors
+
+# Allow all origins in test environment, restrict in production
+_cors_origins = ["*"] if os.getenv("TESTING") else ["http://localhost:5173"]
 
 sio = socketio.AsyncServer(
     async_mode="asgi",
-    cors_allowed_origins=["http://localhost:5173"],
+    socketio_path="/socket.io",
+    cors_allowed_origins=_cors_origins,
     logger=False,
     engineio_logger=False,
 )
 
-_NS = "/chat"
-
 
 def is_user_online(user_id: UUID) -> bool:
-    participants = sio.manager.get_participants(_NS, f"user:{user_id}")
+    participants = sio.manager.get_participants("/", f"user:{user_id}")
     return any(True for _ in participants)
 
 
@@ -43,12 +47,56 @@ def get_online_users(channel_id: UUID, db: Session) -> list[UUID]:
     return [uid for uid in members if is_user_online(uid)]
 
 
+def require_perms(*required_permissions: str):
+    """
+    Decorator for Socket.IO handlers.
+
+    Resolves workspace_id and channel_id from the event data dict,
+    checks permissions, and short-circuits with an error if denied.
+
+    Usage:
+        @sio.on("new_message")
+        @require_perms("message:send")
+        async def new_message(sid, data): ...
+    """
+    from ..auth.permissions import require_perms as require_perms_dep, user_perms
+    checker = require_perms_dep(*required_permissions)
+
+    def decorator(handler):
+        @functools.wraps(handler)
+        async def wrapper(sid: str, data: dict[str, Any]):
+            try:
+                workspace_id = data.get("workspace_id")
+                if not isinstance(workspace_id, UUID) and workspace_id is not None:
+                    workspace_id = UUID(str(workspace_id))
+
+                channel_id = data.get("channel_id")
+                if not isinstance(channel_id, UUID) and channel_id is not None:
+                    channel_id = UUID(str(channel_id))
+
+                user_permissions = user_perms(
+                    user_id=(await sio.get_session(sid)).get("user_id"),
+                    channel_id=channel_id,
+                    workspace_id=workspace_id,
+                    db=next(get_db()),  # TODO: use a global session for socket io permissions
+                )
+                checker(user_permissions, False)
+                return await handler(sid, data)
+            except errors.Forbidden as e:
+                return {"error": e.detail}
+
+        return wrapper
+
+    return decorator
+
+
 def sio_exc(func):
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
         try:
             return await func(*args, **kwargs)
         except Exception as exc:
+            get_logger(__name__).exception("Error in Socket.IO handler", exc_info=exc)
             return {"error": str(exc)}
 
     return wrapper
@@ -61,61 +109,67 @@ async def connect(sid: str, environ: dict[str, Any], auth: Any = None) -> bool:
     if not token:
         return False
 
-    with SessionLocal() as db:
-        session = next(unverified_session(auth_token=token))
-        user = active_user(session=session, db=db)
-        channel_ids = _get_accessible_channels(db, user.id)
+    db = next(get_db())
+    session = next(unverified_session(auth_token=token))
+    user = active_user(session=session, db=db)
+    channel_ids = _get_accessible_channels(db, user.id)
 
-        # Check first_connection before entering the user room
-        first_connection = is_user_online(user.id) is False
+    # Check first_connection before entering the user room
+    first_connection = is_user_online(user.id) is False
 
-        await sio.save_session(sid, {"session_id": session.id, "user_id": user.id})
-        await sio.enter_room(sid, f"user:{user.id}", _NS)  # personal room for tracking online status
-        for channel_id in channel_ids:
-            await sio.enter_room(sid, f"channel:{channel_id}", _NS)
+    await sio.save_session(sid, {"session_id": session.jti, "user_id": user.id})
+    await sio.enter_room(sid, f"user:{user.id}")  # personal room for tracking online status
+    for channel_id in channel_ids:
+        await sio.enter_room(sid, f"channel:{channel_id}")
 
-        if first_connection:
-            await sio.emit(
-                "user_presence",
-                {
-                    "status": "user_online",
-                    "user_id": str(user.id),
-                },
-                room=[f"channel:{channel_id}" for channel_id in channel_ids]
-            )
+    if first_connection and len(channel_ids) > 0:
+        await sio.emit(
+            "user_presence",
+            {
+                "status": "user_online",
+                "user_id": str(user.id),
+            },
+            room=[f"channel:{channel_id}" for channel_id in channel_ids]
+        )
 
     return True
 
 
 @sio.event
-@sio_exc
-async def disconnect(sid: str) -> None:
+async def disconnect(sid: str, _) -> None:
     sess = await sio.get_session(sid)
     user_id = sess.get("user_id")
 
     # The socket is still registered in rooms during this event, so
     # a count of 1 means this is the last connection.
-    last_connection = len(list(sio.manager.get_participants(_NS, f"user:{user_id}"))) == 1
+    last_connection = len(list(sio.manager.get_participants("/", f"user:{user_id}"))) == 1
+    rooms = [room for room in sio.rooms(sid) if room.startswith("channel:")]
 
-    if last_connection:
-        rooms = sio.rooms(sid, _NS) - {sid}
+    if last_connection and len(rooms) > 0:
         await sio.emit(
             "user_presence",
             {
                 "status": "user_offline",
                 "user_id": str(user_id),
             },
-            room=list(rooms)
-
+            room=rooms,  # crashes if room is empty
         )
 
 
 @sio.event
 @sio_exc
-@require_perms("message:send:channel", "channel:view")
+@require_perms("message:send", "channel:view")
 async def message(sid: str, data: dict[str, Any]):
     incoming = WSMessage(**data)
     sess = await sio.get_session(sid)
+
+    workspace_id = data.get("workspace_id")
+    if not isinstance(workspace_id, UUID) and workspace_id is not None:
+        workspace_id = UUID(str(workspace_id))
+
+    channel_id = data.get("channel_id")
+    if not isinstance(channel_id, UUID) and channel_id is not None:
+        channel_id = UUID(str(channel_id))
 
     message = store_message(
         channel_id=incoming.channel_id,
@@ -130,11 +184,15 @@ async def message(sid: str, data: dict[str, Any]):
     )
 
     # Concurrently fetch sessions of all participants to get their user_ids for the ack response.
-    participants = sio.manager.get_participants(_NS, f"channel:{incoming.channel_id}")
+    participants = sio.manager.get_participants("/", f"channel:{incoming.channel_id}")
     sessions = await asyncio.gather(
-        *(sio.get_session(sid, ns) for sid, ns in participants)
+        *(sio.get_session(sid, ns) for sid, ns in participants),
+        return_exceptions=True,  # Session may have been disconnected, ignore those errors
     )
-    delivered_to = [sess.get("user_id") for sess in await sessions]
+
+    delivered_to = [sess.get("user_id", None)
+                    for sess in sessions
+                    if not isinstance(sess, Exception)]
 
     return "OK", {  # ack
         "delivered_to": delivered_to,
@@ -214,13 +272,14 @@ def _get_accessible_channels(db: orm.Session, user_id: UUID) -> set[UUID]:
                 .bitwise_and(override_deny.bitwise_not())
                 .bitwise_or(override_allow)
             ).bitwise_and(permissions())
-            > 0
+            != zero
         )
         .group_by(Channel.id)
     )
     return set(rows)
 
 
+# TODO:
 def _get_channel_members(db: Session, channel_id: UUID) -> set[UUID]:
     """All workspace members who share the workspace this channel belongs to."""
 
@@ -240,6 +299,6 @@ def _get_channel_members(db: Session, channel_id: UUID) -> set[UUID]:
             channel_id=channel_id,
             user_id=user_id,
             db=db,
-        ).collapse_scope()
+        )
 
     return set(filter(has_access, members))

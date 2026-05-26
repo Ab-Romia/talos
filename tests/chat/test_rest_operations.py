@@ -4,6 +4,7 @@ End-to-end tests for REST chat operations.
 Tests the full flow: send message → store in cache → retrieve via REST.
 Validates message persistence, pagination, ordering, and single lookups.
 """
+from itertools import islice
 from uuid import uuid4
 
 from backend.chat.models import MessageRole
@@ -13,9 +14,9 @@ from backend.chat.service import store_message, get_messages, get_message_by_id
 class TestRestMessageSending:
     """REST POST message flow."""
 
-    def test_send_single_message_success(self, test_users, test_channel):
+    def test_send_single_message_success(self, test_user, test_channel):
         """Send a message via service layer (REST backend)."""
-        user = test_users[0]
+        user = test_user
         text = "Hello, this is a test message"
 
         msg = store_message(
@@ -33,7 +34,7 @@ class TestRestMessageSending:
 
     def test_send_multiple_messages_same_channel(self, test_users, test_channel):
         """Send multiple messages to same channel."""
-        user_a, user_b = test_users[0], test_users[1]
+        user_a, user_b = islice(test_users, 2)
 
         msg1 = store_message(test_channel.id, user_a.id, "Message 1")
         msg2 = store_message(test_channel.id, user_b.id, "Message 2")
@@ -44,9 +45,9 @@ class TestRestMessageSending:
         assert msg2.sender_id == user_b.id
         assert msg3.sender_id == user_a.id
 
-    def test_send_messages_different_channels(self, test_users, test_channel_ids):
+    def test_send_messages_different_channels(self, test_user, test_channel_ids):
         """Send messages to different channels are isolated."""
-        user = test_users[0]
+        user = test_user
 
         msg1 = store_message(test_channel_ids[0], user.id, "Channel 1 msg")
         msg2 = store_message(test_channel_ids[1], user.id, "Channel 2 msg")
@@ -65,9 +66,9 @@ class TestRestMessageRetrieval:
 
         assert messages == []
 
-    def test_get_single_message_history(self, test_users, test_channel):
+    def test_get_single_message_history(self, test_user, test_channel):
         """Send one message and retrieve it."""
-        user = test_users[0]
+        user = test_user
         text = "Test message"
 
         sent_msg = store_message(test_channel.id, user.id, text)
@@ -77,9 +78,9 @@ class TestRestMessageRetrieval:
         assert retrieved[0].id == sent_msg.id
         assert retrieved[0].text == text
 
-    def test_get_messages_pagination_basic(self, test_users, test_channel):
+    def test_get_messages_pagination_basic(self, test_user, test_channel):
         """Paginate through message history."""
-        user = test_users[0]
+        user = test_user
 
         # Send 10 messages
         msg_ids = []
@@ -90,18 +91,18 @@ class TestRestMessageRetrieval:
         # Get first 5
         page1 = get_messages(test_channel.id, limit=5, offset=0)
         assert len(page1) == 5
-        assert page1[0].id == msg_ids[0]
-        assert page1[4].id == msg_ids[4]
+        assert page1[0].id == msg_ids[9]
+        assert page1[4].id == msg_ids[5]
 
         # Get next 5
         page2 = get_messages(test_channel.id, limit=5, offset=5)
         assert len(page2) == 5
-        assert page2[0].id == msg_ids[5]
-        assert page2[4].id == msg_ids[9]
+        assert page2[0].id == msg_ids[4]
+        assert page2[4].id == msg_ids[0]
 
-    def test_get_messages_pagination_partial_page(self, test_users, test_channel):
+    def test_get_messages_pagination_partial_page(self, test_user, test_channel):
         """Last page may have fewer items than limit."""
-        user = test_users[0]
+        user = test_user
 
         # Send 13 messages
         for i in range(13):
@@ -116,9 +117,9 @@ class TestRestMessageRetrieval:
         assert len(page2) == 5
         assert len(page3) == 3
 
-    def test_get_messages_pagination_out_of_bounds(self, test_users, test_channel):
+    def test_get_messages_pagination_out_of_bounds(self, test_user, test_channel):
         """Offset beyond total messages returns empty list."""
-        user = test_users[0]
+        user = test_user
 
         for i in range(5):
             store_message(test_channel.id, user.id, f"Message {i}")
@@ -127,9 +128,9 @@ class TestRestMessageRetrieval:
 
         assert page_out_of_bounds == []
 
-    def test_get_messages_max_limit_enforced(self, test_users, test_channel):
+    def test_get_messages_max_limit_enforced(self, test_user, test_channel):
         """System enforces maximum limit of 200."""
-        user = test_users[0]
+        user = test_user
 
         for i in range(250):
             store_message(test_channel.id, user.id, f"Message {i}")
@@ -143,9 +144,9 @@ class TestRestMessageRetrieval:
 class TestRestMessageOrdering:
     """REST message ordering and sorting."""
 
-    def test_messages_ordered_by_sent_at_ascending(self, test_users, test_channel):
-        """Messages returned in ascending chronological order (oldest first)."""
-        user = test_users[0]
+    def test_messages_ordered_by_sent_at_descending(self, test_user, test_channel):
+        """Messages returned in descending chronological order (newest first)."""
+        user = test_user
 
         msg1 = store_message(test_channel.id, user.id, "First")
         msg2 = store_message(test_channel.id, user.id, "Second")
@@ -154,14 +155,14 @@ class TestRestMessageOrdering:
         retrieved = get_messages(test_channel.id)
 
         assert len(retrieved) == 3
-        assert retrieved[0].sent_at <= retrieved[1].sent_at <= retrieved[2].sent_at
-        assert retrieved[0].text == "First"
+        assert retrieved[0].sent_at >= retrieved[1].sent_at >= retrieved[2].sent_at
+        assert retrieved[0].text == "Third"
         assert retrieved[1].text == "Second"
-        assert retrieved[2].text == "Third"
+        assert retrieved[2].text == "First"
 
-    def test_messages_rapid_succession_ordering(self, test_users, test_channel):
+    def test_messages_rapid_succession_ordering(self, test_user, test_channel):
         """Messages sent rapidly maintain correct order."""
-        user = test_users[0]
+        user = test_user
 
         # Send 50 messages rapidly
         sent_msgs = []
@@ -173,15 +174,15 @@ class TestRestMessageOrdering:
 
         assert len(retrieved) == 50
         for i, msg in enumerate(retrieved):
-            assert msg.text == f"Message {i}"
+            assert msg.text == f"Message {49 - i}"
 
 
 class TestRestSingleMessageLookup:
     """REST GET /messages/{message_id} flow."""
 
-    def test_get_message_by_id_success(self, test_users, test_channel):
+    def test_get_message_by_id_success(self, test_user, test_channel):
         """Retrieve a specific message by ID."""
-        user = test_users[0]
+        user = test_user
         text = "Unique message for lookup"
 
         sent_msg = store_message(test_channel.id, user.id, text)
@@ -200,18 +201,18 @@ class TestRestSingleMessageLookup:
 
         assert retrieved is None
 
-    def test_get_message_by_id_wrong_channel(self, test_users, test_channel_ids):
+    def test_get_message_by_id_wrong_channel(self, test_user, test_channel_ids):
         """Message in channel A not found when looking up in channel B."""
-        user = test_users[0]
+        user = test_user
 
         msg = store_message(test_channel_ids[0], user.id, "In channel A")
         retrieved = get_message_by_id(test_channel_ids[1], msg.id)
 
         assert retrieved is None
 
-    def test_get_message_by_id_multiple_channels(self, test_users, test_channel_ids):
+    def test_get_message_by_id_multiple_channels(self, test_user, test_channel_ids):
         """Same message lookup works independently per channel."""
-        user = test_users[0]
+        user = test_user
 
         msg_ch1 = store_message(test_channel_ids[0], user.id, "Channel 1")
         msg_ch2 = store_message(test_channel_ids[1], user.id, "Channel 2")
@@ -226,9 +227,9 @@ class TestRestSingleMessageLookup:
 class TestRestChannelIsolation:
     """REST operations maintain channel isolation."""
 
-    def test_messages_not_shared_across_channels(self, test_users, test_channel_ids):
+    def test_messages_not_shared_across_channels(self, test_user, test_channel_ids):
         """Messages sent to channel A don't appear in channel B."""
-        user = test_users[0]
+        user = test_user
 
         # Send to channel 0
         msg_ch0_1 = store_message(test_channel_ids[0], user.id, "Ch0 Msg1")
@@ -243,13 +244,13 @@ class TestRestChannelIsolation:
 
         assert len(ch0_msgs) == 2
         assert len(ch1_msgs) == 1
-        assert ch0_msgs[0].text == "Ch0 Msg1"
-        assert ch0_msgs[1].text == "Ch0 Msg2"
+        assert ch0_msgs[0].text == "Ch0 Msg2"
+        assert ch0_msgs[1].text == "Ch0 Msg1"
         assert ch1_msgs[0].text == "Ch1 Msg1"
 
     def test_sender_id_not_spoofable_via_service(self, test_users, test_channel):
         """Service layer always uses provided user_id, not from payload."""
-        user_a, user_b = test_users[0], test_users[1]
+        user_a, user_b = islice(test_users, 2)
 
         # Send as user_a
         msg = store_message(test_channel.id, user_a.id, "Message")
@@ -263,9 +264,9 @@ class TestRestChannelIsolation:
 class TestRestMessageMetadata:
     """REST message metadata (timestamps, roles, IDs)."""
 
-    def test_message_has_unique_id(self, test_users, test_channel):
+    def test_message_has_unique_id(self, test_user, test_channel):
         """Each message gets unique UUID."""
-        user = test_users[0]
+        user = test_user
 
         msg1 = store_message(test_channel.id, user.id, "Msg1")
         msg2 = store_message(test_channel.id, user.id, "Msg2")
@@ -273,11 +274,11 @@ class TestRestMessageMetadata:
         assert msg1.id != msg2.id
         assert isinstance(msg1.id, uuid4().__class__)
 
-    def test_message_has_sent_at_timestamp(self, test_users, test_channel):
+    def test_message_has_sent_at_timestamp(self, test_user, test_channel):
         """Messages have UTC sent_at timestamp."""
         from datetime import timezone, datetime
 
-        user = test_users[0]
+        user = test_user
         before = datetime.now(timezone.utc)
 
         msg = store_message(test_channel.id, user.id, "Test")
@@ -287,9 +288,9 @@ class TestRestMessageMetadata:
         assert msg.sent_at is not None
         assert before <= msg.sent_at <= after
 
-    def test_message_role_defaults_to_user(self, test_users, test_channel):
+    def test_message_role_defaults_to_user(self, test_user, test_channel):
         """Messages default to USER role."""
-        user = test_users[0]
+        user = test_user
 
         msg = store_message(test_channel.id, user.id, "Test")
 

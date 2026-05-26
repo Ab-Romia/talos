@@ -14,7 +14,8 @@ from sqlalchemy.orm import Session
 from app import app
 from backend.auth.model import User, IdentityProvider, Issuer
 from backend.auth.password import hash_password
-from backend.auth.permissions.model import Role, RolePermission, Permission
+from backend.auth.permissions import ScopedPermission, permission_registry, STATIC_ROLE_ID
+from backend.auth.permissions.model import Role, RolePermission, Permission, PermissionScope, DEFAULT_EVERYONE_ROLE_ID
 from backend.auth.utils.jwt import create_token
 from backend.auth.utils.session import SessionClaims, Session as UserSession
 from files.model import FileAttachment, ProcessingStatus
@@ -110,8 +111,13 @@ def test_users(db_session: Session):
 
     yield _create_user()
 
-    db_session.delete_all(users)
-    db_session.commit()
+    try:
+        db_session.rollback()
+        db_session.delete_all(users)
+        db_session.commit()
+    except Exception:
+        db_session.rollback()
+        raise
 
 
 @pytest.fixture
@@ -141,24 +147,37 @@ def test_user_with_password(db_session: Session, test_user: User):
     return test_user, password
 
 
-@pytest.fixture
-def test_session(db_session: Session, test_user: User) -> SessionClaims:
+def create_session(user: User, db: Session) -> SessionClaims:
     from datetime import timezone, datetime
-    session = UserSession(user_id=test_user.id)
-    db_session.add(session)
-    db_session.commit()
-    db_session.refresh(session)
+    session = UserSession(user_id=user.id)
+    db.add(session)
+    db.commit()
+    db.refresh(session)
 
     return SessionClaims(
-        sub=test_user.id,
+        sub=user.id,
         jti=session.id,
         exp=datetime.now(timezone.utc) + timedelta(days=30),
     )
 
 
 @pytest.fixture
+def test_session(db_session: Session, test_user: User) -> SessionClaims:
+    return create_session(test_user, db_session)
+
+
+@pytest.fixture
 def auth_token(test_session) -> str:
     return create_token(test_session)
+
+
+@pytest.fixture
+def auth_tokens(db_session):
+    def _factory(user: User):
+        session = create_session(user, db_session)
+        return create_token(session)
+
+    return _factory
 
 
 @pytest.fixture
@@ -266,19 +285,111 @@ def test_workspace(db_session: Session, test_user: User, get_perm):
 
     yield ws
 
-    db_session.delete(ws)
-    db_session.commit()
+    try:
+        db_session.rollback()
+        db_session.delete(ws)
+        db_session.commit()
+    except Exception:
+        db_session.rollback()
+        raise
 
 
 @pytest.fixture
-def test_channel(db_session: Session, test_workspace: Workspace):
-    cr = Channel(
-        name="general123",
-        workspace_id=test_workspace.id,
+def make_channel(db_session: Session, test_workspace: Workspace):
+    """Factory fixture to create Channels within the test workspace."""
+
+    def _make_channel(name=None):
+        if name is None:
+            name = f"channel_{uuid.uuid4().hex[:8]}"
+
+        ch = Channel(
+            name=name,
+            workspace_id=test_workspace.id,
+        )
+        db_session.add(ch)
+        db_session.commit()
+        return ch
+
+    return _make_channel
+
+
+@pytest.fixture
+def test_channel(make_channel):
+    """A single test channel. Use make_channel if you need multiple."""
+    return make_channel()
+
+
+test_permissions = [
+    ("message", "send", [*PermissionScope]),
+    ("workspace", "view", [*PermissionScope]),
+    ("channel", "view", [*PermissionScope]),
+    ("workspace.role", "view", [*PermissionScope]),
+    ("workspace.role", "manage", [*PermissionScope]),
+    ("test", "view", [*PermissionScope]),
+
+    # messaging
+    ("message", "send", [*PermissionScope]),
+]
+
+
+@pytest.fixture
+def make_role(db_session, test_user, get_perm, test_workspace):
+    """Factory fixture to create a Role with permissions from "resource:action:scope" strings."""
+
+    def _make_role(name=None, permissions=None, workspace_id=test_workspace.id, priority=1, user=test_user):
+        if name is None:
+            name = f"role_{uuid.uuid4().hex[:8]}"
+
+        if permissions is None:
+            permissions = []
+
+        role = Role(name=name, workspace_id=workspace_id, priority=priority)
+
+        for perm_str in permissions:
+            scoped_perm = ScopedPermission.from_str(perm_str)
+            perm = get_perm(scoped_perm.resource, scoped_perm.action)
+            role.permissions.append(RolePermission(permission_id=perm.id, scope=scoped_perm.scope))
+
+        db_session.add(role)
+        db_session.flush()
+        if user:
+            role.users.append(user)
+        return role
+
+    return _make_role
+
+
+@pytest.fixture(scope="session", autouse=True)
+def registry(db_session):
+    registry = permission_registry(db_session)
+    everyone = Role(
+        id=DEFAULT_EVERYONE_ROLE_ID,
+        name="everyone",
+        description=None,
+        workspace_id=None,
+        priority=0,
     )
-    db_session.add(cr)
+
+    static = Role(
+        id=STATIC_ROLE_ID,
+        name="static",
+        description="Static role, contains permissions that are always active regardless of workspace or channel.",
+        workspace_id=None,
+        priority=0,
+    )
+    permissions = [
+        Permission(resource=resource, action=action, allowed_scopes=scopes)
+        for resource, action, scopes
+        in test_permissions
+    ]
+    db_session.add_all(permissions)
+    db_session.flush()
+
+    for perm in permissions:
+        if PermissionScope.OWN in perm.allowed_scopes:
+            static.permissions.append(RolePermission(permission_id=perm.id, scope=PermissionScope.OWN))
+
+    db_session.add_all([everyone, static])
     db_session.commit()
 
-    yield cr
-    db_session.delete(cr)
-    db_session.commit()
+    return registry

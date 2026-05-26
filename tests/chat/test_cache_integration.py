@@ -14,12 +14,11 @@ from backend.chat.service import store_message, get_messages, get_message_by_id
 class TestCacheHotStorage:
     """Hot cache (in-memory) behavior."""
 
-    def test_message_put_appears_in_hot(self, fresh_cache, test_users, test_channel):
+    def test_message_put_appears_in_hot(self, fresh_cache, test_user, test_channel):
         """Message put() immediately appears in hot cache."""
-        user = test_users[0]
         msg = WSMessage(
             channel_id=test_channel.id,
-            sender_id=user.id,
+            sender_id=test_user.id,
             text="Test",
         )
 
@@ -29,9 +28,9 @@ class TestCacheHotStorage:
         assert len(hot_msgs) == 1
         assert hot_msgs[0].id == msg.id
 
-    def test_multiple_messages_hot_cache(self, fresh_cache, test_users, test_channel):
+    def test_multiple_messages_hot_cache(self, fresh_cache, test_user, test_channel):
         """Multiple messages accumulate in hot cache."""
-        user = test_users[0]
+        user = test_user
 
         msgs = []
         for i in range(10):
@@ -49,9 +48,9 @@ class TestCacheHotStorage:
         for msg in msgs:
             assert any(h.id == msg.id for h in hot_msgs)
 
-    def test_hot_cache_size_limit_eviction(self, fresh_cache, test_users, test_channel):
+    def test_hot_cache_size_limit_eviction(self, fresh_cache, test_user, test_channel):
         """Oldest messages evicted from hot when exceeds HOT_MAX_PER_CHANNEL (100)."""
-        user = test_users[0]
+        user = test_user
 
         # Send 120 messages (exceeds max of 100)
         msg_ids = []
@@ -80,12 +79,11 @@ class TestCacheHotStorage:
 class TestCacheColdStorage:
     """Cold cache (persistent) behavior."""
 
-    def test_message_put_persists_to_cold(self, fresh_cache, test_users, test_channel):
+    def test_message_put_persists_to_cold(self, fresh_cache, test_user, test_channel):
         """Message put() also persists to cold storage."""
-        user = test_users[0]
         msg = WSMessage(
             channel_id=test_channel.id,
-            sender_id=user.id,
+            sender_id=test_user.id,
             text="Test",
         )
 
@@ -95,9 +93,9 @@ class TestCacheColdStorage:
         assert len(cold_msgs) == 1
         assert cold_msgs[0].id == msg.id
 
-    def test_evicted_messages_in_cold(self, fresh_cache, test_users, test_channel):
+    def test_evicted_messages_in_cold(self, fresh_cache, test_user, test_channel):
         """Messages evicted from hot cache are in cold storage."""
-        user = test_users[0]
+        user = test_user
 
         # Send 110 messages
         first_msg = None
@@ -123,9 +121,9 @@ class TestCacheColdStorage:
 class TestCacheHotColdMerge:
     """Hot and cold cache merging and deduplication."""
 
-    def test_get_all_merges_hot_and_cold(self, fresh_cache, test_users, test_channel):
+    def test_get_all_merges_hot_and_cold(self, fresh_cache, test_user, test_channel):
         """get_all() merges hot and cold caches."""
-        user = test_users[0]
+        user = test_user
 
         # Send 110 messages (some in hot, some in cold)
         for i in range(110):
@@ -140,9 +138,9 @@ class TestCacheHotColdMerge:
 
         assert len(all_msgs) == 110
 
-    def test_get_all_deduplicates_messages(self, fresh_cache, test_users, test_channel):
+    def test_get_all_deduplicates_messages(self, fresh_cache, test_user, test_channel):
         """get_all() deduplicates if same message in both hot and cold."""
-        user = test_users[0]
+        user = test_user
 
         for i in range(110):
             msg = WSMessage(
@@ -158,9 +156,9 @@ class TestCacheHotColdMerge:
         # Should be no duplicates
         assert len(msg_ids) == len(set(msg_ids))
 
-    def test_get_all_sorted_by_sent_at(self, fresh_cache, test_users, test_channel):
-        """get_all() returns messages sorted by sent_at."""
-        user = test_users[0]
+    def test_get_all_sorted_by_sent_at(self, fresh_cache, test_user, test_channel):
+        """get_all() returns messages sorted by sent_at (newest first)."""
+        user = test_user
 
         for i in range(50):
             msg = WSMessage(
@@ -172,13 +170,13 @@ class TestCacheHotColdMerge:
 
         all_msgs = fresh_cache.get_all(test_channel.id)
 
-        # Verify sorted ascending
+        # Verify sorted descending (newest first)
         for i in range(len(all_msgs) - 1):
-            assert all_msgs[i].sent_at <= all_msgs[i + 1].sent_at
+            assert all_msgs[i].sent_at >= all_msgs[i + 1].sent_at
 
-    def test_get_all_pagination_across_boundary(self, fresh_cache, test_users, test_channel):
+    def test_get_all_pagination_across_boundary(self, fresh_cache, test_user, test_channel):
         """Pagination works correctly across hot/cold boundary."""
-        user = test_users[0]
+        user = test_user
 
         # Send 50 messages (all in hot initially)
         for i in range(50):
@@ -204,18 +202,18 @@ class TestCacheHotColdMerge:
         assert len(page) == 30
         # Check we got the right messages
         texts = [m.text for m in page]
-        expected_texts = [f"Message {i}" for i in range(40, 70)]
+        expected_texts = [f"Message {i}" for i in range(69, 39, -1)]
         assert texts == expected_texts
 
 
 class TestCacheTTLExpiration:
     """TTL-based cache expiration."""
 
-    def test_ttl_stale_eviction(self, test_users, test_channel):
+    def test_ttl_stale_eviction(self, test_user, test_channel):
         """Messages older than TTL removed from hot cache."""
         # Create cache with short TTL
         cache = HotColdCache(ttl=1)  # 1 second TTL
-        user = test_users[0]
+        user = test_user
 
         msg = WSMessage(
             channel_id=test_channel.id,
@@ -233,10 +231,10 @@ class TestCacheTTLExpiration:
         hot_after = cache.get_hot(test_channel.id)
         assert len(hot_after) == 0
 
-    def test_ttl_expired_messages_still_in_cold(self, test_users, test_channel):
+    def test_ttl_expired_messages_still_in_cold(self, test_user, test_channel):
         """TTL-expired messages remain in cold storage."""
         cache = HotColdCache(ttl=1)
-        user = test_users[0]
+        user = test_user
 
         msg = WSMessage(
             channel_id=test_channel.id,
@@ -256,10 +254,10 @@ class TestCacheTTLExpiration:
         assert len(cold_msgs) == 1
         assert cold_msgs[0].id == msg.id
 
-    def test_get_all_includes_expired_messages(self, test_users, test_channel):
+    def test_get_all_includes_expired_messages(self, test_user, test_channel):
         """get_all() includes expired messages from cold storage."""
         cache = HotColdCache(ttl=1)
-        user = test_users[0]
+        user = test_user
 
         msg = WSMessage(
             channel_id=test_channel.id,
@@ -279,9 +277,9 @@ class TestCacheTTLExpiration:
 class TestCacheWithServiceLayer:
     """Cache integration with service layer (end-to-end)."""
 
-    def test_service_send_uses_cache(self, test_users, test_channel):
+    def test_service_send_uses_cache(self, test_user, test_channel):
         """Service layer send_message uses cache automatically."""
-        user = test_users[0]
+        user = test_user
 
         msg = store_message(test_channel.id, user.id, "Test via service")
 
@@ -291,9 +289,9 @@ class TestCacheWithServiceLayer:
         assert retrieved is not None
         assert retrieved.text == "Test via service"
 
-    def test_service_retrieval_honors_cache_state(self, test_users, test_channel):
+    def test_service_retrieval_honors_cache_state(self, test_user, test_channel):
         """Service layer retrieval gets merged cache results."""
-        user = test_users[0]
+        user = test_user
 
         # Send 120 messages (creates hot/cold split)
         msg_ids = []
@@ -309,9 +307,9 @@ class TestCacheWithServiceLayer:
         for i in range(120):
             assert any(m.id == msg_ids[i] for m in all_msgs)
 
-    def test_service_pagination_across_cache_layers(self, test_users, test_channel):
+    def test_service_pagination_across_cache_layers(self, test_user, test_channel):
         """Service pagination works across hot/cold boundary."""
-        user = test_users[0]
+        user = test_user
 
         # Create hot/cold split
         for i in range(120):
@@ -323,15 +321,15 @@ class TestCacheWithServiceLayer:
         assert len(page) == 30
         # Check correct messages
         for i, msg in enumerate(page):
-            assert msg.text == f"Message {50 + i}"
+            assert msg.text == f"Message {69 - i}"
 
 
 class TestCacheGetById:
     """Cache lookup by message ID."""
 
-    def test_get_by_id_checks_hot_first(self, fresh_cache, test_users, test_channel):
+    def test_get_by_id_checks_hot_first(self, fresh_cache, test_user, test_channel):
         """get_by_id() checks hot cache first."""
-        user = test_users[0]
+        user = test_user
 
         msg = WSMessage(
             channel_id=test_channel.id,
@@ -345,9 +343,9 @@ class TestCacheGetById:
         assert retrieved is not None
         assert retrieved.id == msg.id
 
-    def test_get_by_id_falls_back_to_cold(self, fresh_cache, test_users, test_channel):
+    def test_get_by_id_falls_back_to_cold(self, fresh_cache, test_user, test_channel):
         """get_by_id() falls back to cold storage if not in hot."""
-        user = test_users[0]
+        user = test_user
 
         # Send 110 messages (first evicted to cold)
         first_msg_id = None
