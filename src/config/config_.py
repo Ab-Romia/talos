@@ -1,6 +1,5 @@
 from datetime import timedelta
 
-from arq.connections import RedisSettings
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict, PydanticBaseSettingsSource, YamlConfigSettingsSource
 
@@ -87,16 +86,13 @@ class RedisConfig(BaseModel):
     host: str = "localhost"
     port: int = 6379
     database: int = 0
-    password: str
-    username: str
+    password: str = ""
+    username: str = ""
 
     @property
     def url(self) -> str:
         auth_part = f"{self.username}:{self.password}@" if self.username and self.password else ""
         return f"redis://{auth_part}{self.host}:{self.port}/{self.database}"
-
-    def to_redis_settings(self) -> RedisSettings:
-        return RedisSettings(**self.model_dump())
 
 
 class Config(BaseSettings):
@@ -109,7 +105,7 @@ class Config(BaseSettings):
 
     auth: AuthConfig = None
     minio: MinIOConfig = MinIOConfig()
-    # redis: RedisConfig = None
+    redis: RedisConfig = RedisConfig()
     files: FilesConfig = FilesConfig()
 
     model_config = SettingsConfigDict(
@@ -130,14 +126,14 @@ class Config(BaseSettings):
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (
             init_settings,
-            env_settings,
-            dotenv_settings,
             # override during pytest
             *([YamlConfigSettingsSource(
                 settings_cls,
                 yaml_file="config/config.test.yaml",
                 deep_merge=True
             )] if is_pytest() else ()),
+            env_settings,
+            dotenv_settings,
             YamlConfigSettingsSource(settings_cls),
             file_secret_settings,
         )

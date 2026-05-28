@@ -1,7 +1,5 @@
 """Business logic for file operations."""
 
-import hashlib
-import io
 import os
 import uuid
 from datetime import datetime
@@ -11,12 +9,12 @@ from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from backend.chat.model import Message
 from config import cfg
 from files.exceptions import FileTooLarge, StorageError, UnsupportedFileType
 from files.model import FileAttachment, ProcessingStatus, MessageFile
 from files.storage import MinIOStorage
 from files.streaming import HashingReader
-from model.messaging import Message
 from utils.datetime import utcnow
 from utils.logger import get_logger
 

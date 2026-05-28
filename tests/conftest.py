@@ -5,10 +5,8 @@ from typing import Callable
 from unittest.mock import AsyncMock
 
 import pytest
-import sqlalchemy
-import sqlalchemy.exc
 from fastapi.testclient import TestClient
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import app
@@ -18,57 +16,36 @@ from backend.auth.permissions import ScopedPermission, permission_registry, STAT
 from backend.auth.permissions.model import Role, RolePermission, Permission, PermissionScope, DEFAULT_EVERYONE_ROLE_ID
 from backend.auth.utils.jwt import create_token
 from backend.auth.utils.session import SessionClaims, Session as UserSession
+from backend.workspace.model import Workspace, Channel
 from files.model import FileAttachment, ProcessingStatus
 from files.storage import MinIOStorage
-from model.messaging import Workspace, Channel
+from model import SessionLocal
 
 
 @pytest.fixture(scope="session", autouse=True)
-def engine():
-    """Create a single SQLAlchemy engine for the whole test session."""
+async def init():
+    from app import lifespan
+    from model import engine, Base
+    Base.metadata.drop_all(engine)
 
-    from model import Base as ModelBase
-
-    engine = sqlalchemy.create_engine(
-        "postgresql+psycopg://talos_app:kirowashere@localhost:5432/test"
-    )
-
-    # init db extension
-    with Session(engine) as session:
-        session.execute(text("CREATE EXTENSION IF NOT EXISTS citext;"))
-        session.commit()
-
-    # create schema for tests
-    ModelBase.metadata.create_all(engine)
-
-    try:
-        yield engine
-    finally:
-        ModelBase.metadata.drop_all(engine)
-        engine.dispose()
+    async with lifespan(app):
+        yield
 
 
-@pytest.fixture(autouse=True, scope="session")
-def db_session(engine):
+@pytest.fixture(autouse=True)
+def db_session():
     """Provide a per-test DB and override app dependency to return it."""
-    from model import get_db
+    from model import _get_db
 
-    with Session(engine) as db:
-        def _db():
-            try:
-                yield db
-            except Exception:
-                db.rollback()
-                raise
-
+    with SessionLocal() as db:
         try:
-            app.dependency_overrides[get_db] = _db
+            app.dependency_overrides[_get_db] = lambda: db
             yield db
         except Exception:
             db.rollback()
             raise
         finally:
-            app.dependency_overrides.pop(get_db, None)
+            app.dependency_overrides.pop(_get_db, None)
 
 
 @pytest.fixture(scope="session")
@@ -205,7 +182,7 @@ def expired_token(test_user: User, test_session: SessionClaims) -> str:
 
 @pytest.fixture
 def mock_storage():
-    """Fully mocked MinIOStorage. upload_file drains the stream the same
+    """Fully mocked MinIOStorage. Upload_file drains the stream the same
     way minio-py does in prod, so the HashingReader actually hashes."""
     storage = AsyncMock(spec=MinIOStorage)
     storage.bucket_name = "talos-uploads"
@@ -328,7 +305,9 @@ test_permissions = [
     ("test", "view", [*PermissionScope]),
 
     # messaging
-    ("message", "send", [*PermissionScope]),
+    ("channel.member", "view_presence", [*PermissionScope]),
+    ("channel.message", "send", [*PermissionScope]),
+    ("channel.message", "view_history", [*PermissionScope]),
 ]
 
 
@@ -360,36 +339,37 @@ def make_role(db_session, test_user, get_perm, test_workspace):
 
 
 @pytest.fixture(scope="session", autouse=True)
-def registry(db_session):
-    registry = permission_registry(db_session)
-    everyone = Role(
-        id=DEFAULT_EVERYONE_ROLE_ID,
-        name="everyone",
-        description=None,
-        workspace_id=None,
-        priority=0,
-    )
+def registry():
+    with SessionLocal() as db_session:
+        registry = permission_registry(db_session)
+        everyone = Role(
+            id=DEFAULT_EVERYONE_ROLE_ID,
+            name="everyone",
+            description=None,
+            workspace_id=None,
+            priority=0,
+        )
 
-    static = Role(
-        id=STATIC_ROLE_ID,
-        name="static",
-        description="Static role, contains permissions that are always active regardless of workspace or channel.",
-        workspace_id=None,
-        priority=0,
-    )
-    permissions = [
-        Permission(resource=resource, action=action, allowed_scopes=scopes)
-        for resource, action, scopes
-        in test_permissions
-    ]
-    db_session.add_all(permissions)
-    db_session.flush()
+        static = Role(
+            id=STATIC_ROLE_ID,
+            name="static",
+            description="Static role, contains permissions that are always active regardless of workspace or channel.",
+            workspace_id=None,
+            priority=0,
+        )
+        permissions = [
+            Permission(resource=resource, action=action, allowed_scopes=scopes)
+            for resource, action, scopes
+            in test_permissions
+        ]
+        db_session.add_all(permissions)
+        db_session.flush()
 
-    for perm in permissions:
-        if PermissionScope.OWN in perm.allowed_scopes:
-            static.permissions.append(RolePermission(permission_id=perm.id, scope=PermissionScope.OWN))
+        for perm in permissions:
+            if PermissionScope.OWN in perm.allowed_scopes:
+                static.permissions.append(RolePermission(permission_id=perm.id, scope=PermissionScope.OWN))
 
-    db_session.add_all([everyone, static])
-    db_session.commit()
+        db_session.add_all([everyone, static])
+        db_session.commit()
 
     return registry

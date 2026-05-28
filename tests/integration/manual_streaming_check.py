@@ -17,9 +17,6 @@ from unittest.mock import MagicMock
 
 from starlette.datastructures import UploadFile
 
-import backend.auth.model  # noqa: F401
-import model.messaging      # noqa: F401
-
 from config import cfg
 from files.service import FileService
 from files.storage import MinIOStorage

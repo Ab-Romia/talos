@@ -1,6 +1,5 @@
 import asyncio
 import functools
-import os
 from http.cookies import SimpleCookie
 from typing import Any
 from uuid import UUID
@@ -10,24 +9,14 @@ from sqlalchemy import select, orm, func
 from sqlalchemy.dialects.postgresql import BitString
 from sqlalchemy.orm import Session
 
-from backend.auth.utils.session import unverified_session
 from config import cfg
-from model import get_db
-from model.messaging import Channel, WorkspaceMember
+from model import SessionLocal
 from utils.logger import get_logger
-from . import WSMessage
-from .service import get_message_by_id, store_message
-from ..auth import active_user
-from ..auth.permissions import PermissionSet, ScopedPermission
-from ..auth.utils import errors
-
-# Allow all origins in test environment, restrict in production
-_cors_origins = ["*"] if os.getenv("TESTING") else ["http://localhost:5173"]
+from .model import MessageSchema
+from ..workspace.model import WorkspaceMember, Channel
 
 sio = socketio.AsyncServer(
     async_mode="asgi",
-    socketio_path="/socket.io",
-    cors_allowed_origins=_cors_origins,
     logger=False,
     engineio_logger=False,
 )
@@ -38,7 +27,7 @@ def is_user_online(user_id: UUID) -> bool:
     return any(True for _ in participants)
 
 
-def get_online_users(channel_id: UUID, db: Session) -> list[UUID]:
+def get_channel_online(channel_id: UUID, db: Session) -> list[UUID]:
     """
     Online members of a channel: DB membership intersected with Socket.IO room state.
     Used by both presence events and the REST /online endpoint.
@@ -60,6 +49,8 @@ def require_perms(*required_permissions: str):
         async def new_message(sid, data): ...
     """
     from ..auth.permissions import require_perms as require_perms_dep, user_perms
+    from ..auth.utils import errors
+
     checker = require_perms_dep(*required_permissions)
 
     def decorator(handler):
@@ -74,12 +65,13 @@ def require_perms(*required_permissions: str):
                 if not isinstance(channel_id, UUID) and channel_id is not None:
                     channel_id = UUID(str(channel_id))
 
-                user_permissions = user_perms(
-                    user_id=(await sio.get_session(sid)).get("user_id"),
-                    channel_id=channel_id,
-                    workspace_id=workspace_id,
-                    db=next(get_db()),  # TODO: use a global session for socket io permissions
-                )
+                with SessionLocal() as db:
+                    user_permissions = user_perms(
+                        user_id=(await sio.get_session(sid)).get("user_id"),
+                        channel_id=channel_id,
+                        workspace_id=workspace_id,
+                        db=db,
+                    )
                 checker(user_permissions, False)
                 return await handler(sid, data)
             except errors.Forbidden as e:
@@ -105,14 +97,17 @@ def sio_exc(func):
 @sio.event
 @sio_exc
 async def connect(sid: str, environ: dict[str, Any], auth: Any = None) -> bool:
+    from ..auth import active_user
+    from ..auth.utils.session import unverified_session
+
     token = _extract_token(environ, auth)
     if not token:
         return False
 
-    db = next(get_db())
-    session = next(unverified_session(auth_token=token))
-    user = active_user(session=session, db=db)
-    channel_ids = _get_accessible_channels(db, user.id)
+    with SessionLocal() as db:
+        session = next(unverified_session(auth_token=token))
+        user = active_user(session=session, db=db)
+        channel_ids = _get_accessible_channels(db, user.id)
 
     # Check first_connection before entering the user room
     first_connection = is_user_online(user.id) is False
@@ -160,31 +155,25 @@ async def disconnect(sid: str, _) -> None:
 @sio_exc
 @require_perms("message:send", "channel:view")
 async def message(sid: str, data: dict[str, Any]):
-    incoming = WSMessage(**data)
+    from backend.chat import store_message
+
+    incoming = MessageSchema(**data)
     sess = await sio.get_session(sid)
 
-    workspace_id = data.get("workspace_id")
-    if not isinstance(workspace_id, UUID) and workspace_id is not None:
-        workspace_id = UUID(str(workspace_id))
-
-    channel_id = data.get("channel_id")
-    if not isinstance(channel_id, UUID) and channel_id is not None:
-        channel_id = UUID(str(channel_id))
-
-    message = store_message(
+    message = await store_message(
         channel_id=incoming.channel_id,
         user_id=sess["user_id"],
-        text=incoming.text,
+        content=incoming.content,
     )
 
     await sio.send(
         message.model_dump(mode="json"),
-        room=f"channel:{incoming.channel_id}",
+        room=f"channel:{message.channel_id}",
         skip_sid=sid,
     )
 
     # Concurrently fetch sessions of all participants to get their user_ids for the ack response.
-    participants = sio.manager.get_participants("/", f"channel:{incoming.channel_id}")
+    participants = sio.manager.get_participants("/", f"channel:{message.channel_id}")
     sessions = await asyncio.gather(
         *(sio.get_session(sid, ns) for sid, ns in participants),
         return_exceptions=True,  # Session may have been disconnected, ignore those errors
@@ -203,8 +192,9 @@ async def message(sid: str, data: dict[str, Any]):
 @sio_exc
 @require_perms("channel:view")
 async def read_receipt(sid: str, data: dict[str, Any]):
-    message = get_message_by_id(channel_id=data["channel_id"],
-                                message_id=data["message_id"])
+    from .storage import get_storage
+
+    message = await get_storage().get_by_id(data["message_id"])
     if message is None:
         return {"error": "Message not found"}
 
@@ -248,7 +238,8 @@ def _extract_token(environ: dict[str, Any], auth: Any) -> str | None:
 
 def _get_accessible_channels(db: orm.Session, user_id: UUID) -> set[UUID]:
     """ Channels visible to a user"""
-    from backend.auth.permissions.model import Role, ChannelRoleOverride
+    from ..auth.permissions.model import Role, ChannelRoleOverride
+    from ..auth.permissions import PermissionSet, ScopedPermission
 
     @functools.lru_cache
     def permissions():
@@ -260,6 +251,7 @@ def _get_accessible_channels(db: orm.Session, user_id: UUID) -> set[UUID]:
     override_allow = func.coalesce(ChannelRoleOverride.allow_mask, zero)
 
     # Select channel ids where the user has channel:view permission through any of their roles, accounting for overrides.
+    # TODO: make into a view (wsid, chid, uid) -> perms
     rows = db.scalars(
         select(Channel.id)
         .join(Role, Role.workspace_id == Channel.workspace_id)

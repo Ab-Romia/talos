@@ -6,9 +6,9 @@ from sqlalchemy import select
 
 from backend.auth import active_user
 from backend.auth.model import User
+from backend.workspace.model import Workspace
 from files.storage import MinIOStorage
 from model import DatabaseDep
-from model.messaging import Workspace
 
 
 # TODO: expand this to check actual workspace membership once we have that concept (vs. just ownership)

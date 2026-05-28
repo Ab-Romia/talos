@@ -1,2 +1,4 @@
 auth:
   permission_bitstring_length: 64
+
+database_url: postgresql+psycopg://talos_app:kirowashere@localhost:5432/test

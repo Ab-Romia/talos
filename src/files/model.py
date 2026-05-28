@@ -67,7 +67,7 @@ class FileAttachment(Base):
 @event.listens_for(FileAttachment, "before_insert")
 @event.listens_for(FileAttachment, "before_update")
 def set_workspace_id(_mapper, _connection, target):
-    from model.messaging import Channel
+    from backend.workspace.model import Channel
 
     if target.channel_id is not None:
         session = sql.orm.object_session(target)

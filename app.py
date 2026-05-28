@@ -1,8 +1,8 @@
 from contextlib import asynccontextmanager
 
+import redis.asyncio
 import socketio
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text, exc
@@ -10,9 +10,8 @@ from sqlalchemy.orm import Session
 
 from backend.auth import auth_router
 from backend.auth.utils.session import SessionMiddleware
-from backend.chat import router as chat_router
 from backend.chat.realtime import sio
-from backend.router import workspace as workspace_router, channel as channel_router
+from backend.workspace.router import workspace as workspace_router, channel as channel_router
 from config import cfg
 from files.router import router as files_router
 from files.storage import MinIOStorage
@@ -24,7 +23,6 @@ templates = Jinja2Templates(directory="frontend/templates")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from arq import create_pool
     from utils.logger import get_logger
     from model import Base, engine
 
@@ -48,40 +46,37 @@ async def lifespan(app: FastAPI):
     except Exception:
         get_logger(__name__).error("Failed to ensure MinIO bucket", exc_info=True)
 
-    # Initialize ARQ Redis pool for background task enqueueing
-
+    # Initialize async Redis client for cache layer + chat module
     try:
-        app.state.arq_pool = await create_pool(cfg().redis.to_redis_settings())
+        from backend.chat.storage import bind_chat_storage, DatabaseStorageBackend
+
+        async_redis = redis.asyncio.from_url(cfg().redis.url, decode_responses=True)
+        bind_chat_storage(DatabaseStorageBackend())
+
+        app.state.redis = async_redis
     except Exception:
-        # Keep the app running so non-upload endpoints stay usable
-        # uploads will now fail with 503
-        get_logger(__name__).error("Failed to initialize ARQ Redis pool", exc_info=True)
-        app.state.arq_pool = None
+        get_logger(__name__).error("Failed to initialize Redis client", exc_info=True)
+        app.state.redis = None
+
+    # Arq
+    app.state.arq_pool = None
 
     yield
 
     # Cleanup
-    if app.state.arq_pool:
-        await app.state.arq_pool.aclose()
+    if app.state.redis:
+        await app.state.redis.aclose()
 
 
 app = FastAPI(title='Talos', lifespan=lifespan)
 
-app.mount('/', socketio.ASGIApp(sio), name='socketio')
+app.mount('/socket.io', socketio.ASGIApp(sio), name='socketio')
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
-app.include_router(chat_router, prefix="/api")
 app.include_router(files_router, prefix="/api")
 app.include_router(drive_router, prefix="/api")
 app.include_router(workspace_router, prefix="/api")
 app.include_router(channel_router, prefix="/api")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 app.add_middleware(SessionMiddleware)
 
 app.exception_handler(exc.DBAPIError)(dbapi_error_handler)

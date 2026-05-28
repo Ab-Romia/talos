@@ -121,7 +121,7 @@ class TestDriveImport:
                 path(import_drive_file, workspace_id=test_workspace.id) + "?drive_file_id=abc"
             )
 
-        assert resp.status_code == 202, resp.text
+        assert resp.status_code == 202, resp.content
         body = resp.json()
         assert body["filename"] == "report.pdf"
         assert body["drive_file_id"] == "abc"

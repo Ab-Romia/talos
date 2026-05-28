@@ -1,5 +1,6 @@
 from backend.auth.permissions.model import PermissionScope
 from backend.auth.permissions.router import *
+from backend.workspace.model import Workspace, Channel
 
 
 class TestWorkspaceLevelRoleList:
@@ -100,8 +101,6 @@ class TestWorkspaceLevelRoleGet:
     def test_get_workspace_role_wrong_workspace(
             self, db_session, client, test_workspace, auth_token, path
     ):
-        from model.messaging import Workspace
-
         other_ws = Workspace(id=uuid.uuid4(), name="other_ws", owner_id=test_workspace.owner_id)
         other_role = Role(name=f"other_ws_role", workspace_id=other_ws.id, priority=1)
         db_session.add_all([other_ws, other_role])
@@ -242,8 +241,6 @@ class TestWorkspaceLevelMyPermissions:
         assert any(p["resource"] == "workspace.role" and p["action"] == "view" for p in data)
 
     def test_my_workspace_permissions_no_roles(self, db_session, client, test_user, auth_token, path):
-        from model.messaging import Workspace
-
         new_ws = Workspace(id=uuid.uuid4(), name="isolated_ws", owner_id=test_user.id)
         new_ws.members.append(test_user)
         db_session.add(new_ws)
@@ -422,8 +419,6 @@ class TestChannelLevelMyPermissions:
     def test_my_channel_permissions_no_roles(
             self, db_session, client, test_user, auth_token, path
     ):
-        from model.messaging import Workspace, Channel
-
         new_ws = Workspace(id=uuid.uuid4(), name="isolated_ws", owner_id=test_user.id)
         new_ch = Channel(id=uuid.uuid4(), name="isolated_ch", workspace_id=new_ws.id)
         new_ws.members.append(test_user)

@@ -8,6 +8,7 @@ from sqlalchemy import Uuid, ForeignKey, DateTime, func
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from backend.auth.permissions.model import Role
 from files.model import FileAttachment
 from model import Base
 
@@ -20,8 +21,6 @@ class Issuer(PyEnum):
 
 
 class User(Base):
-    from backend.auth.permissions.model import Role, users_roles
-    from model.messaging import Workspace
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, primary_key=True, default=uuid.uuid4)
@@ -39,8 +38,10 @@ class User(Base):
     identity_providers: Mapped[list["IdentityProvider"]] = relationship("IdentityProvider",
                                                                         back_populates="user",
                                                                         cascade="all, delete-orphan")
-    workspaces: Mapped[list[Workspace]] = relationship(secondary="workspace_members", back_populates="members")
-    roles: Mapped[list[Role]] = relationship(secondary=users_roles, back_populates="users")
+    workspaces: Mapped[list["Workspace"]] = relationship(  # type: ignore[forward-reference]
+        secondary="workspace_members",
+        back_populates="members")
+    roles: Mapped[list[Role]] = relationship(secondary="users_roles", back_populates="users")
     uploaded_files: Mapped[list[FileAttachment]] = relationship(
         FileAttachment,
         back_populates="uploader",
@@ -82,7 +83,7 @@ class IdentityProvider(Base):
 
 
 class ProviderToken(Base):
-    """Persisted OAuth tokens for third-party API access (e.g. Google Drive).
+    """Persisted OAuth tokens for third-party API access (e.g., Google Drive).
 
     Distinct from IdentityProvider, which only stores the OIDC claims used
     for sign-in. One row per (user, provider).

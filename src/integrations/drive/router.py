@@ -11,12 +11,12 @@ from sqlalchemy import select
 
 from backend.auth.model import ProviderToken, User
 from backend.auth.utils.helpers import active_user
+from backend.workspace.model import Workspace, Channel
 from files.dependencies import get_storage, get_workspace_member
 from files.exceptions import FileTooLarge, UnsupportedFileType
 from files.service import FileService
 from files.storage import MinIOStorage
 from model import DatabaseDep
-from model.messaging import Workspace
 from .client import DriveClient
 from .constants import DEFAULT_LIST_PAGE_SIZE, MAX_LIST_PAGE_SIZE
 from .exceptions import DriveAPIError, DriveNotConnected, DriveTokenRefreshFailed
@@ -101,7 +101,6 @@ async def import_drive_file(
     upload, and DB persistence behave exactly as a direct upload.
     """
     if channel_id is not None:
-        from model.messaging import Channel
         channel = db.scalar(
             select(Channel).where(
                 Channel.id == channel_id,

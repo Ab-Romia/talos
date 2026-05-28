@@ -17,7 +17,7 @@ class TestAttachChannelMismatch:
     def test_attach_rejects_mismatched_channel(
             self, client, test_workspace, test_channel, test_message, make_file, db_session
     ):
-        from model.messaging import Channel
+        from backend.workspace.model import Channel
 
         other_channel = Channel(
             id=uuid.uuid4(),

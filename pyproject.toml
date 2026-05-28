@@ -23,7 +23,7 @@ dependencies = [
     "python-multipart>=0.0.27",
     "rank-bm25>=0.2.2",
     "sentence-transformers>=5.4.1",
-    "sqlalchemy>=2.1.0b2",
+    "sqlalchemy[asyncio]>=2.1.0b2",
     "starlette>=1.0.0",
     "uvicorn>=0.46.0",
     "webauthn>=2.7.1",
@@ -35,7 +35,6 @@ dependencies = [
     "cachetools>=7.1.0",
     "bidict>=0.23.1",
     "minio>=7.2.20",
-    "arq>=0.28.0",
     "pillow>=12.2.0",
     "langchain-text-splitters>=1.1.1",
     "python-magic>=0.4.27",
@@ -46,6 +45,8 @@ dependencies = [
     "psycopg[binary]>=3.3.4",
     "pydantic-settings>=2.14.1",
     "python-socketio[client]>=5.16.2",
+    "redis>=7.4.0",
+    "taskiq>=0.12.4",
 ]
 
 [dependency-groups]
