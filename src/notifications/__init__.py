@@ -3,9 +3,6 @@ from .model import (
     NotificationDelivery,
     NotificationsType,
     NotificationsChannel,
-    UserNotificationPreference,
-    PreferenceUpdate,
-    PreferenceResponse,
 )
 
 __all__ = [
@@ -13,8 +10,4 @@ __all__ = [
     "NotificationDelivery",
     "NotificationsType",
     "NotificationsChannel",
-    "UserNotificationPreference",
-    "PreferenceUpdate",
-    "PreferenceResponse",
 ]
-

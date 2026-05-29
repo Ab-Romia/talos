@@ -5,14 +5,12 @@ from typing import Any
 from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
-from starlette.websockets import WebSocketDisconnect, WebSocket
 
 from backend.auth.utils.helpers import UserDep
 from model import DatabaseDep
-from websocket import ws_manager
-from .model import NotificationsType, Notification, PreferenceResponse, PreferenceUpdate, UserNotificationPreference
-from .notification_service import get_user_notifications, mark_as_read
-from .preferences_service import PreferencesService
+from utils.datetime import utcnow
+from .model import NotificationsType, Notification
+from .service import get_user_notifications, mark_as_read
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
@@ -34,7 +32,7 @@ class NotificationResponse(BaseModel):
             title=notification.title,
             body=notification.body,
             data=notification.data,
-            is_read=notification.is_read,
+            is_read=notification.read_at,
             created_at=notification.created_at,
         )
 
@@ -88,48 +86,13 @@ def mark_all_as_read(db: DatabaseDep, current_user: UserDep):
         select(Notification)
         .where(
             Notification.user_id == current_user.id,
-            Notification.is_read.is_(False)
+            Notification.read_at.is_(None)
         )
     ).all()
 
     for n in notifications:
-        n.is_read = True
+        n.read_at = utcnow()
 
     db.commit()
 
     return {"status": "ok"}
-
-
-@router.get("/preferences", response_model=list[PreferenceResponse])
-def get_preferences(db: DatabaseDep, current_user: UserDep):
-    return PreferencesService.get_preferences(db, current_user.id)
-
-
-@router.put("/preferences")
-def update_preferences(preferences: list[PreferenceUpdate], db: DatabaseDep, current_user: UserDep):
-    PreferencesService.update_preferences(
-        db,
-        current_user.id,
-        (
-            UserNotificationPreference(
-                channel=p.channel,
-                enabled=p.enabled
-            ) for p in preferences
-        )
-    )
-
-    return {"status": "updated"}
-
-
-# TODO: remove this endpoint and move WS connection logic to a separate router
-@router.websocket("/ws/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, user_id: uuid.UUID):
-    await ws_manager.connect(user_id, websocket)
-
-    try:
-        while True:
-            # keep connection alive
-            await websocket.receive_text()
-
-    except WebSocketDisconnect:
-        ws_manager.disconnect(user_id, websocket)

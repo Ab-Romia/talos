@@ -43,20 +43,6 @@ async def lifespan(_: FastAPI):
     storage = _get_minio_storage()
     await storage.ensure_bucket()
     app.state.minio_storage = storage
-    # redis setup for taskiq
-    from taskiq_redis import RedisBroker, RedisAsyncResultBackend
-
-    broker = RedisBroker(cfg().redis.url())
-    broker.with_result_backend(RedisAsyncResultBackend(cfg().redis.url()))
-
-    # set notifications broker so tasks can be registered
-    try:
-        from notifications.app.broker import set_broker
-
-        set_broker(broker)
-    except Exception:
-        # ignore if notifications package not available during init
-        pass
 
     # Initialize ARQ Redis pool for background task enqueueing
     from arq import create_pool
@@ -81,7 +67,6 @@ app = FastAPI(title='Temp', lifespan=lifespan)
 app.add_middleware(SessionMiddleware)
 
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
-app.include_router(auth_router, prefix="/api/auth")
 app.include_router(chat_router, prefix="/api")
 app.include_router(files_router, prefix="/api")
 app.include_router(drive_router, prefix="/api")
@@ -93,7 +78,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth_router)
 app.include_router(notifications_router, prefix="/api")
 
 

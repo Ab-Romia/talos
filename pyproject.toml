@@ -44,6 +44,8 @@ dependencies = [
     "sentence-transformers>=5.4.1",
     "torch>=2.11.0",
     "pika>=1.4.0",
+    "taskiq>=0.12.4",
+    "taskiq-redis>=1.0.9",
 ]
 
 [project.optional-dependencies]
