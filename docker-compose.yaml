@@ -40,12 +40,9 @@ services:
       MINIO__INTERNAL_ENDPOINT: minio:9000
       MINIO__EXTERNAL_ENDPOINT: ${MINIO_EXTERNAL_ENDPOINT:-localhost:9000}
       REDIS__URL: redis://redis:6379
+    command: [ "taskiq", "worker", "broker:broker", "notifications.tasks", "--app-dir=src" ]
     depends_on:
       postgres:
-        condition: service_healthy
-      milvus-standalone:
-        condition: service_healthy
-      minio:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -150,8 +147,8 @@ services:
     container_name: milvus-standalone
     image: milvusdb/milvus
     command: [ "milvus", "run", "standalone" ]
-#    security_opt:
-#      - seccomp:unconfined
+    #    security_opt:
+    #      - seccomp:unconfined
     environment:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000

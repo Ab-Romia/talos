@@ -19,6 +19,7 @@ class NotificationsType(PyEnum):
 
 
 class NotificationsChannel(PyEnum):
+    IN_APP = "in_app"
     EMAIL = "email"
     PUSH = "push"
 
@@ -75,3 +76,20 @@ class Notification(Base):
         back_populates="notification",
         cascade="all, delete-orphan"
     )
+
+
+class PushSubscription(Base):
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+
+    endpoint: Mapped[str] = mapped_column(index=True, unique=True)
+    keys: Mapped[dict[str, Any]] = mapped_column(JSONB, default={})
+
+    expiration_time: Mapped[datetime | None] = mapped_column(DateTime(), default=None)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow, onupdate=utcnow, index=True)
+
+    user = relationship("User", backref="push_subscriptions")

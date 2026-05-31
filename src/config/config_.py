@@ -94,6 +94,13 @@ class RedisConfig(BaseModel):
     url: str = "redis://localhost:6379"
 
 
+class PushConfig(BaseModel):
+    """Web Push configuration for VAPID."""
+    vapid_private_key: str | None = None
+    vapid_public_key: str | None = None
+    vapid_subject: str | None = None
+
+
 class Config(BaseSettings):
     app_name: str = "Talos"
     app_host: str
@@ -107,6 +114,7 @@ class Config(BaseSettings):
     redis: RedisConfig = RedisConfig()
     files: FilesConfig = FilesConfig()
     rabbitmq: RabbitMQConfig = None
+    push: PushConfig = PushConfig()
 
     model_config = SettingsConfigDict(
         env_file='.env',

@@ -33,34 +33,31 @@ def _get_minio_storage() -> MinIOStorage:
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(app: FastAPI):
     with Session(engine) as session:
         session.execute(text("CREATE EXTENSION IF NOT EXISTS citext;"))
         session.commit()
 
     Base.metadata.create_all(engine)
 
-    storage = _get_minio_storage()
-    await storage.ensure_bucket()
-    app.state.minio_storage = storage
-
-    # Initialize ARQ Redis pool for background task enqueueing
-    from arq import create_pool
-    from processing.worker import get_redis_settings
-    from utils.logger import get_logger
     try:
-        app.state.arq_pool = await create_pool(get_redis_settings())
+        storage = _get_minio_storage()
+        await storage.ensure_bucket()
+        app.state.minio_storage = storage
     except Exception as e:
-        # Keep the app running so non-upload endpoints stay usable
-        # uploads will now fail with 503
-        get_logger(__name__).error("Failed to initialize ARQ Redis pool", exc_info=True)
-        app.state.arq_pool = None
+        print(f"Error initializing MinIO storage: {e}")
+
+    app.state.arq_pool = None
+
+    from broker import broker
+
+    if not broker.is_worker_process:
+        await broker.startup()
 
     yield
 
-    # Cleanup
-    if app.state.arq_pool:
-        await app.state.arq_pool.aclose()
+    if not broker.is_worker_process:
+        await broker.startup()
 
 
 app = FastAPI(title='Temp', lifespan=lifespan)

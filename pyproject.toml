@@ -46,6 +46,7 @@ dependencies = [
     "pika>=1.4.0",
     "taskiq>=0.12.4",
     "taskiq-redis>=1.0.9",
+    "pywebpush>=2.3.0",
 ]
 
 [project.optional-dependencies]
@@ -69,6 +70,7 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]
+asyncio_mode = "auto"
 
 [tool.pyright]
 extraPaths = ["src", "."]

@@ -1,28 +1,31 @@
+import itertools
 import uuid
 from typing import Any, Sequence, Iterable
 
-from sqlalchemy import select, func, orm
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
-from taskiq.decor import AsyncTaskiqDecoratedTask
 
 from utils.datetime import utcnow
-from utils.logger import get_logger
+from . import tasks
 from .model import Notification, NotificationsType, NotificationsChannel, NotificationDelivery
 
 
-def push_notification(
+async def push_notification(
         db: Session,
         user_ids: Iterable[uuid.UUID] | uuid.UUID,
         notif_type: NotificationsType,
         title: str,
         body: str,
         data: dict[str, Any] | None = None,
-        channels: Iterable[NotificationsChannel] | None = None,
+        channels: Iterable[NotificationsChannel] | NotificationsChannel | None = None,
 ) -> list[Notification]:
     """Push a notification to one or more users and enqueue delivery tasks for the specified channels."""
-
     user_ids = [user_ids] if isinstance(user_ids, uuid.UUID) else list(user_ids)
+    if channels is None:
+        channels = [NotificationsChannel.IN_APP]
+    elif isinstance(channels, NotificationsChannel):
+        channels = [channels]
+
     # TODO: query user preferences for channels and filter channels accordingly before enqueueing
     notifications = [
         Notification(
@@ -36,15 +39,18 @@ def push_notification(
     ]
 
     db.add_all(notifications)
-    db.flush()
-
-    enqueue_notifications(
-        notifications,
-        channels or [NotificationsChannel.PUSH],
-        db
-    )
-
     db.commit()
+
+    # enqueue tasks for each channel
+    for n, channel in itertools.product(notifications, channels):
+        match channel:
+            # TODO: is online check
+            case NotificationsChannel.EMAIL:
+                await tasks.email.kiq(notification_id=n.id)
+                n.deliveries.append(NotificationDelivery(channel=channel))
+            case NotificationsChannel.PUSH:
+                # await tasks.web_push.kiq(notification_id=n.id)
+                await tasks.web_push(notification_id=n.id)
 
     return notifications
 
@@ -100,32 +106,3 @@ def get_unread_count(db: Session, user_id: uuid.UUID) -> int:
         )
     )
     return count or 0
-
-
-async def enqueue_notifications(
-        notifications: Iterable[Notification],
-        channels: Iterable[NotificationsChannel],
-        db: orm.Session
-):
-    queued = db.execute(
-        insert(NotificationDelivery).values([
-            {
-                'notification_id': n.id,
-                'channel': channel,
-            }
-            for n in notifications
-            for channel in channels
-        ]).on_conflict_do_nothing()  # avoid duplicate deliveries if re-enqueued
-        .returning(NotificationDelivery.notification_id, NotificationDelivery.channel)
-    )
-    db.commit()
-
-    # enqueue tasks for each channel
-    for notification_id, channel in queued:
-        from notifications import tasks
-        task: AsyncTaskiqDecoratedTask | None = getattr(tasks, channel.value, None)
-
-        if task:
-            await task.kiq(notification_id=notification_id, channels=[channel])
-        else:
-            get_logger(__name__).warning(f'No task found for channel {channel} in broker task')

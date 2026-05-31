@@ -77,11 +77,6 @@ class SessionMiddleware(BaseHTTPMiddleware):
                     samesite="lax",
                     max_age=int(delta.total_seconds())
                 )
-        elif "application/json" in accept_header:
-            body = response.json()
-            body["session_token"] = token
-            body["session_expires_at"] = claims.exp.isoformat()
-            response.body = response.json_encoder.encode(body)
         else:
             response.headers["X-Session-Token"] = token
 

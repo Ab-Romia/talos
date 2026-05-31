@@ -1,27 +1,17 @@
 from typing import Callable
-from unittest.mock import Mock
 
 import pytest
 from faker import Faker
 
-from notifications import Notification, NotificationsType, notification_service
-
-
-@pytest.fixture(autouse=True)
-def mock_publish(monkeypatch):
-    from notifications.tasks import publish_message
-    publish = Mock()
-    monkeypatch.setattr(notification_service, publish_message.__name__, publish)
-    return publish
+from notifications.model import Notification, NotificationsType
 
 
 @pytest.fixture
 def notification(test_user, db_session) -> Callable[..., Notification]:
     def factory(
-            type_=NotificationsType.message,
+            type_=NotificationsType.MESSAGE,
             title=None,
             body=None,
-            is_read=False,
             data=None,
     ):
         faker = Faker()
@@ -33,7 +23,6 @@ def notification(test_user, db_session) -> Callable[..., Notification]:
             title=title,
             body=body,
             data=data or {},
-            is_read=is_read,
         )
 
     return factory
