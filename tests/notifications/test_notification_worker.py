@@ -10,7 +10,6 @@ from notifications.model import (
     Notification,
     NotificationDelivery,
     NotificationsChannel,
-    NotificationsType,
     PushSubscription,
 )
 
@@ -47,7 +46,7 @@ class TestNotificationWorker:
     ):
         notification = Notification(
             user_id=test_user.id,
-            type=NotificationsType.SYSTEM,
+            tags=["system"],
             title="Title",
             body="Body",
             data={"url": "/notif"},
@@ -82,7 +81,7 @@ class TestNotificationWorker:
     ):
         notification = Notification(
             user_id=test_user.id,
-            type=NotificationsType.SYSTEM,
+            tags=["system"],
             title="Title",
             body="Body",
             data={"url": "/notif"},
@@ -112,7 +111,7 @@ class TestNotificationWorker:
     ):
         notification = Notification(
             user_id=test_user.id,
-            type=NotificationsType.SYSTEM,
+            tags=["system"],
             title="Title",
             body="Body",
             data={"url": "/notif"},
@@ -153,7 +152,7 @@ class TestNotificationWorker:
     ):
         notification = Notification(
             user_id=test_user.id,
-            type=NotificationsType.SYSTEM,
+            tags=["system"],
             title="Title",
             body="Body",
             data={"url": "/notif"},

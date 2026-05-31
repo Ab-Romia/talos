@@ -11,12 +11,6 @@ from model import Base
 from utils.datetime import utcnow
 
 
-class NotificationsType(PyEnum):
-    MESSAGE = "message"
-    ALERT = "alert"
-    REMINDER = "reminder"
-    SYSTEM = "system"
-
 
 class NotificationsChannel(PyEnum):
     IN_APP = "in_app"
@@ -64,7 +58,7 @@ class Notification(Base):
 
     title: Mapped[str] = mapped_column()
     body: Mapped[str] = mapped_column()
-    type: Mapped[NotificationsType] = mapped_column(Enum(NotificationsType), index=True)
+    tags: Mapped[list[str]] = mapped_column(JSONB, default=list, index=True)
 
     data: Mapped[dict[str, Any]] = mapped_column(JSONB, default={})
 

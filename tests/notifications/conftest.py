@@ -3,13 +3,13 @@ from typing import Callable
 import pytest
 from faker import Faker
 
-from notifications.model import Notification, NotificationsType
+from notifications.model import Notification
 
 
 @pytest.fixture
 def notification(test_user, db_session) -> Callable[..., Notification]:
     def factory(
-            type_=NotificationsType.MESSAGE,
+            tags=None,
             title=None,
             body=None,
             data=None,
@@ -17,9 +17,11 @@ def notification(test_user, db_session) -> Callable[..., Notification]:
         faker = Faker()
         title = title or faker.sentence()
         body = body or faker.paragraph()
+        if tags is None:
+            tags = ["message"]
         return Notification(
             user_id=test_user.id,
-            type=type_,
+            tags=tags,
             title=title,
             body=body,
             data=data or {},

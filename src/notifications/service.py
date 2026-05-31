@@ -7,33 +7,29 @@ from sqlalchemy.orm import Session
 
 from utils.datetime import utcnow
 from . import tasks
-from .model import Notification, NotificationsType, NotificationsChannel, NotificationDelivery
+from .model import Notification, NotificationsChannel, NotificationDelivery
 
 
 async def push_notification(
         db: Session,
         user_ids: Iterable[uuid.UUID] | uuid.UUID,
-        notif_type: NotificationsType,
-        title: str,
-        body: str,
+        title: str, body: str,
         data: dict[str, Any] | None = None,
-        channels: Iterable[NotificationsChannel] | NotificationsChannel | None = None,
+        tags: Iterable[str] | None = None,
 ) -> list[Notification]:
     """Push a notification to one or more users and enqueue delivery tasks for the specified channels."""
     user_ids = [user_ids] if isinstance(user_ids, uuid.UUID) else list(user_ids)
-    if channels is None:
-        channels = [NotificationsChannel.IN_APP]
-    elif isinstance(channels, NotificationsChannel):
-        channels = [channels]
+
+    tags_list = list(tags) if tags is not None else []
 
     # TODO: query user preferences for channels and filter channels accordingly before enqueueing
     notifications = [
         Notification(
             user_id=user_id,
-            type=notif_type,
             title=title,
             body=body,
             data=data or {},
+            tags=tags_list,
         )
         for user_id in user_ids
     ]
@@ -41,16 +37,27 @@ async def push_notification(
     db.add_all(notifications)
     db.commit()
 
-    # enqueue tasks for each channel
+    # enqueue tasks for each channel (default to all channels; user prefs TODO)
+    channels = list(NotificationsChannel)
+
     for n, channel in itertools.product(notifications, channels):
         match channel:
             # TODO: is online check
             case NotificationsChannel.EMAIL:
-                await tasks.email.kiq(notification_id=n.id)
+                # If tasks.email exposes kiq wrapper, prefer it; otherwise call coroutine directly
+                if hasattr(tasks.email, "kiq"):
+                    await tasks.email.kiq(notification_id=n.id)
+                else:
+                    await tasks.email(notification_id=n.id)
                 n.deliveries.append(NotificationDelivery(channel=channel))
             case NotificationsChannel.PUSH:
-                # await tasks.web_push.kiq(notification_id=n.id)
                 await tasks.web_push(notification_id=n.id)
+                n.deliveries.append(NotificationDelivery(channel=channel))
+            case NotificationsChannel.IN_APP:
+                # in-app delivery requires no external worker
+                n.deliveries.append(NotificationDelivery(channel=channel))
+
+    db.commit()
 
     return notifications
 

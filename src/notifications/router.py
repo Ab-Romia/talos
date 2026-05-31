@@ -11,7 +11,7 @@ from config import cfg
 from model import DatabaseDep
 from utils.datetime import utcnow
 from . import PushSubscription
-from .model import NotificationsType, Notification
+from .model import Notification
 from .service import (
     get_user_notifications,
     mark_as_read,
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
 class NotificationResponse(BaseModel):
     id: uuid.UUID
-    type: NotificationsType
+    tags: list[str] | None
     title: str
     body: str
     data: dict[str, Any] | None
@@ -34,7 +34,7 @@ class NotificationResponse(BaseModel):
     def from_notification(notification: Notification) -> "NotificationResponse":
         return NotificationResponse(
             id=notification.id,
-            type=notification.type,
+            tags=notification.tags,
             title=notification.title,
             body=notification.body,
             data=notification.data,
