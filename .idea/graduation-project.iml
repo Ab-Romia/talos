@@ -9,11 +9,4 @@
     <orderEntry type="jdk" jdkName="uv (Graduation Project)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
-  <component name="TemplatesService">
-    <option name="TEMPLATE_FOLDERS">
-      <list>
-        <option value="$MODULE_DIR$/frontend/templates" />
-      </list>
-    </option>
-  </component>
 </module>

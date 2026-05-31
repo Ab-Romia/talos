@@ -15,6 +15,10 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+# TODO:
+#  - Add retry logic with exponential backoff for transient errors (e.g. network issues).
+#  - Consider streaming downloads for large files instead of reading them fully into memory.
+#  - Use file descriptors and os-level file operations for large file handling to avoid memory bloat.
 class MinIOStorage:
     """Wraps two MinIO clients: internal (server-to-server) and external (pre-signed URLs)."""
 
@@ -68,11 +72,11 @@ class MinIOStorage:
             raise StorageError("ensure_bucket", str(e)) from e
 
     async def upload_file(
-        self,
-        storage_key: str,
-        data: BinaryIO,
-        size: int,
-        content_type: str,
+            self,
+            storage_key: str,
+            data: BinaryIO,
+            size: int,
+            content_type: str,
     ) -> str:
         """Upload a file to MinIO. ``data`` may be any binary stream that
         supports ``read(size)``; minio-py uploads it in ``part_size`` chunks,
