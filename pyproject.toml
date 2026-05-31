@@ -50,6 +50,10 @@ dependencies = [
     "pydantic>=2.12.5",
     "pypdf>=6.9.2",
     "pymupdf>=1.27.2.3",
+    "pika>=1.4.0",
+    "taskiq>=0.12.4",
+    "taskiq-redis>=1.0.9",
+    "pywebpush>=2.3.0",
 ]
 
 [dependency-groups]
@@ -83,6 +87,7 @@ eval = [
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]
+asyncio_mode = "auto"
 
 [tool.pyright]
 extraPaths = ["src", "."]

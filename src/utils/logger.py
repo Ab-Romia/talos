@@ -169,16 +169,7 @@ _loggers: dict[str, Logger] = {}
 
 
 def get_logger(name: str, config: LoggingConfig | None = None) -> Logger:
-    """
-    Get or create a logger instance.
-
-    Args:
-        name: Logger name (usually module name)
-        config: Optional logging configuration
-
-    Returns:
-        RAGLogger instance
-    """
+    """ Get or create a logger instance. """
     if name not in _loggers:
         _loggers[name] = Logger(name, config)
     return _loggers[name]

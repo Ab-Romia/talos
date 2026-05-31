@@ -78,6 +78,15 @@ class FilesConfig(BaseModel):
     thumbnail_size: tuple[int, int] = (300, 300)
 
 
+class RabbitMQConfig(BaseModel):
+    host: str = "localhost"
+    port: int = 5672
+    username: str
+    password: str
+    virtual_host: str = "/"
+    notification_queue: str = "talos_notifcation_queue"
+
+
 class RedisConfig(BaseModel):
     host: str = "localhost"
     port: int = 6379
@@ -92,6 +101,13 @@ class RedisConfig(BaseModel):
 
     def to_redis_settings(self) -> RedisSettings:
         return RedisSettings(**self.model_dump())
+
+
+class PushConfig(BaseModel):
+    """Web Push configuration for VAPID."""
+    vapid_private_key: str | None = None
+    vapid_public_key: str | None = None
+    vapid_subject: str | None = None
 
 
 class Config(BaseSettings):
@@ -118,6 +134,8 @@ class Config(BaseSettings):
     # separate `arq` worker is not required for local dev. Set False in production when
     # using dedicated worker processes.
     inline_file_processing: bool = True
+    rabbitmq: RabbitMQConfig = None
+    push: PushConfig = PushConfig()
 
     model_config = SettingsConfigDict(
         env_file='.env',

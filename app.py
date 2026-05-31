@@ -23,6 +23,8 @@ from config import cfg
 from files.router import router as files_router
 from files.storage import MinIOStorage
 from integrations.drive import drive_router
+from model import Base, engine
+from notifications.router import router as notifications_router
 
 templates = Jinja2Templates(directory="frontend/templates")
 
@@ -31,7 +33,6 @@ templates = Jinja2Templates(directory="frontend/templates")
 async def lifespan(app: FastAPI):
     from arq import create_pool
     from utils.logger import get_logger
-    from model import Base, engine
 
     with Session(engine) as session:
         session.execute(text("CREATE EXTENSION IF NOT EXISTS citext;"))
@@ -122,6 +123,11 @@ async def lifespan(app: FastAPI):
         get_logger(__name__).error("Failed to initialize ARQ Redis pool", exc_info=True)
         app.state.arq_pool = None
 
+    from broker import broker
+
+    if not broker.is_worker_process:
+        await broker.startup()
+
     from model import SessionLocal
     from processing.worker import (
         reconcile_indexed_with_zero_document_chunks,
@@ -142,15 +148,14 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Cleanup
-    if app.state.arq_pool:
-        await app.state.arq_pool.aclose()
+    if not broker.is_worker_process:
+        await broker.startup()
 
 
 app = FastAPI(title='Talos', lifespan=lifespan)
-app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.add_middleware(SessionMiddleware)
-app.include_router(auth_router, prefix="/api/auth")
+
+app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(chat_router, prefix="/api")
 app.include_router(files_router, prefix="/api")
 app.include_router(drive_router, prefix="/api")
@@ -163,7 +168,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(SessionMiddleware)
+
+app.include_router(notifications_router, prefix="/api")
 
 
 @app.get('/', response_class=HTMLResponse)

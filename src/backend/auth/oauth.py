@@ -13,6 +13,7 @@ from starlette.responses import RedirectResponse
 
 from backend.auth.model import IdentityProvider, Issuer, User, ProviderToken
 from backend.auth.utils.session import UnverifiedSessionDep, NewSessionDep
+from config import cfg
 from model import DatabaseDep
 from model.identity import Session as DBSession
 from config import cfg

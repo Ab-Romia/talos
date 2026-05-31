@@ -22,4 +22,4 @@ __all__ = [
 
 @lru_cache
 def cfg() -> Config:
-    return Config()
+    return Config()  # noqa
