@@ -1,13 +1,12 @@
-import itertools
 import uuid
 from typing import Any, Sequence, Iterable
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
 from sqlalchemy.orm import Session
 
 from utils.datetime import utcnow
 from . import tasks
-from .model import Notification, NotificationsChannel, NotificationDelivery
+from .model import Notification, NotificationsChannel, NotificationDelivery, PushSubscription
 
 
 async def push_notification(
@@ -37,27 +36,48 @@ async def push_notification(
     db.add_all(notifications)
     db.commit()
 
-    # enqueue tasks for each channel (default to all channels; user prefs TODO)
-    channels = list(NotificationsChannel)
+    # Enqueue delivery tasks for each notification
+    for n in notifications:
+        # TODO: is online check
+        is_online = False
 
-    for n, channel in itertools.product(notifications, channels):
-        match channel:
-            # TODO: is online check
-            case NotificationsChannel.EMAIL:
-                # If tasks.email exposes kiq wrapper, prefer it; otherwise call coroutine directly
-                if hasattr(tasks.email, "kiq"):
-                    await tasks.email.kiq(notification_id=n.id)
-                else:
-                    await tasks.email(notification_id=n.id)
-                n.deliveries.append(NotificationDelivery(channel=channel))
-            case NotificationsChannel.PUSH:
-                await tasks.web_push(notification_id=n.id)
-                n.deliveries.append(NotificationDelivery(channel=channel))
-            case NotificationsChannel.IN_APP:
-                # in-app delivery requires no external worker
-                n.deliveries.append(NotificationDelivery(channel=channel))
+        if not is_online:
+            # Remove expired subscriptions and get valid ones
+            db.execute(
+                delete(PushSubscription)
+                .where(PushSubscription.user_id == n.user_id)
+                .where(PushSubscription.expiration_time < utcnow())
+            )
 
-    db.commit()
+            subscriptions = db.scalars(
+                select(PushSubscription).where(PushSubscription.user_id == n.user_id)
+            ).all()
+
+            # Enqueue web_push for each subscription
+            for sub in subscriptions:
+                delivery = NotificationDelivery(
+                    notification_id=n.id,
+                    channel=NotificationsChannel.PUSH,
+                    subscription_id=sub.id,
+                )
+                db.add(delivery)
+
+                # Build payload for worker
+                notification_payload = {
+                    "id": str(n.id),
+                    "title": n.title,
+                    "body": n.body,
+                    "data": n.data or {},
+                }
+                subscription_payload = {
+                    "id": str(sub.id),
+                    "endpoint": sub.endpoint,
+                    "keys": sub.keys,
+                }
+
+                await tasks.web_push.kiq(notification=notification_payload, subscription=subscription_payload)
+
+        db.commit()
 
     return notifications
 
