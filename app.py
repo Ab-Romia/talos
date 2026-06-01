@@ -15,7 +15,7 @@ from files.router import router as files_router
 from files.storage import MinIOStorage
 from integrations.drive import drive_router
 from model import Base, engine
-from notifications.router import router as notifications_router
+from notifications.router import notifications as notifications_router
 
 templates = Jinja2Templates(directory="frontend/templates")
 

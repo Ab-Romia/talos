@@ -3,7 +3,7 @@ from typing import Callable
 import pytest
 from faker import Faker
 
-from notifications.model import Notification
+from notifications.model import Notification, NotificationTag
 
 
 @pytest.fixture
@@ -18,7 +18,7 @@ def notification(test_user, db_session) -> Callable[..., Notification]:
         title = title or faker.sentence()
         body = body or faker.paragraph()
         if tags is None:
-            tags = ["message"]
+            tags = [NotificationTag.SYSTEM]
         return Notification(
             user_id=test_user.id,
             tags=tags,
@@ -36,4 +36,23 @@ def test_notification(notification, db_session):
     db_session.add(n)
     db_session.commit()
 
-    return n
+    yield n
+
+    db_session.delete(n)
+    db_session.commit()
+
+
+@pytest.fixture
+def test_subscription(test_user, db_session):
+    from notifications.model import PushSubscription
+    subscription = PushSubscription(
+        user_id=test_user.id,
+        endpoint="https://example.com/push",
+        keys={"p256dh": "key", "auth": "secret"},
+    )
+    db_session.add(subscription)
+    db_session.commit()
+    yield subscription
+
+    db_session.delete(subscription)
+    db_session.commit()

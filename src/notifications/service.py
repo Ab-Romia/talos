@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 
 from utils.datetime import utcnow
 from . import tasks
-from .model import Notification, NotificationsChannel, NotificationDelivery, PushSubscription
+from .model import Notification, NotificationsChannel, NotificationDelivery, PushSubscription, NotificationSchema, \
+    PushSubscriptionSchema, NotificationTag
 
 
 async def push_notification(
@@ -14,7 +15,7 @@ async def push_notification(
         user_ids: Iterable[uuid.UUID] | uuid.UUID,
         title: str, body: str,
         data: dict[str, Any] | None = None,
-        tags: Iterable[str] | None = None,
+        tags: Iterable[NotificationTag] | None = None,
 ) -> list[Notification]:
     """Push a notification to one or more users and enqueue delivery tasks for the specified channels."""
     user_ids = [user_ids] if isinstance(user_ids, uuid.UUID) else list(user_ids)
@@ -62,20 +63,10 @@ async def push_notification(
                 )
                 db.add(delivery)
 
-                # Build payload for worker
-                notification_payload = {
-                    "id": str(n.id),
-                    "title": n.title,
-                    "body": n.body,
-                    "data": n.data or {},
-                }
-                subscription_payload = {
-                    "id": str(sub.id),
-                    "endpoint": sub.endpoint,
-                    "keys": sub.keys,
-                }
-
-                await tasks.web_push.kiq(notification=notification_payload, subscription=subscription_payload)
+                await tasks.webpush.kiq(
+                    notification=NotificationSchema.model_validate(n),
+                    subscription=PushSubscriptionSchema.model_validate(sub)
+                )
 
         db.commit()
 
@@ -101,19 +92,23 @@ def mark_as_read(
     return True
 
 
-def get_user_notifications(
-        db: Session,
-        user_id: uuid.UUID,
-        limit: int = 20,
-        offset: int = 0,
-        unread_only: bool = False,
-) -> Sequence[Notification]:
+def get_user_notifications(db: Session, user_id: uuid.UUID, limit: int = 20,
+                           offset: int = 0, unread_only: bool = False,
+                           after_notification_id: uuid.UUID = None) -> Sequence[Notification]:
     stmt = select(Notification).where(
         Notification.user_id == user_id
     )
 
     if unread_only:
         stmt = stmt.where(Notification.read_at.is_(None))
+
+    if after_notification_id:
+        # TODO: using uuid7 with time-based ordering would eliminate the need for this extra query
+        subquery = select(Notification.created_at).where(
+            Notification.id == after_notification_id,
+            Notification.user_id == user_id
+        ).scalar_subquery()
+        stmt = stmt.where(Notification.created_at > subquery)
 
     return db.scalars(
         stmt

@@ -1,70 +1,54 @@
 import uuid
-from datetime import datetime
-from typing import Any, Annotated
+from typing import Annotated
 
 from fastapi import APIRouter, Query, HTTPException, Body
-from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
+from sqlalchemy import select, delete
+from starlette import status
 
 from backend.auth.utils.helpers import UserDep
 from config import cfg
 from model import DatabaseDep
 from utils.datetime import utcnow
-from . import PushSubscription
-from .model import Notification
+from .model import Notification, PushSubscription, NotificationSchema, PushSubscriptionRequest
 from .service import (
     get_user_notifications,
     mark_as_read,
     get_unread_count as get_unread_count_service,
 )
 
-router = APIRouter(prefix="/notifications", tags=["Notifications"])
+notifications = APIRouter(prefix="/notifications", tags=["Notifications"])
 
 
-class NotificationResponse(BaseModel):
-    id: uuid.UUID
-    tags: list[str] | None
-    title: str
-    body: str
-    data: dict[str, Any] | None
-    is_read: bool
-    created_at: datetime
-
-    @staticmethod
-    def from_notification(notification: Notification) -> "NotificationResponse":
-        return NotificationResponse(
-            id=notification.id,
-            tags=notification.tags,
-            title=notification.title,
-            body=notification.body,
-            data=notification.data,
-            is_read=notification.read_at is not None,
-            created_at=notification.created_at,
-        )
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-@router.get("/", response_model=list[NotificationResponse])
+@notifications.get(
+    "/",
+    response_model=list[NotificationSchema],
+    description="""
+Retrieve a paginated list of notifications for the current user.
+    
+- `limit`: Maximum number of notifications to return.
+- `offset`: Number of notifications to skip for pagination.
+- `unread_only`: If true, only return unread notifications.
+- `after_notification_id`: If provided, return notifications created after the specified notification ID.
+""")
 def get_notifications(
         current_user: UserDep,
         db: DatabaseDep,
         limit: int = Query(20, le=100),
         offset: int = 0,
         unread_only: bool = False,
+        after_notification_id: uuid.UUID | None = None
 ):
-    notifications = get_user_notifications(
+    return get_user_notifications(
         db=db,
         user_id=current_user.id,
         limit=limit,
         offset=offset,
         unread_only=unread_only,
+        after_notification_id=after_notification_id
     )
 
-    return [NotificationResponse.from_notification(n) for n in notifications]
 
-
-@router.post("/read")
+@notifications.post("/{notification_id}/read", description="Mark a specific notification as read.")
 def mark_as_read_(notification_id: uuid.UUID, current_user: UserDep, db: DatabaseDep):
     success = mark_as_read(
         db=db,
@@ -76,7 +60,7 @@ def mark_as_read_(notification_id: uuid.UUID, current_user: UserDep, db: Databas
         raise HTTPException(status_code=404, detail="Notification not found")
 
 
-@router.get("/unread-count")
+@notifications.get("/unread-count", description="Get the count of unread notifications for the current user.")
 def get_unread_count(db: DatabaseDep, current_user: UserDep):
     count = get_unread_count_service(
         db=db,
@@ -86,7 +70,7 @@ def get_unread_count(db: DatabaseDep, current_user: UserDep):
     return {"unread_count": count}
 
 
-@router.post("/read-all")
+@notifications.post("/read-all", description="Mark all notifications as read for the current user.")
 def mark_all_as_read(db: DatabaseDep, current_user: UserDep):
     notifications = db.scalars(
         select(Notification)
@@ -104,65 +88,43 @@ def mark_all_as_read(db: DatabaseDep, current_user: UserDep):
     return {"status": "ok"}
 
 
-class PushSubscriptionReq(BaseModel):
-    endpoint: str
-    keys: dict[str, str]
-    encodings: list[str] | None = None
-    expiration_time: datetime | None = None
-
-
-@router.get("/vapid-public-key")
+@notifications.get(
+    "/vapid-public-key",
+    responses={status.HTTP_503_SERVICE_UNAVAILABLE: {"description": "VAPID public key not configured"}},
+    description="Get the VAPID public key for web push subscriptions."
+)
 def get_vapid_public_key():
+    if not cfg().push:
+        raise HTTPException(status_code=503, detail="VAPID public key not configured")
     return {"vapid_public_key": cfg().push.vapid_public_key}
 
 
-@router.get("/subscription")
-def get_push_subscription(
-        user: UserDep,
-        db: DatabaseDep
-):
-    subscription = db.scalars(
-        select(PushSubscription).where(PushSubscription.user_id == user.id)
-    ).all()
-
-    return [{
-        "endpoint": s.endpoint,
-        "keys": s.keys,
-        "expiration_time": s.expiration_time,
-    } for s in subscription]
-
-
-@router.post("/subscription")
-def subscribe_to_push(
-        push_subscription: Annotated[PushSubscriptionReq, Body()],
-        user: UserDep,
-        db: DatabaseDep
-):
+@notifications.post("/subscription", status_code=status.HTTP_201_CREATED,
+                    description="Subscribe to web push notifications.")
+def subscribe_to_push(push_subscription: PushSubscriptionRequest, user: UserDep, db: DatabaseDep):
     # TODO: clean up expired subscriptions periodically
-    subscribe = PushSubscription(
+    # TODO: error handling
+    db.add(PushSubscription(
         user_id=user.id,
-        endpoint=push_subscription.endpoint,
-        keys=push_subscription.keys,
-        expiration_time=push_subscription.expiration_time
-    )
-
-    db.add(subscribe)
+        **push_subscription.model_dump()
+    ))
     db.commit()
 
 
-@router.delete("/subscription")
-def unsubscribe_from_push(
-        endpoint: Annotated[str, Body()],
-        user: UserDep,
-        db: DatabaseDep,
-):
-    subscription = db.scalars(
-        select(PushSubscription).where(
+@notifications.delete(
+    "/subscription",
+    status_code=status.HTTP_204_NO_CONTENT,
+    description="Unsubscribe from web push notifications by endpoint."
+)
+def unsubscribe_from_push(endpoint: Annotated[str, Body()], user: UserDep, db: DatabaseDep):
+    deleted_id = db.scalar(
+        delete(PushSubscription)
+        .where(
             PushSubscription.user_id == user.id,
             PushSubscription.endpoint == endpoint
-        )
-    ).first()
+        ).returning(PushSubscription.id)
+    )
+    if deleted_id is None:
+        raise HTTPException(status_code=404, detail="Subscription not found")
 
-    if subscription:
-        db.delete(subscription)
-        db.commit()
+    db.commit()

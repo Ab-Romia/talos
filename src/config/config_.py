@@ -96,12 +96,13 @@ class RedisConfig(BaseModel):
 
 class PushConfig(BaseModel):
     """Web Push configuration for VAPID."""
-    vapid_private_key: str | None = None
-    vapid_public_key: str | None = None
-    vapid_subject: str | None = None
+    vapid_private_key: str
+    vapid_public_key: str
+    vapid_subject: str
 
 
 class Config(BaseSettings):
+    is_testing: bool = False
     app_name: str = "Talos"
     app_host: str
     app_port: int
@@ -114,7 +115,7 @@ class Config(BaseSettings):
     redis: RedisConfig = RedisConfig()
     files: FilesConfig = FilesConfig()
     rabbitmq: RabbitMQConfig = None
-    push: PushConfig = PushConfig()
+    push: PushConfig | None = None
 
     model_config = SettingsConfigDict(
         env_file='.env',

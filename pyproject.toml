@@ -71,6 +71,12 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]
 asyncio_mode = "auto"
+env = [
+    "IS_TESTING=True",
+]
 
 [tool.pyright]
 extraPaths = ["src", "."]
+
+
+
