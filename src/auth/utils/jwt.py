@@ -13,7 +13,7 @@ from model.utils import UUID, DATETIME
 
 class BaseJWTClaims(BaseModel):
     sub: UUID | None = None
-    jti: UUID = Field(default_factory=uuid.uuid4)
+    jti: UUID = Field(default_factory=uuid.uuid7)
     exp: DATETIME
 
     iss: str = cfg().app_host

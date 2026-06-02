@@ -210,7 +210,7 @@ users_roles = Table(
 class RolePermission(Base):
     __tablename__ = "role_permissions"
 
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid7)
     role_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("roles.id", ondelete="CASCADE"))
     permission_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("permissions.id", ondelete="CASCADE"))
     channel_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("channels.id", ondelete="CASCADE"), default=None)
@@ -229,7 +229,7 @@ class RolePermission(Base):
 
 class Permission(Base):
     __tablename__ = "permissions"
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid7)
     resource: Mapped[str] = mapped_column(index=True)
     action: Mapped[str] = mapped_column(index=True)
     allowed_scopes: Mapped[list[PermissionScope]] = mapped_column(ARRAY(Enum(PermissionScope)),
@@ -246,7 +246,7 @@ class Permission(Base):
 
 class Role(Base):
     __tablename__ = "roles"
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid7)
     name: Mapped[str] = mapped_column(index=True)
     description: Mapped[str | None] = mapped_column()
 

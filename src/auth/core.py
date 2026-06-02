@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, status, Form, HTTPException, Body
 from fastapi.responses import RedirectResponse
+from psycopg import errors as pg_errors
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
@@ -35,7 +36,7 @@ async def initiate_signup(email: Annotated[str, Form()], db: DatabaseDep):
 
     try:
         with db.begin_nested():
-            db.add(User(username='usr-' + uuid.uuid4().hex,
+            db.add(User(username='usr-' + uuid.uuid7().hex,
                         primary_email=email))
             db.flush()
             db.rollback()

@@ -13,6 +13,7 @@ from model import Base
 
 if TYPE_CHECKING:
     from permissions.model import Role
+    from workspace.model import Workspace
 
 
 class Issuer(PyEnum):
@@ -25,10 +26,9 @@ class Issuer(PyEnum):
 class User(Base):
     __tablename__ = "users"
 
-    id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, primary_key=True, default=uuid.uuid7)
     username: Mapped[str] = mapped_column(CITEXT(32), unique=True, index=True)
     primary_email: Mapped[str] = mapped_column(CITEXT(), unique=True, index=True)
-    # TODO remove email_verified: users are only added to the database after verification
     signup_complete: Mapped[bool] = mapped_column(default=False, index=True)
     name: Mapped[str | None] = mapped_column()
 
@@ -40,7 +40,7 @@ class User(Base):
     identity_providers: Mapped[list["IdentityProvider"]] = relationship("IdentityProvider",
                                                                         back_populates="user",
                                                                         cascade="all, delete-orphan")
-    workspaces: Mapped[list["Workspace"]] = relationship(  # type: ignore[forward-reference]
+    workspaces: Mapped[list["Workspace"]] = relationship(
         secondary="workspace_members",
         back_populates="members")
     roles: Mapped[list[Role]] = relationship(secondary="users_roles", back_populates="users")
@@ -74,7 +74,7 @@ class OTP(Base):
 
 class IdentityProvider(Base):
     __tablename__ = "identity_providers"
-    id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, primary_key=True, default=uuid.uuid7)
     user_id: Mapped[uuid.UUID] = mapped_column(sql.ForeignKey(User.id, ondelete="CASCADE"), index=True)
     issuer: Mapped[Issuer] = mapped_column(sql.Enum(Issuer), index=True)
     data: Mapped[dict[str, Any]] = mapped_column(default={})
@@ -91,7 +91,7 @@ class ProviderToken(Base):
     for sign-in. One row per (user, provider).
     """
     __tablename__ = "provider_tokens"
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid7)
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )

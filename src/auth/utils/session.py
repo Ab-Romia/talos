@@ -18,7 +18,7 @@ from ..utils import errors, jwt
 
 class Session(Base):
     __tablename__ = "sessions"
-    id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, primary_key=True, default=uuid.uuid7)
     user_id: Mapped[uuid.UUID] = mapped_column(sql.ForeignKey("users.id", ondelete="CASCADE"), index=True)
     created_at: Mapped[datetime] = mapped_column(sql.DateTime(timezone=True), default=sql.func.now())
     last_used_at: Mapped[datetime] = mapped_column(sql.DateTime(timezone=True), default=sql.func.now())

@@ -29,7 +29,7 @@ class MessageFile(Base):
 class FileAttachment(Base):
     __tablename__ = "file_attachments"
 
-    id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, primary_key=True, default=uuid.uuid7)
     workspace_id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, ForeignKey("workspaces.id", ondelete="CASCADE"),
                                                     index=True)
     channel_id: Mapped[uuid.UUID | None] = mapped_column(sql.Uuid, ForeignKey("channels.id", ondelete="SET NULL"),
