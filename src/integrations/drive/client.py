@@ -11,7 +11,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.auth.model import ProviderToken
+from auth.model import ProviderToken
 from config import cfg
 from utils.logger import get_logger
 from .constants import (

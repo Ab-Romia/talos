@@ -1,16 +1,18 @@
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 from uuid import uuid4, UUID
 
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import ForeignKey, Uuid, DateTime, func
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 
-from backend.workspace.model import Channel
 from files.model import FileAttachment
 from model import Base
+
+if TYPE_CHECKING:
+    from workspace.model import Channel
 
 
 class MessageRole(str, Enum):
@@ -40,7 +42,7 @@ class ReadReceiptRequest(BaseModel):
 class Message(Base):
     __tablename__ = "messages"
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    channel_id: Mapped[uuid.UUID] = mapped_column(ForeignKey(Channel.id, ondelete="CASCADE"))
+    channel_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("channels.id", ondelete="CASCADE"))
     sender_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     content: Mapped[str] = mapped_column()
     role: Mapped[MessageRole] = mapped_column(default=MessageRole.USER)

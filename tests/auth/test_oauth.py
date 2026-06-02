@@ -4,8 +4,8 @@ import pytest
 from fastapi import status
 from sqlalchemy import select
 
-from backend.auth.model import IdentityProvider, Issuer, User
-from backend.auth.oauth import OIDC, oauth_callback, oauth_login
+from auth.model import IdentityProvider, Issuer, User
+from auth.oauth import OIDC, oauth_callback, oauth_login
 
 
 class TestOIDC:
@@ -156,7 +156,7 @@ class TestOAuthCallback:
         if not any(route.name == "home" for route in client.app.routes):
             client.app.add_api_route("/dummy-home", lambda: None, name="home", methods=["GET"])
 
-    @patch("backend.auth.oauth.oauth")
+    @patch("auth.oauth.oauth")
     def test_creates_new_user(self, mock_oauth, client, path, db_session):
         userinfo = make_userinfo(
             sub="google-sub-creates-new-user",
@@ -178,7 +178,7 @@ class TestOAuthCallback:
         assert identity is not None
         assert identity.data["sub"] == userinfo["sub"]
 
-    @patch("backend.auth.oauth.oauth")
+    @patch("auth.oauth.oauth")
     def test_links_existing_user(self, mock_oauth, client, path, db_session, test_user):
         userinfo = make_userinfo(
             sub="google-sub-links-existing",
@@ -198,7 +198,7 @@ class TestOAuthCallback:
         assert identity is not None
         assert identity.data["sub"] == userinfo["sub"]
 
-    @patch("backend.auth.oauth.oauth")
+    @patch("auth.oauth.oauth")
     def test_returns_existing_identity(self, mock_oauth, client, path, db_session, test_user):
         existing_sub = "google-sub-existing-identity"
         db_session.add(IdentityProvider(
@@ -230,7 +230,7 @@ class TestOAuthCallback:
         ).all()
         assert len(identities) == 1
 
-    @patch("backend.auth.oauth.oauth")
+    @patch("auth.oauth.oauth")
     def test_github_callback_creates_user(self, mock_oauth, client, path, db_session):
         # Mock OAuth client to return access token and GitHub user profile
         mock_client = AsyncMock()

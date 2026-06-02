@@ -3,10 +3,10 @@ from typing import Annotated
 
 from fastapi import Depends, Path
 
-from backend.auth.permissions import require_perms as default_require_perms
-from backend.auth.utils.helpers import user_id
-from backend.workspace.model import Workspace, Channel
+from auth.utils.helpers import user_id
 from model import DatabaseDep
+from permissions import require_perms as default_require_perms
+from workspace.model import Workspace, Channel
 
 
 def is_owner(user_id: Annotated[uuid.UUID, Depends(user_id)],

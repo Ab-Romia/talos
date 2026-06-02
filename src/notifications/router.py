@@ -5,7 +5,7 @@ from fastapi import APIRouter, Query, HTTPException, Body
 from sqlalchemy import select, delete
 from starlette import status
 
-from backend.auth.utils.helpers import UserDep
+from auth.utils.helpers import UserDep
 from config import cfg
 from model import DatabaseDep
 from utils.datetime import utcnow

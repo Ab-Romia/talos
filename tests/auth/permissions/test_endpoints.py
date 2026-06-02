@@ -1,6 +1,15 @@
-from backend.auth.permissions.model import PermissionScope
-from backend.auth.permissions.router import *
-from backend.workspace.model import Workspace, Channel
+import uuid
+
+from faker import Faker
+from sqlalchemy import select
+
+from auth.model import User
+from permissions.model import PermissionScope, Role, ChannelRoleOverride, RolePermission
+from permissions.router import list_workspace_roles, create_workspace_role, get_workspace_role, \
+    update_workspace_role_permissions, update_workspace_role_members, delete_workspace_role, \
+    workspace_level_permissions, get_channel_roles_overrides, create_channel_roles_override, \
+    update_channel_roles_override, delete_channel_roles_override, channel_level_permissions
+from workspace.model import Workspace, Channel
 
 
 class TestWorkspaceLevelRoleList:
@@ -118,7 +127,7 @@ class TestWorkspaceLevelRoleUpdate:
             self, db_session, client, test_workspace, test_user, auth_token, path,
             make_role
     ):
-        role = make_role(permissions=["workspace.role:manage"])
+        _role = make_role(permissions=["workspace.role:manage"])
         test_role = make_role()
         db_session.commit()
 
@@ -137,9 +146,6 @@ class TestWorkspaceLevelRoleUpdate:
     def test_update_workspace_role_user_assignments(
             self, db_session, client, test_workspace, test_user, auth_token, path, make_role
     ):
-        from backend.auth.model import User
-        from faker import Faker
-
         role = make_role(permissions=["workspace.role:manage"])
 
         faker = Faker()

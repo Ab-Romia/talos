@@ -3,7 +3,7 @@ import uuid
 import pytest
 from fastapi import HTTPException
 
-from backend.auth.model import User
+from auth.model import User
 from files.dependencies import get_workspace_member, get_storage
 
 

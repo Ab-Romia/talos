@@ -5,13 +5,10 @@ from unittest.mock import AsyncMock, Mock
 from sqlalchemy import select
 
 import notifications.tasks as tasks
-from backend.auth.model import User
+from auth.model import User
 from notifications.model import (
     Notification,
-    NotificationSchema,
-    NotificationTag,
     PushSubscription,
-    PushSubscriptionSchema,
 )
 from notifications.service import get_unread_count, get_user_notifications, mark_as_read, push_notification
 from utils.datetime import utcnow

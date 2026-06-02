@@ -3,7 +3,7 @@ from typing import Iterable
 from fastapi import HTTPException
 from starlette import status
 
-from backend.auth.permissions.model import ScopedPermission
+from permissions.model import ScopedPermission
 
 
 class AuthException(HTTPException):

@@ -9,16 +9,16 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import text, exc
 from sqlalchemy.orm import Session
 
-from backend.auth import auth_router
-from backend.auth.utils.session import SessionMiddleware
-from backend.chat.realtime import sio
-from backend.workspace.router import workspace as workspace_router, channel as channel_router
+from auth import auth_router
+from auth.utils.session import SessionMiddleware
+from chat.realtime import sio
 from config import cfg
 from files.router import router as files_router
 from files.storage import MinIOStorage
 from integrations.drive import drive_router
 from notifications.router import notifications as notifications_router
 from utils.exceptions import dbapi_error_handler
+from workspace.router import workspace as workspace_router, channel as channel_router
 
 templates = Jinja2Templates(directory="frontend/templates")
 
@@ -50,7 +50,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize async Redis client for cache layer + chat module
     try:
-        from backend.chat.storage import bind_chat_storage, DatabaseStorageBackend
+        from chat import bind_chat_storage, DatabaseStorageBackend
 
         async_redis = redis.asyncio.from_url(cfg().redis.url, decode_responses=True)
         bind_chat_storage(DatabaseStorageBackend())

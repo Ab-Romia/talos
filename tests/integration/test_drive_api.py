@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from backend.auth.model import ProviderToken
+from auth.model import ProviderToken
 from config import cfg
 from integrations.drive.router import drive_status, list_drive_files, import_drive_file
 

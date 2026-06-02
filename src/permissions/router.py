@@ -8,14 +8,14 @@ from sqlalchemy import select, and_
 from starlette import status
 from starlette.status import HTTP_201_CREATED, HTTP_204_NO_CONTENT
 
-from backend.auth.model import User
-from backend.auth.permissions import UserPermissionsDep, db_permission
-from backend.auth.permissions.model import Role, RolePermission, ChannelRoleOverride, PermissionSet, ScopedPermission
-from backend.auth.utils import errors
-from backend.auth.utils.helpers import user_id
-from backend.workspace import is_owner, require_perms, WorkspaceID, RoleID
-from backend.workspace.model import Workspace, Channel
+from auth.model import User
+from auth.utils import errors
+from auth.utils.helpers import user_id
 from model import DatabaseDep
+from permissions import UserPermissionsDep, db_permission
+from permissions.model import Role, RolePermission, ChannelRoleOverride, PermissionSet, ScopedPermission
+from workspace import is_owner, require_perms, WorkspaceID, RoleID
+from workspace.model import Workspace, Channel
 
 workspace = APIRouter(tags=["permissions"])
 channel = APIRouter(tags=["permissions"])

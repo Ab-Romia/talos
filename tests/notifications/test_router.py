@@ -4,7 +4,7 @@ from datetime import datetime
 import pytest
 from sqlalchemy import select
 
-from backend.auth.model import User
+from auth.model import User
 from config import cfg
 from notifications.model import Notification, PushSubscription
 from notifications.router import (

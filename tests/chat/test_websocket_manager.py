@@ -5,9 +5,9 @@ from uuid import UUID
 import pytest
 import socketio
 
-from backend.auth.permissions.model import Role, RolePermission
-from backend.chat.model import MessageSchema
-from backend.chat.realtime import is_user_online, get_channel_online as channel_online_users
+from chat.model import MessageSchema
+from chat.realtime import is_user_online, get_channel_online as channel_online_users
+from permissions.model import Role, RolePermission
 
 
 @pytest.fixture(scope="session")

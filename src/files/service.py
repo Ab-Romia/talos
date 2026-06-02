@@ -9,7 +9,7 @@ from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.chat.model import Message
+from chat import Message
 from config import cfg
 from files.exceptions import FileTooLarge, StorageError, UnsupportedFileType
 from files.model import FileAttachment, ProcessingStatus, MessageFile

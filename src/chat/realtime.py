@@ -12,8 +12,8 @@ from sqlalchemy.orm import Session
 from config import cfg
 from model import SessionLocal
 from utils.logger import get_logger
+from workspace.model import WorkspaceMember, Channel
 from .model import MessageSchema
-from ..workspace.model import WorkspaceMember, Channel
 
 sio = socketio.AsyncServer(
     async_mode="asgi",
@@ -49,8 +49,8 @@ def require_perms(*required_permissions: str):
         @require_perms("message:send")
         async def new_message(sid, data): ...
     """
-    from ..auth.permissions import require_perms as require_perms_dep, user_perms
-    from ..auth.utils import errors
+    from permissions import require_perms as require_perms_dep, user_perms
+    from auth.utils import errors
 
     checker = require_perms_dep(*required_permissions)
 
@@ -98,8 +98,8 @@ def sio_exc(func):
 @sio.event
 @sio_exc
 async def connect(sid: str, environ: dict[str, Any], auth: Any = None) -> bool:
-    from ..auth import active_user
-    from ..auth.utils.session import unverified_session
+    from auth import active_user
+    from auth.utils.session import unverified_session
 
     token = _extract_token(environ, auth)
     if not token:
@@ -156,7 +156,7 @@ async def disconnect(sid: str, _) -> None:
 @sio_exc
 @require_perms("message:send", "channel:view")
 async def message(sid: str, data: dict[str, Any]):
-    from backend.chat import store_message
+    from chat import store_message
 
     incoming = MessageSchema(**data)
     sess = await sio.get_session(sid)
@@ -241,14 +241,14 @@ def _extract_token(environ: dict[str, Any], auth: Any) -> str | None:
 
 @functools.cache
 def _channel_perms():
-    from ..auth.permissions import PermissionSet, ScopedPermission
+    from permissions import PermissionSet, ScopedPermission
     with SessionLocal() as db:
         return PermissionSet.from_permissions(ScopedPermission.from_str("channel:view"), db).bitstring
 
 
 def _get_accessible_channels(db: orm.Session, user_id: UUID) -> set[UUID]:
     """ Channels visible to a user"""
-    from ..auth.permissions.model import Role, ChannelRoleOverride
+    from permissions.model import Role, ChannelRoleOverride
 
     zero = BitString.from_int(0, cfg().auth.permission_bitstring_length)
     override_deny = func.coalesce(ChannelRoleOverride.deny_mask, zero)
@@ -288,7 +288,7 @@ def _get_channel_members(db: Session, channel_id: UUID) -> set[UUID]:
 
     def has_access(user_id: UUID) -> bool:
         # noinspection PyUnresolvedReferences
-        from backend.auth.permissions import user_perms, ScopedPermission
+        from permissions import user_perms, ScopedPermission
 
         return ScopedPermission.from_str("channel:view") in user_perms(
             workspace_id=None,

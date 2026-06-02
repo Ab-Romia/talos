@@ -10,7 +10,7 @@ from files.model import FileAttachment
 from model import Base
 
 if TYPE_CHECKING:
-    from backend.chat.model import Message
+    from chat.model import Message
 
 
 class WorkspaceMember(Base):
@@ -65,7 +65,7 @@ class Channel(Base):
 
 @event.listens_for(Workspace, "after_insert")
 def after_insert_ws(_mapper, _connection, target):
-    from backend.auth.permissions.model import Role, DEFAULT_EVERYONE_ROLE_ID
+    from permissions.model import Role, DEFAULT_EVERYONE_ROLE_ID
     db_session = object_session(target)
 
     if db_session is None:
@@ -85,7 +85,7 @@ def after_insert_ws(_mapper, _connection, target):
 
 @event.listens_for(Channel, "after_insert")
 def after_insert_channel(_mapper, _connection, target):
-    from backend.auth.permissions.model import ChannelRoleOverride
+    from permissions.model import ChannelRoleOverride
 
     target.roles_overrides.append(
         ChannelRoleOverride(role_id=target.workspace_id, channel_id=target.id)

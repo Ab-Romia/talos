@@ -12,7 +12,7 @@ from files.model import FileAttachment
 from model import Base
 
 if TYPE_CHECKING:
-    from backend.auth.permissions.model import Role
+    from permissions.model import Role
 
 
 class Issuer(PyEnum):

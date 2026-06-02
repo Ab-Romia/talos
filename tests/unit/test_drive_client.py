@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from backend.auth.model import ProviderToken
+from auth.model import ProviderToken
 from integrations.drive.client import DriveClient, REFRESH_LEEWAY
 from integrations.drive.exceptions import (
     DriveAPIError,
@@ -305,8 +305,8 @@ class TestPersistProviderToken:
 
     def test_reauth_without_expiry_preserves_existing_expires_at(self):
         from datetime import datetime, timezone, timedelta
-        from backend.auth.oauth import _persist_provider_token
-        from backend.auth.model import ProviderToken
+        from auth import _persist_provider_token
+        from auth import ProviderToken
         import uuid
 
         future = datetime.now(timezone.utc) + timedelta(hours=1)

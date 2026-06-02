@@ -4,14 +4,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from backend.chat.model import Message
+from chat.model import Message
 from files.model import FileAttachment, ProcessingStatus
 
 
 @pytest.fixture
 def test_message(db_session, test_workspace, test_channel, test_user):
     message = Message(
-        workspace_id=test_workspace.id,
         channel_id=test_channel.id,
         sender_id=test_user.id,
         content="Hello",

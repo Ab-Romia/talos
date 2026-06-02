@@ -6,7 +6,7 @@ from joserfc import jwe, jwt
 from joserfc.errors import JoseError, ExpiredTokenError
 from pydantic import BaseModel, Field
 
-from backend.auth.utils import errors
+from auth.utils import errors
 from config import cfg
 from model.utils import UUID, DATETIME
 

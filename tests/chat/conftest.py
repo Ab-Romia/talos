@@ -1,6 +1,6 @@
 import pytest
 
-from backend.chat.storage import bind_chat_storage, DatabaseStorageBackend, get_storage
+from chat.storage import bind_chat_storage, DatabaseStorageBackend, get_storage
 
 
 @pytest.fixture(autouse=True)

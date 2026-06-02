@@ -5,10 +5,10 @@ import pytest
 from starlette.requests import Request
 
 from app import app as fastapi_app
-from backend.auth.utils import helpers
-from backend.auth.utils.helpers import UserDep, OptionalUserDep
-from backend.auth.utils.jwt import create_token
-from backend.auth.utils.session import SessionClaims, verified_session, unverified_session
+from auth.utils import helpers
+from auth.utils.helpers import UserDep, OptionalUserDep
+from auth.utils.jwt import create_token
+from auth.utils.session import SessionClaims, verified_session, unverified_session
 
 
 @pytest.fixture(scope="session")

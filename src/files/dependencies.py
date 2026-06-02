@@ -4,11 +4,11 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
 
-from backend.auth import active_user
-from backend.auth.model import User
-from backend.workspace.model import Workspace
+from auth import active_user
+from auth.model import User
 from files.storage import MinIOStorage
 from model import DatabaseDep
+from workspace.model import Workspace
 
 
 # TODO: expand this to check actual workspace membership once we have that concept (vs. just ownership)

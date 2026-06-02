@@ -1,9 +1,9 @@
 import pytest
 from fastapi import APIRouter, Depends
 
-from backend.auth.permissions import ScopedPermission, PermissionSet, require_perms
-from backend.auth.permissions.model import PermissionScope, Role, RolePermission
-from backend.auth.permissions.service import permission_from_offset, bit_offset
+from permissions import ScopedPermission, PermissionSet, require_perms
+from permissions.model import PermissionScope, Role, RolePermission
+from permissions.service import permission_from_offset, bit_offset
 
 
 class TestPermissionRegistry:
@@ -110,7 +110,7 @@ class TestRequirePerms:
 
     def test_message_send_denied(self, db_session):
         checker = require_perms("message:send")
-        from backend.auth.utils.errors import Forbidden
+        from auth.utils.errors import Forbidden
 
         with pytest.raises(Forbidden):
             checker(user_permissions=PermissionSet(), is_owner=False, db=db_session)
@@ -127,7 +127,7 @@ class TestRequirePerms:
         permission = ScopedPermission.from_str("message:send:own")
         perm_set = PermissionSet.from_permissions([permission], db=db_session)
 
-        from backend.auth.utils.errors import Forbidden
+        from auth.utils.errors import Forbidden
 
         with pytest.raises(Forbidden):
             checker(user_permissions=perm_set, is_owner=False, db=db_session)

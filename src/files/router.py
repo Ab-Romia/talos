@@ -5,8 +5,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 
-from backend.auth.utils.helpers import UserDep
-from backend.auth.utils.session import verified_session
+from auth.utils.helpers import UserDep
+from auth.utils.session import verified_session
 from config import cfg
 from files.dependencies import get_storage, StorageDep
 from files.exceptions import FileTooLarge, UnsupportedFileType

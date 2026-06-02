@@ -4,15 +4,15 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from backend.auth.utils.session import SessionDep
+from auth.utils.session import SessionDep
 from model import DatabaseDep
+from workspace import require_perms as require
 from .realtime import get_channel_online
 from .service import (
     get_message_by_id,
     get_messages,
     store_message,
 )
-from ..workspace import require_perms as require
 
 channel = APIRouter(tags=["chat"])
 
@@ -33,7 +33,7 @@ async def post_message(channel_id: UUID, req: SendRequest, session: SessionDep):
     TODO: push a real-time notification via taskiq
     Does NOT push a real-time notification — use the WebSocket endpoint for that.
     """
-    from backend.chat.realtime import sio
+    from chat.realtime import sio
     message = await store_message(channel_id=channel_id, user_id=cast(UUID, session.sub), content=req.text)
 
     sio.send(

@@ -10,17 +10,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import app
-from backend.auth.model import User, IdentityProvider, Issuer
-from backend.auth.password import hash_password
-from backend.auth.permissions import ScopedPermission
-from backend.auth.permissions.model import Role, RolePermission, Permission, PermissionScope, DEFAULT_EVERYONE_ROLE_ID, \
-    STATIC_ROLE_ID
-from backend.auth.utils.jwt import create_token
-from backend.auth.utils.session import SessionClaims, Session as UserSession
-from backend.workspace.model import Workspace, Channel
+from auth.model import User, IdentityProvider, Issuer
+from auth.password import hash_password
+from auth.utils.jwt import create_token
+from auth.utils.session import SessionClaims, Session as UserSession
 from files.model import FileAttachment, ProcessingStatus
 from files.storage import MinIOStorage
 from model import SessionLocal
+from permissions.model import Role, RolePermission, Permission, PermissionScope, DEFAULT_EVERYONE_ROLE_ID, \
+    STATIC_ROLE_ID, ScopedPermission
+from workspace.model import Workspace, Channel
 
 
 @pytest.fixture(scope="session", autouse=True)

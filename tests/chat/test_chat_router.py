@@ -1,11 +1,6 @@
 import uuid
 
-from backend.chat.router import (
-    post_message,
-    get_channel_messages,
-    get_single_message,
-    get_online_users,
-)
+from chat.router import post_message, get_channel_messages, get_single_message, get_online_users
 
 
 class TestPostMessage:

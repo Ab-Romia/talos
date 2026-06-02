@@ -7,11 +7,11 @@ from fastapi import Path, Depends
 from sqlalchemy import select, func, orm
 from sqlalchemy.dialects.postgresql import BitString
 
+from auth.utils.helpers import UserIdDep
 from config import cfg
 from model import DatabaseDep
 from .model import Role, ChannelRoleOverride as Override, STATIC_ROLE_ID, PermissionScope, Permission, PermissionSet, \
     ScopedPermission
-from ..utils.helpers import UserIdDep
 
 
 # TODO: use reddis
@@ -21,7 +21,7 @@ def user_perms(
         workspace_id: Annotated[uuid.UUID | None, Path(default_factory=lambda: None)],
         channel_id: Annotated[uuid.UUID | None, Path(default_factory=lambda: None)],
 ):
-    from backend.workspace.model import Channel
+    from workspace.model import Channel
 
     zero_bits = BitString.from_int(0, length=cfg().auth.permission_bitstring_length)
     channel_override_deny = func.coalesce(Override.deny_mask, zero_bits)
@@ -81,7 +81,7 @@ def require_perms(*required_permissions: str, is_owner: Callable[..., bool] = la
         missing = required_perms - user_permissions.as_owner(is_owner)
 
         if not missing.empty():
-            from backend.auth.utils import errors
+            from auth.utils import errors
             raise errors.Forbidden(missing.iter(db))
 
     return assert_permissions

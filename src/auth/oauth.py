@@ -9,8 +9,8 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, ValidationError
 from sqlalchemy import select
 from starlette.responses import RedirectResponse
 
-from backend.auth.model import IdentityProvider, Issuer, User, ProviderToken
-from backend.auth.utils.session import UnverifiedSessionDep, NewSessionDep
+from auth.model import IdentityProvider, Issuer, User, ProviderToken
+from auth.utils.session import UnverifiedSessionDep, NewSessionDep
 from config import cfg
 from model import DatabaseDep
 
