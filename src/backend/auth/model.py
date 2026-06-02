@@ -1,16 +1,18 @@
 import uuid
 from datetime import datetime
 from enum import Enum as PyEnum
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import sqlalchemy as sql
 from sqlalchemy import Uuid, ForeignKey, DateTime, func
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from backend.auth.permissions.model import Role
 from files.model import FileAttachment
 from model import Base
+
+if TYPE_CHECKING:
+    from backend.auth.permissions.model import Role
 
 
 class Issuer(PyEnum):

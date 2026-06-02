@@ -12,8 +12,9 @@ from sqlalchemy.orm import Session
 from app import app
 from backend.auth.model import User, IdentityProvider, Issuer
 from backend.auth.password import hash_password
-from backend.auth.permissions import ScopedPermission, permission_registry, STATIC_ROLE_ID
-from backend.auth.permissions.model import Role, RolePermission, Permission, PermissionScope, DEFAULT_EVERYONE_ROLE_ID
+from backend.auth.permissions import ScopedPermission
+from backend.auth.permissions.model import Role, RolePermission, Permission, PermissionScope, DEFAULT_EVERYONE_ROLE_ID, \
+    STATIC_ROLE_ID
 from backend.auth.utils.jwt import create_token
 from backend.auth.utils.session import SessionClaims, Session as UserSession
 from backend.workspace.model import Workspace, Channel
@@ -226,11 +227,12 @@ def sample_file_record():
 
 @pytest.fixture
 def get_perm(db_session):
-    def helper(resource, action):
+    def helper(resource, action, scope=PermissionScope.ANY):
         return db_session.scalar(
             select(Permission)
             .where(Permission.resource == resource)
             .where(Permission.action == action)
+            .where(Permission.allowed_scopes.contains([scope]))
         )
 
     return helper
@@ -343,7 +345,6 @@ def make_role(db_session, test_user, get_perm, test_workspace):
 @pytest.fixture(scope="session", autouse=True)
 def registry(test_permissions):
     with SessionLocal() as db_session:
-        registry = permission_registry(db_session)
         everyone = Role(
             id=DEFAULT_EVERYONE_ROLE_ID,
             name="everyone",
@@ -373,5 +374,3 @@ def registry(test_permissions):
 
         db_session.add_all([everyone, static])
         db_session.commit()
-
-    return registry

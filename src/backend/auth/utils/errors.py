@@ -1,16 +1,19 @@
+from typing import Iterable
+
 from fastapi import HTTPException
 from starlette import status
+
+from backend.auth.permissions.model import ScopedPermission
 
 
 class AuthException(HTTPException):
     status_code = status.HTTP_401_UNAUTHORIZED
     detail = "Authentication Error"
 
-    def __init__(self, detail: str = None, status_code: int = None):
+    def __init__(self, detail: str = None, status_code: int | None = None):
         from utils.logger import get_logger
 
-        get_logger(__name__) \
-            .debug(
+        get_logger(__name__).debug(
             f"Raising {self.__class__.__name__}\n" +
             f"detail: {detail} and status_code: {status_code}"
         )
@@ -59,9 +62,7 @@ class Forbidden(AuthException):
     status_code = status.HTTP_403_FORBIDDEN
     detail = "Forbidden"
 
-    from backend.auth.permissions.registry import PermissionSet
-
-    def __init__(self, missing_perms: PermissionSet | None = None, detail: str = ""):
+    def __init__(self, missing_perms: Iterable[ScopedPermission] | None = None, detail: str = ""):
         if missing_perms is not None:
             detail = f"""Forbidden: {detail + "\n" if detail else ""},
             Missing permissions: {', '.join(str(perm) for perm in missing_perms)}

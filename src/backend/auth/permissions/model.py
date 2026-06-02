@@ -1,7 +1,10 @@
 import uuid
 from enum import Enum as PyEnum
+from typing import Iterable, Self, Generator
 
-from sqlalchemy import Enum, Table, Uuid, Column, ForeignKey, Boolean
+from pydantic import BaseModel
+from pydantic_core import core_schema
+from sqlalchemy import Enum, Table, Uuid, Column, ForeignKey, Boolean, orm
 from sqlalchemy import UniqueConstraint, Sequence, update, event, select, CheckConstraint, func
 from sqlalchemy.dialects.postgresql import BIT, BitString, ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship, foreign
@@ -36,6 +39,134 @@ def system_roles():
 
 def _default_bits():
     return BitString.from_int(0, length=cfg().auth.permission_bitstring_length)
+
+
+class PermissionSet(int):
+    """ Represents a bitfield-based permission set directly as a Python int. """
+
+    def __new__(cls, bitstring: int | str | any = 0) -> PermissionSet:
+        if isinstance(bitstring, str) or isinstance(bitstring, BitString):
+            val = int(bitstring, 2)
+        else:
+            val = int(bitstring)
+
+        return super().__new__(cls, val)  # type: ignore
+
+    def empty(self) -> bool:
+        return self == 0
+
+    def __or__(self, other: int) -> PermissionSet:
+        return PermissionSet(super().__or__(other))
+
+    def __and__(self, other: int) -> PermissionSet:
+        return PermissionSet(super().__and__(other))
+
+    def __xor__(self, other: int) -> PermissionSet:
+        return PermissionSet(super().__xor__(other))
+
+    def __sub__(self, other: int) -> PermissionSet:
+        return PermissionSet(self & ~other)
+
+    def __len__(self) -> int:
+        return bin(self).count("1")
+
+    @property
+    def bitstring(self) -> BitString:
+        return BitString.from_int(self, cfg().auth.permission_bitstring_length)
+
+    def iter(self, db: orm.Session) -> Generator[ScopedPermission, None, None]:
+        from .service import permission_from_offset
+
+        mask = int(self)
+        bit_pos = 0
+
+        while mask:
+            if mask & 1:
+                perm = permission_from_offset(db, bit_pos)
+                if perm:
+                    yield perm
+            mask >>= 1
+            bit_pos += 1
+
+    def as_owner(self, is_owner: bool) -> "PermissionSet":
+        """Set OWN permissions as ANY permissions if the user is an owner."""
+        if is_owner:
+            b = int(self)
+            b |= (
+                    (b & PermissionScope.OWN.mask)
+                    >> PermissionScope.OWN.offset
+                    << PermissionScope.ANY.offset
+            )
+            return PermissionSet(b)
+        return self
+
+    @classmethod
+    def from_permissions(cls, permissions: Iterable[ScopedPermission | str] | ScopedPermission,
+                         db: orm.Session) -> "PermissionSet":
+        """Creates a PermissionSet instance from a list of Permission objects."""
+        from .service import bit_offset
+
+        if isinstance(permissions, ScopedPermission) or isinstance(permissions, str):
+            permissions = [permissions]
+
+        mask = 0
+        for perm in permissions:
+            if isinstance(perm, str):
+                perm = ScopedPermission.from_str(perm)
+
+            bit_pos = bit_offset(db, perm)
+            if bit_pos is None:
+                raise ValueError(f"Permission {perm} cannot be represented")
+            mask |= (1 << bit_pos)
+        return cls(mask)
+
+
+class ScopedPermission(BaseModel):
+    resource: str
+    action: str
+    scope: PermissionScope
+
+    @classmethod
+    def from_str(cls, perm_str: str) -> Self:
+        """
+        Creates an instance of the class based on a permission string. The permission
+        string is expected to follow the format `resource:action:scope`. The resource
+        and action are mandatory, while the scope is optional. If the scope is not
+        provided, it defaults to `PermissionScope.ANY`.
+
+        :param perm_str: A string representation of the permission in the
+            format `resource[.subresource]:action[:scope]`. The resource and action are required,
+            and the scope, if provided, represents the level of access.
+        :raises ValueError: If the resource or action part of the string is empty.
+        :return: An instance of `Permission` from the parsed string.
+        """
+        resource, action, raw_scope = [*perm_str.split(":") + [None] * 3][:3]
+
+        if not resource or not action:
+            raise ValueError("Permission resource and action cannot be empty.")
+
+        scope = PermissionScope.from_str(raw_scope) if raw_scope else PermissionScope.ANY
+
+        return cls(resource=resource,
+                   action=action,
+                   scope=scope)
+
+    def __str__(self):
+        return f"{self.resource}:{self.action}:{self.scope if self.scope else '*'}"
+
+    def __eq__(self, other: ScopedPermission) -> bool:
+        return (self.resource, self.action, self.scope) == (other.resource, other.action, other.scope)
+
+    def __hash__(self):
+        return hash((self.resource, self.action, self.scope))
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type, handler):
+        # Parse permission strings directly into ScopedPermission.
+        return core_schema.no_info_before_validator_function(
+            lambda v: cls.from_str(v) if isinstance(v, str) else v,
+            handler(source_type),
+        )
 
 
 class PermissionScope(PyEnum):

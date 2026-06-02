@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timezone
 from typing import Annotated
 
@@ -82,3 +83,4 @@ def user_id(session: SessionDep):
 
 UserDep = Annotated[User, Depends(active_user)]
 OptionalUserDep = Annotated[User | None, Depends(optional_active_user)]
+UserIdDep = Annotated[uuid.UUID, Depends(user_id)]

@@ -22,6 +22,7 @@ sio = socketio.AsyncServer(
 )
 
 
+# TODO: track online status in redis
 def is_user_online(user_id: UUID) -> bool:
     participants = sio.manager.get_participants("/", f"user:{user_id}")
     return any(True for _ in participants)
@@ -72,7 +73,7 @@ def require_perms(*required_permissions: str):
                         workspace_id=workspace_id,
                         db=db,
                     )
-                checker(user_permissions, False)
+                checker(user_permissions, False, db)
                 return await handler(sid, data)
             except errors.Forbidden as e:
                 return {"error": e.detail}
@@ -179,9 +180,11 @@ async def message(sid: str, data: dict[str, Any]):
         return_exceptions=True,  # Session may have been disconnected, ignore those errors
     )
 
-    delivered_to = [sess.get("user_id", None)
-                    for sess in sessions
-                    if not isinstance(sess, Exception)]
+    delivered_to = [
+        sess.get("user_id", None)  # type: ignore
+        for sess in sessions
+        if not isinstance(sess, Exception)
+    ]
 
     return "OK", {  # ack
         "delivered_to": delivered_to,
@@ -236,15 +239,16 @@ def _extract_token(environ: dict[str, Any], auth: Any) -> str | None:
     return morsel.value or None
 
 
+@functools.cache
+def _channel_perms():
+    from ..auth.permissions import PermissionSet, ScopedPermission
+    with SessionLocal() as db:
+        return PermissionSet.from_permissions(ScopedPermission.from_str("channel:view"), db).bitstring
+
+
 def _get_accessible_channels(db: orm.Session, user_id: UUID) -> set[UUID]:
     """ Channels visible to a user"""
     from ..auth.permissions.model import Role, ChannelRoleOverride
-    from ..auth.permissions import PermissionSet, ScopedPermission
-
-    @functools.lru_cache
-    def permissions():
-        mask = PermissionSet.from_permissions([ScopedPermission.from_str("channel:view")])
-        return BitString.from_int(mask.bitstring, cfg().auth.permission_bitstring_length)
 
     zero = BitString.from_int(0, cfg().auth.permission_bitstring_length)
     override_deny = func.coalesce(ChannelRoleOverride.deny_mask, zero)
@@ -263,7 +267,7 @@ def _get_accessible_channels(db: orm.Session, user_id: UUID) -> set[UUID]:
                 Role.allow_mask
                 .bitwise_and(override_deny.bitwise_not())
                 .bitwise_or(override_allow)
-            ).bitwise_and(permissions())
+            ).bitwise_and(_channel_perms())
             != zero
         )
         .group_by(Channel.id)
@@ -291,6 +295,6 @@ def _get_channel_members(db: Session, channel_id: UUID) -> set[UUID]:
             channel_id=channel_id,
             user_id=user_id,
             db=db,
-        )
+        ).iter(db)
 
     return set(filter(has_access, members))

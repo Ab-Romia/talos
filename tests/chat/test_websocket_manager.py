@@ -1,12 +1,8 @@
-"""
-Socket.IO connection lifecycle and presence tests.
-"""
 import asyncio
 from contextlib import AsyncExitStack
 from uuid import UUID
 
 import pytest
-import pytest_asyncio
 import socketio
 
 from backend.auth.permissions.model import Role, RolePermission
@@ -39,7 +35,7 @@ def live_server():
     server.should_exit = True
 
 
-@pytest_asyncio.fixture
+@pytest.fixture
 async def sio_client(live_server):
     async with AsyncExitStack() as stack:
         async def _factory(namespace="/", **connect_kwargs) -> socketio.AsyncClient:
@@ -60,21 +56,20 @@ async def wait_for(client: socketio.AsyncClient, event: str, timeout: float = 5.
 class TestConnectionManager:
     """Socket.IO connection lifecycle."""
 
-    @pytest.mark.asyncio
     async def test_connect_and_disconnect(self, sio_client, auth_tokens, test_user):
         client = await sio_client(auth=auth_tokens(test_user))
         assert client.connected
         assert is_user_online(test_user.id)
 
+        await client.disconnect()
+
         for _ in range(20):
             if not is_user_online(test_user.id):
                 break
             await asyncio.sleep(0.05)
+        else:
+            pytest.fail("User still online after disconnect")
 
-        await client.disconnect()
-        assert not is_user_online(test_user.id)
-
-    @pytest.mark.asyncio
     async def test_multiple_connections_same_user_keep_user_online(self, sio_client, auth_tokens, test_user):
         first = await sio_client(auth=auth_tokens(test_user))
         second = await sio_client(auth=auth_tokens(test_user))
@@ -93,7 +88,6 @@ class TestConnectionManager:
 
         assert not is_user_online(test_user.id)
 
-    @pytest.mark.asyncio
     async def test_multiple_users_connected(self, sio_client, auth_tokens, test_users):
         users = [next(test_users) for _ in range(3)]
 
@@ -113,7 +107,6 @@ class TestPresenceTracking:
     def test_get_online_users_empty(self, test_channel, db_session):
         assert channel_online_users(test_channel.id, db_session) == []
 
-    @pytest.mark.asyncio
     async def test_get_online_users_partial(self, sio_client, auth_tokens, test_users, test_channel,
                                             test_workspace, db_session, get_perm):
         users = [next(test_users) for _ in range(3)]
@@ -125,7 +118,6 @@ class TestPresenceTracking:
             clients.append(client)
             assert client.connected
 
-    @pytest.mark.asyncio
     async def test_get_online_users_after_disconnect(self, sio_client, auth_tokens, test_users,
                                                      test_channel, test_workspace, db_session, get_perm):
         user_a, user_b = next(test_users), next(test_users)
@@ -146,7 +138,6 @@ class TestPresenceTracking:
 
         assert channel_online_users(test_channel.id, db_session) == [user_b.id]
 
-    @pytest.mark.asyncio
     async def test_presence_event_on_second_user_connects(self, sio_client, auth_tokens, test_users,
                                                           test_channel, test_workspace, db_session, get_perm):
         user_a, user_b = next(test_users), next(test_users)
@@ -161,7 +152,6 @@ class TestPresenceTracking:
         assert presence["status"] == "user_online"
         assert UUID(presence["user_id"]) == user_b.id
 
-    @pytest.mark.asyncio
     async def test_presence_event_on_last_disconnect(self, sio_client, auth_tokens, test_users,
                                                      test_channel, test_workspace, db_session, get_perm):
         user_a, user_b = next(test_users), next(test_users)
@@ -176,7 +166,6 @@ class TestPresenceTracking:
         assert presence["status"] == "user_offline"
         assert UUID(presence["user_id"]) == user_b.id
 
-    @pytest.mark.asyncio
     async def test_message_broadcast_to_connected_recipient(self, sio_client, auth_tokens, test_users, test_channel,
                                                             test_workspace, db_session, get_perm):
         user_sender, user_recipient = next(test_users), next(test_users)
