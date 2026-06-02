@@ -9,3 +9,5 @@ __pycache__/
 node_modules
 CLAUDE.md
 .claude/
+.vscode/settings.json
+AGENTS.md

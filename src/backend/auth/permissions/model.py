@@ -8,7 +8,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship, foreign
 
 from config import cfg
 from model import Base
-from model.messaging import Workspace, Channel
 
 STATIC_ROLE_ID = uuid.UUID(int=0)
 DEFAULT_EVERYONE_ROLE_ID = uuid.UUID(int=1)
@@ -121,7 +120,7 @@ class Role(Base):
     description: Mapped[str | None] = mapped_column()
 
     # `workspace_id` == None: a global role, applies to the entire app
-    workspace_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey(Workspace.id, ondelete="CASCADE"),
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"),
                                                            index=True,
                                                            default=None)
 
@@ -148,7 +147,7 @@ class ChannelRoleOverride(Base):
     __tablename__ = "role_overrides"
 
     role_id: Mapped[uuid.UUID] = mapped_column(ForeignKey(Role.id, ondelete="CASCADE"), primary_key=True)
-    channel_id: Mapped[uuid.UUID] = mapped_column(ForeignKey(Channel.id, ondelete="CASCADE"), primary_key=True)
+    channel_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("channels.id", ondelete="CASCADE"), primary_key=True)
 
     permission_overrides: Mapped[list[RolePermission]] = relationship(
         RolePermission,
@@ -162,7 +161,7 @@ class ChannelRoleOverride(Base):
     allow_mask: Mapped[BitString] = mapped_column(BIT(cfg().auth.permission_bitstring_length), default=_default_bits)
     deny_mask: Mapped[BitString] = mapped_column(BIT(cfg().auth.permission_bitstring_length), default=_default_bits)
 
-    channel: Mapped[Channel] = relationship("Channel", back_populates="roles_overrides")
+    channel = relationship("Channel", back_populates="roles_overrides")
 
 
 def _apply_mask_update(connection, target: RolePermission, enabled: int):

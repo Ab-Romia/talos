@@ -3,41 +3,9 @@ from tempfile import TemporaryFile
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import delete
 
+from backend.chat.model import Message
 from files.model import FileAttachment, ProcessingStatus
-from model.messaging import Workspace, Channel, Message
-
-
-@pytest.fixture
-def test_workspace(db_session, test_user):
-    workspace = Workspace(
-        name=f"ws_{uuid.uuid4().hex[:8]}",
-        owner_id=test_user.id,
-    )
-    db_session.add(workspace)
-    db_session.commit()
-
-    yield workspace
-
-    # Use raw delete to bypass ORM-level cascade handling that causes workspace_id -> NULL updates
-    db_session.execute(delete(Workspace).where(Workspace.id == workspace.id))
-    db_session.commit()
-
-
-@pytest.fixture
-def test_channel(db_session, test_workspace):
-    channel = Channel(
-        name="general",
-        workspace_id=test_workspace.id,
-    )
-    db_session.add(channel)
-    db_session.commit()
-
-    yield channel
-
-    db_session.delete(channel)
-    db_session.commit()
 
 
 @pytest.fixture

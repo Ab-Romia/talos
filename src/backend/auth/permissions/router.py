@@ -15,8 +15,8 @@ from backend.auth.permissions.registry import PermissionSet, ScopedPermission
 from backend.auth.utils import errors
 from backend.auth.utils.helpers import user_id
 from backend.workspace import is_owner, require_perms, WorkspaceID, RoleID
+from backend.workspace.model import Workspace, Channel
 from model import DatabaseDep
-from model.messaging import Channel, Workspace
 
 workspace = APIRouter(tags=["permissions"])
 channel = APIRouter(tags=["permissions"])

@@ -10,6 +10,13 @@ _callbacks_registry = {}
 
 def register_callback(callback):
     """Register a callback function for later retrieval."""
+    if not callable(callback):
+        raise ValueError("Callback must be a callable function")
+
+    if (callback.__name__ in _callbacks_registry
+            and _callbacks_registry[callback.__name__] != callback):
+        raise ValueError(f"Callback with name '{callback.__name__}' is already registered with a different function")
+
     _callbacks_registry[callback.__name__] = callback
 
 
@@ -20,7 +27,7 @@ class SmartRetryWithCallbackMiddleware(SmartRetryMiddleware):
     Passes retry count, exception, and message to the callback.
     """
 
-    async def on_error(self, message, result, exception) -> None:
+    async def on_error(self, message, result, exception):
         retry_count = int(message.labels.get("_retries", 0)) + 1
         max_retries = int(message.labels.get("max_retries", self.default_retry_count))
 
@@ -33,13 +40,12 @@ class SmartRetryWithCallbackMiddleware(SmartRetryMiddleware):
             callback_name = message.labels.get("on_failure")
             if callback_name and callback_name in _callbacks_registry:
                 callback = _callbacks_registry[callback_name]
-                if callable(callback):
-                    if inspect.iscoroutinefunction(callback):
-                        await callback(message, exception)
-                    else:
-                        callback(message, exception)
+                assert callable(callback), f"Registered callback '{callback_name}' is not callable"
+
+                if inspect.iscoroutinefunction(callback):
+                    await callback(message, exception)
                 else:
-                    raise ValueError(f"Registered callback '{callback_name}' is not callable")
+                    callback(message, exception)
 
 
 broker: AsyncBroker = (
@@ -56,7 +62,7 @@ broker: AsyncBroker = (
 )
 
 if cfg().is_test:
-    broker = InMemoryBroker().with_middlewares(*broker.middlewares)
+    broker = InMemoryBroker(await_inplace=True).with_middlewares(*broker.middlewares)
 
 
 @broker.on_event(TaskiqEvents.WORKER_STARTUP)

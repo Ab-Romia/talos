@@ -10,7 +10,6 @@ from backend.auth.utils import errors
 from backend.auth.utils.session import SessionDep
 from config import cfg
 from model import DatabaseDep
-from model.messaging import Channel
 from .model import Role, ChannelRoleOverride as Override, STATIC_ROLE_ID
 from .registry import PermissionRegistry, PermissionSet, ScopedPermission
 
@@ -26,12 +25,18 @@ def permission_registry(db: DatabaseDep):
 PermissionRegistryDep = Annotated[PermissionRegistry, Depends(permission_registry)]
 
 
+def user_id(session: SessionDep):
+    return session.sub
+
+
 def user_perms(
-        session: SessionDep,
+        user_id: Annotated[uuid.UUID, Depends(user_id)],
         db: DatabaseDep,
         workspace_id: Annotated[uuid.UUID | None, Path(default_factory=lambda: None)],
         channel_id: Annotated[uuid.UUID | None, Path(default_factory=lambda: None)],
 ):
+    from ...workspace.model import Channel
+
     @cached(permission_cache)
     def helper(workspace_id, channel_id, user_id):
         zero_bits = BitString.from_int(0, length=cfg().auth.permission_bitstring_length)
@@ -61,7 +66,7 @@ def user_perms(
             return PermissionSet()
         return PermissionSet.from_mask(permissions)
 
-    return helper(workspace_id, channel_id, session.sub)
+    return helper(workspace_id, channel_id, user_id)
 
 
 UserPermissionsDep = Annotated[PermissionSet, Depends(user_perms)]

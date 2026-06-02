@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, func, Uuid
+from sqlalchemy import ForeignKey, Uuid, DateTime, func
 from sqlalchemy.ext.orderinglist import ordering_list
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 
@@ -42,7 +42,7 @@ class Workspace(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column()
 
-    channels: Mapped[list[Channel]] = relationship("Channel", back_populates="workspace")
+    channels: Mapped[list[Channel]] = relationship("Channel", back_populates="workspace", cascade="all, delete-orphan")
     members = relationship("User", secondary="workspace_members", back_populates="workspaces")
     files: Mapped[list[FileAttachment]] = relationship("FileAttachment", back_populates="workspace")
 
@@ -70,7 +70,7 @@ class Channel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column()
 
-    messages: Mapped[list[Message]] = relationship("Message", back_populates="channel")
+    messages = relationship("Message", back_populates="channel", cascade="all, delete-orphan")
     workspace: Mapped[Workspace] = relationship("Workspace", back_populates="channels")
     files: Mapped[list[FileAttachment]] = relationship("FileAttachment", back_populates="channel")
     roles_overrides: Mapped[list["ChannelOverrides"]] = relationship(  # type: ignore[forward-reference]
@@ -78,18 +78,3 @@ class Channel(Base):
         back_populates="channel",
         cascade="all, delete-orphan"
     )
-
-
-class Message(Base):
-    __tablename__ = "messages"
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey(Workspace.id, ondelete="CASCADE"))
-    channel_id: Mapped[uuid.UUID] = mapped_column(ForeignKey(Channel.id, ondelete="CASCADE"))
-    sender_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    content: Mapped[str] = mapped_column()
-
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
-
-    channel: Mapped[Channel] = relationship("Channel", back_populates="messages")
-    files: Mapped[list[FileAttachment]] = relationship("FileAttachment", secondary="message_files",
-                                                       back_populates="messages")

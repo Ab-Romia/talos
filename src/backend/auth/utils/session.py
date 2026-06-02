@@ -95,7 +95,7 @@ def auth_token(authorization: Annotated[str, Header()] = None,
         return user_session
 
 
-def unverified_session(request: Request, auth_token: Annotated[str, Depends(auth_token)]):
+def unverified_session(auth_token: Annotated[str, Depends(auth_token)], request: Request = None):
     claims = None
     if auth_token:
         try:
@@ -113,7 +113,7 @@ def unverified_session(request: Request, auth_token: Annotated[str, Depends(auth
     if last_refresh_dur < cfg().auth.session_refresh_threshold:
         claims.exp = datetime.now(timezone.utc) + cfg().auth.session_max_age
 
-    if claims.modified or claims.deleted:
+    if request is not None and (claims.modified or claims.deleted):
         request.state.set_session = claims
 
 

@@ -1,4 +1,3 @@
-
 import uuid
 from typing import Annotated
 
@@ -6,8 +5,8 @@ from fastapi import Depends, Path
 
 from backend.auth.permissions import require_perms as default_require_perms
 from backend.auth.utils.helpers import user_id
+from backend.workspace.model import Workspace, Channel
 from model import DatabaseDep
-from model.messaging import Workspace, Channel
 
 
 def is_owner(user_id: Annotated[uuid.UUID, Depends(user_id)],
@@ -29,7 +28,3 @@ def require_perms(*permission, is_owner=is_owner):
 
 WorkspaceID = uuid.UUID
 RoleID = uuid.UUID
-
-
-# DBAPI errors handled globally via decorator-registered handler in
-# `src/utils/exceptions.py`. Route-level error wrapper removed.

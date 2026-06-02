@@ -1,7 +1,6 @@
 import pytest
 from fastapi import APIRouter, Depends
 
-from auth.permissions.conftest import test_permissions
 from backend.auth.permissions.core import require_perms
 from backend.auth.permissions.model import PermissionScope, Role, RolePermission
 from backend.auth.permissions.registry import PermissionSet, ScopedPermission
@@ -62,7 +61,7 @@ class TestPermissionRegistry:
         )
         assert offset is None
 
-    def test_permission_from_offset_returns_all_bits(self, registry):
+    def test_permission_from_offset_returns_all_bits(self, registry, test_permissions):
         for offset, (resource, action, owner_allowed) in enumerate(test_permissions):
             # ANY bit
             expected_any = ScopedPermission(resource=resource, action=action, scope=PermissionScope.ANY)

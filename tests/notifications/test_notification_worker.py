@@ -1,4 +1,3 @@
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -17,10 +16,9 @@ from notifications.model import (
 
 
 @pytest.fixture(autouse=True)
-def mock_broker(monkeypatch):
+def assert_in_memory():
     from broker import broker
     assert isinstance(broker, InMemoryBroker), "Expected InMemoryBroker for testing"
-    return broker
 
 
 @pytest.fixture
@@ -37,7 +35,7 @@ def test_delivery(db_session, test_notification, test_subscription):
 
 class TestNotificationWorker:
     async def test_web_push_delivery_success(self, db_session, test_user, test_notification, test_subscription,
-                                             monkeypatch, test_delivery, mock_broker):
+                                             monkeypatch, test_delivery):
         webpush = AsyncMock(return_value=None)
         monkeypatch.setattr(tasks, "webpush_async", webpush)
 
@@ -45,7 +43,6 @@ class TestNotificationWorker:
             NotificationSchema.model_validate(test_notification),
             PushSubscriptionSchema.model_validate(test_subscription)
         )
-        await mock_broker.wait_all()
 
         db_session.refresh(test_delivery)
         assert webpush.await_count == 1
@@ -53,21 +50,17 @@ class TestNotificationWorker:
         assert test_delivery.sent_at is not None
 
     async def test_web_push_delivery_failed(self, test_notification, test_subscription,
-                                            monkeypatch, test_delivery, mock_broker, db_session):
+                                            monkeypatch, test_delivery, db_session):
         webpush = AsyncMock(
             return_value=None,
             side_effect=WebPushException(message="temporary")
         )
         monkeypatch.setattr(tasks, "webpush_async", webpush)
 
-        # Convert to schemas for the new signature
-        notification_schema = NotificationSchema.model_validate(test_notification)
-        subscription_schema = PushSubscriptionSchema.model_validate(test_subscription)
-
-        await tasks.webpush.kiq(notification_schema, subscription_schema)
-        await mock_broker.wait_all()
-        await asyncio.sleep(1)
-        await mock_broker.wait_all()
+        await tasks.webpush.kiq(
+            NotificationSchema.model_validate(test_notification),
+            PushSubscriptionSchema.model_validate(test_subscription)
+        )
 
         db_session.refresh(test_delivery)
         assert webpush.await_count == tasks.webpush.labels.get("max_retries")
@@ -75,8 +68,7 @@ class TestNotificationWorker:
 
     async def test_web_push_marks_delivery_sent_on_success(
             self, db_session, monkeypatch,
-            test_notification, test_subscription, test_delivery,
-            mock_broker):
+            test_notification, test_subscription, test_delivery):
         webpush = AsyncMock(
             side_effect=[
                 WebPushException(
@@ -93,7 +85,6 @@ class TestNotificationWorker:
         subscription_schema = PushSubscriptionSchema.model_validate(test_subscription)
 
         await tasks.webpush.kiq(notification_schema, subscription_schema)
-        await mock_broker.wait_all()
 
         db_session.refresh(test_delivery)
         assert webpush.await_count == 2

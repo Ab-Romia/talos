@@ -1,5 +1,7 @@
 from contextlib import asynccontextmanager
 
+import redis.asyncio
+import socketio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
@@ -9,8 +11,8 @@ from sqlalchemy.orm import Session
 
 from backend.auth import auth_router
 from backend.auth.utils.session import SessionMiddleware
-from backend.chat import chat_router
-from backend.router import workspace as workspace_router, channel as channel_router
+from backend.chat.realtime import sio
+from backend.workspace.router import workspace as workspace_router, channel as channel_router
 from config import cfg
 from files.router import router as files_router
 from files.storage import MinIOStorage
@@ -46,6 +48,18 @@ async def lifespan(app: FastAPI):
     except Exception:
         get_logger(__name__).error("Failed to ensure MinIO bucket", exc_info=True)
 
+    # Initialize async Redis client for cache layer + chat module
+    try:
+        from backend.chat.storage import bind_chat_storage, DatabaseStorageBackend
+
+        async_redis = redis.asyncio.from_url(cfg().redis.url, decode_responses=True)
+        bind_chat_storage(DatabaseStorageBackend())
+
+        app.state.redis = async_redis
+    except Exception:
+        get_logger(__name__).error("Failed to initialize Redis client", exc_info=True)
+        app.state.redis = None
+
     app.state.arq_pool = None
 
     from broker import broker
@@ -55,14 +69,18 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    # Cleanup
     if not broker.is_worker_process:
         await broker.startup()
+    if app.state.redis:
+        await app.state.redis.aclose()
 
 
 app = FastAPI(title='Talos', lifespan=lifespan)
-app.include_router(auth_router, prefix="/api")
+
+app.mount('/socket.io', socketio.ASGIApp(sio), name='socketio')
+app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(notifications_router, prefix="/api")
-app.include_router(chat_router, prefix="/api")
 app.include_router(files_router, prefix="/api")
 app.include_router(drive_router, prefix="/api")
 app.include_router(workspace_router, prefix="/api")

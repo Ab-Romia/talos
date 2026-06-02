@@ -1,7 +1,7 @@
 import uuid
 from typing import Any, Sequence, Iterable
 
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from utils.datetime import utcnow
@@ -43,15 +43,12 @@ async def push_notification(
         is_online = False
 
         if not is_online:
-            # Remove expired subscriptions and get valid ones
-            db.execute(
-                delete(PushSubscription)
-                .where(PushSubscription.user_id == n.user_id)
-                .where(PushSubscription.expiration_time < utcnow())
-            )
-
             subscriptions = db.scalars(
-                select(PushSubscription).where(PushSubscription.user_id == n.user_id)
+                select(PushSubscription)
+                .where(PushSubscription.user_id == n.user_id)
+                .where(PushSubscription.expiration_time.is_(None)
+                       | (PushSubscription.expiration_time > utcnow()))
+                .where(PushSubscription.deleted_at.is_(None))
             ).all()
 
             # Enqueue web_push for each subscription

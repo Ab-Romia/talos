@@ -1,3 +1,2 @@
-from .router import router as chat_router
-
-__all__ = ["chat_router"]
+from .model import MessageSchema, MessageRole
+from .service import store_message, get_messages, get_message_by_id

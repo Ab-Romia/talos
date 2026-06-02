@@ -129,3 +129,4 @@ class PushSubscription(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow, onupdate=utcnow, index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(), default=None, index=True)

@@ -82,15 +82,6 @@ class FilesConfig(BaseModel):
     thumbnail_size: tuple[int, int] = (300, 300)
 
 
-class RabbitMQConfig(BaseModel):
-    host: str = "localhost"
-    port: int = 5672
-    username: str
-    password: str
-    virtual_host: str = "/"
-    notification_queue: str = "talos_notifcation_queue"
-
-
 class RedisConfig(BaseModel):
     host: str = "localhost"
     port: int = 6379
@@ -124,7 +115,6 @@ class Config(BaseSettings):
     minio: MinIOConfig = MinIOConfig()
     redis: RedisConfig = RedisConfig()
     files: FilesConfig = FilesConfig()
-    rabbitmq: RabbitMQConfig = None
     push: PushConfig | None = None
 
     model_config = SettingsConfigDict(
@@ -145,14 +135,14 @@ class Config(BaseSettings):
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (
             init_settings,
-            env_settings,
-            dotenv_settings,
             # override during pytest
             *([YamlConfigSettingsSource(
                 settings_cls,
                 yaml_file="config/config.test.yaml",
                 deep_merge=True
             )] if is_pytest() else ()),
+            env_settings,
+            dotenv_settings,
             YamlConfigSettingsSource(settings_cls),
             file_secret_settings,
         )

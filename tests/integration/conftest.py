@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from backend.chat.model import Message
 from files.model import FileAttachment, ProcessingStatus
-from model.messaging import Message
 from tests.conftest import test_workspace, test_channel
 
 

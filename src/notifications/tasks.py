@@ -40,6 +40,8 @@ def _mark_failed(notification_id: uuid.UUID, subscription_id: uuid.UUID | None):
         db.execute(
             update(NotificationDelivery)
             .where(NotificationDelivery.notification_id == notification_id)
+            .where(NotificationDelivery.subscription_id == subscription_id)
+            .where(NotificationDelivery.status == DeliveryStatus.PENDING)
             .values(status=DeliveryStatus.FAILED)
         )
 
