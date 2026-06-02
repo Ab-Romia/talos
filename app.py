@@ -15,6 +15,7 @@ from config import cfg
 from files.router import router as files_router
 from files.storage import MinIOStorage
 from integrations.drive import drive_router
+from notifications.router import notifications as notifications_router
 from utils.exceptions import dbapi_error_handler
 
 templates = Jinja2Templates(directory="frontend/templates")
@@ -22,7 +23,6 @@ templates = Jinja2Templates(directory="frontend/templates")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from arq import create_pool
     from utils.logger import get_logger
     from model import Base, engine
 
@@ -46,32 +46,29 @@ async def lifespan(app: FastAPI):
     except Exception:
         get_logger(__name__).error("Failed to ensure MinIO bucket", exc_info=True)
 
-    # Initialize ARQ Redis pool for background task enqueueing
+    app.state.arq_pool = None
 
-    try:
-        app.state.arq_pool = await create_pool(cfg().redis.to_redis_settings())
-    except Exception:
-        # Keep the app running so non-upload endpoints stay usable
-        # uploads will now fail with 503
-        get_logger(__name__).error("Failed to initialize ARQ Redis pool", exc_info=True)
-        app.state.arq_pool = None
+    from broker import broker
+
+    if not broker.is_worker_process:
+        await broker.startup()
 
     yield
 
-    # Cleanup
-    if app.state.arq_pool:
-        await app.state.arq_pool.aclose()
+    if not broker.is_worker_process:
+        await broker.startup()
 
 
 app = FastAPI(title='Talos', lifespan=lifespan)
-
-app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
+app.include_router(auth_router, prefix="/api")
+app.include_router(notifications_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 app.include_router(files_router, prefix="/api")
 app.include_router(drive_router, prefix="/api")
 app.include_router(workspace_router, prefix="/api")
 app.include_router(channel_router, prefix="/api")
 
+# TODO: replace with reverse proxy
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
@@ -80,7 +77,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(SessionMiddleware)
-
 app.exception_handler(exc.DBAPIError)(dbapi_error_handler)
 
 

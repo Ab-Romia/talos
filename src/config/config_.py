@@ -1,13 +1,12 @@
 from datetime import timedelta
 
-from arq.connections import RedisSettings
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict, PydanticBaseSettingsSource, YamlConfigSettingsSource
 
 
 def is_pytest() -> bool:
-    import sys
-    return "pytest" in sys.modules
+    import os
+    return "IS_TEST" in os.environ
 
 
 class OAuthClient(BaseModel):
@@ -83,23 +82,37 @@ class FilesConfig(BaseModel):
     thumbnail_size: tuple[int, int] = (300, 300)
 
 
+class RabbitMQConfig(BaseModel):
+    host: str = "localhost"
+    port: int = 5672
+    username: str
+    password: str
+    virtual_host: str = "/"
+    notification_queue: str = "talos_notifcation_queue"
+
+
 class RedisConfig(BaseModel):
     host: str = "localhost"
     port: int = 6379
     database: int = 0
-    password: str
-    username: str
+    password: str = ""
+    username: str = ""
 
     @property
     def url(self) -> str:
         auth_part = f"{self.username}:{self.password}@" if self.username and self.password else ""
         return f"redis://{auth_part}{self.host}:{self.port}/{self.database}"
 
-    def to_redis_settings(self) -> RedisSettings:
-        return RedisSettings(**self.model_dump())
+
+class PushConfig(BaseModel):
+    """Web Push configuration for VAPID."""
+    vapid_private_key: str
+    vapid_public_key: str
+    vapid_subject: str
 
 
 class Config(BaseSettings):
+    is_test: bool = False
     app_name: str = "Talos"
     app_host: str
     app_port: int
@@ -109,8 +122,10 @@ class Config(BaseSettings):
 
     auth: AuthConfig = None
     minio: MinIOConfig = MinIOConfig()
-    # redis: RedisConfig = None
+    redis: RedisConfig = RedisConfig()
     files: FilesConfig = FilesConfig()
+    rabbitmq: RabbitMQConfig = None
+    push: PushConfig | None = None
 
     model_config = SettingsConfigDict(
         env_file='.env',

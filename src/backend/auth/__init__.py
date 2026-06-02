@@ -7,7 +7,7 @@ from .totp import router as totp_router
 from .utils.helpers import active_user
 from .webauthn import router as webauthn_router
 
-auth_router = APIRouter()
+auth_router = APIRouter(prefix="/auth", tags=["auth"])
 
 auth_router.include_router(core_router)
 auth_router.include_router(pass_router, prefix="/password")

@@ -11,8 +11,8 @@ from starlette.responses import RedirectResponse
 
 from backend.auth.model import IdentityProvider, Issuer, User, ProviderToken
 from backend.auth.utils.session import UnverifiedSessionDep, NewSessionDep
+from config import cfg
 from model import DatabaseDep
-from src.config import cfg
 
 router = APIRouter()
 oauth = OAuth()
