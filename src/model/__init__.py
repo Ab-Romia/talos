@@ -12,13 +12,13 @@ Base = declarative_base()
 Base.registry.type_annotation_map[dict[str, Any]] = JSONB
 
 engine = create_engine(
-    cfg().database_url,
+    cfg().database_url.get_secret_value(),
     connect_args={},
     future=True,
 )
 
 async_engine = create_async_engine(
-    cfg().database_url,
+    cfg().database_url.get_secret_value(),
     echo=False,
     future=True,
 )

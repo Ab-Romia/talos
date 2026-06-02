@@ -31,8 +31,7 @@ def now():
 def _key():
     from joserfc import jwk
 
-    secret = cfg().auth.jwe_secret
-    key = jwk.import_key(secret, "oct")
+    key = jwk.import_key(cfg().auth.jwe_secret.get_secret_value(), "oct")
 
     return key
 

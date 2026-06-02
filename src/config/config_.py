@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr, SecretBytes
 from pydantic_settings import BaseSettings, SettingsConfigDict, PydanticBaseSettingsSource, YamlConfigSettingsSource
 
 
@@ -11,7 +11,7 @@ def is_pytest() -> bool:
 
 class OAuthClient(BaseModel):
     client_id: str
-    client_secret: str
+    client_secret: SecretStr
     api_base_url: str
     access_token_url: str
     authorize_url: str
@@ -24,7 +24,7 @@ class AuthConfig(BaseModel):
 
     totp_valid_window: int = 1
 
-    jwe_secret: bytes
+    jwe_secret: SecretBytes
     jwt_header: dict
 
     sudo_max_age: timedelta = timedelta(minutes=10)
@@ -45,7 +45,7 @@ class MinIOConfig(BaseModel):
     internal_endpoint: str = "localhost:9000"
     external_endpoint: str = "localhost:9000"
     access_key: str = "minioadmin"
-    secret_key: str = "minioadmin"
+    secret_key: SecretStr = SecretStr("minioadmin")
     secure: bool = False
     bucket_name: str = "talos-uploads"
 
@@ -86,12 +86,12 @@ class RedisConfig(BaseModel):
     host: str = "localhost"
     port: int = 6379
     database: int = 0
-    password: str = ""
+    password: SecretStr = ""
     username: str = ""
 
     @property
     def url(self) -> str:
-        auth_part = f"{self.username}:{self.password}@" if self.username and self.password else ""
+        auth_part = f"{self.username}:{self.password.get_secret_value()}@" if self.username and self.password else ""
         return f"redis://{auth_part}{self.host}:{self.port}/{self.database}"
 
 
@@ -108,8 +108,7 @@ class Config(BaseSettings):
     app_host: str
     app_port: int
 
-    database_url: str
-    cache_backend: str = "memory://"
+    database_url: SecretStr
 
     auth: AuthConfig = None
     minio: MinIOConfig = MinIOConfig()

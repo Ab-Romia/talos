@@ -71,7 +71,7 @@ class DriveClient:
                 GOOGLE_TOKEN_ENDPOINT,
                 data={
                     "client_id": client_cfg.client_id,
-                    "client_secret": client_cfg.client_secret,
+                    "client_secret": client_cfg.client_secret.get_secret_value(),
                     "refresh_token": token.refresh_token,
                     "grant_type": "refresh_token",
                 },

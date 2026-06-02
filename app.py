@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
         internal_endpoint=cfg().minio.internal_endpoint,
         external_endpoint=cfg().minio.external_endpoint,
         access_key=cfg().minio.access_key,
-        secret_key=cfg().minio.secret_key,
+        secret_key=cfg().minio.secret_key.get_secret_value(),
         secure=cfg().minio.secure,
         bucket_name=cfg().minio.bucket_name,
     )
