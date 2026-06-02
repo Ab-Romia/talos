@@ -8,9 +8,9 @@ from sqlalchemy import select
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
 
-from auth.model import User
+from auth.model import User, Session
 from auth.utils import errors
-from auth.utils.session import SessionDep, auth_token, unverified_session, UnverifiedSessionDep, Session
+from auth.utils.session import SessionDep, auth_token, unverified_session, UnverifiedSessionDep
 from model import DatabaseDep
 
 

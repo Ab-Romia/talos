@@ -67,7 +67,7 @@ def mock_arq_pool():
 def client(db_session, test_user, test_workspace, mock_storage, mock_arq_pool):
     """FastAPI TestClient with all dependencies overridden and lifespan disabled."""
     from fastapi.testclient import TestClient
-    from auth.utils.helpers import active_user
+    from auth.dependencies import active_user
     from auth.utils.session import verified_session
     from files.dependencies import get_workspace_member, get_storage
     from app import app

@@ -2,27 +2,17 @@ import uuid
 from datetime import datetime, timezone
 from typing import Annotated, override
 
-import sqlalchemy as sql
 from fastapi import Request, Depends, Header, Cookie
 from pydantic import ConfigDict
 from sqlalchemy import select, func, delete
-from sqlalchemy.orm import Mapped, mapped_column
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from auth.model import Session
 from config import cfg
-from model import DatabaseDep, Base
+from model import DatabaseDep
 from model.utils import DATETIME
 from .jwt import verify_token, BaseJWTClaims
 from ..utils import errors, jwt
-
-
-class Session(Base):
-    __tablename__ = "sessions"
-    id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, primary_key=True, default=uuid.uuid7)
-    user_id: Mapped[uuid.UUID] = mapped_column(sql.ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    created_at: Mapped[datetime] = mapped_column(sql.DateTime(timezone=True), default=sql.func.now())
-    last_used_at: Mapped[datetime] = mapped_column(sql.DateTime(timezone=True), default=sql.func.now())
-    user_agent: Mapped[str | None] = mapped_column()
 
 
 class SessionClaims(BaseJWTClaims):

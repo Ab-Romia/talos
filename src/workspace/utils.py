@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import Depends, Path
 
-from auth.utils.helpers import user_id
+from auth.dependencies import user_id
 from model import DatabaseDep
 from permissions import require_perms as default_require_perms
 from workspace.model import Workspace, Channel

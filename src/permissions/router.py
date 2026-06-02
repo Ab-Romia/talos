@@ -8,9 +8,9 @@ from sqlalchemy import select, and_
 from starlette import status
 from starlette.status import HTTP_201_CREATED, HTTP_204_NO_CONTENT
 
+from auth.dependencies import user_id
 from auth.model import User
 from auth.utils import errors
-from auth.utils.helpers import user_id
 from model import DatabaseDep
 from permissions import UserPermissionsDep, db_permission
 from permissions.model import Role, RolePermission, ChannelRoleOverride, PermissionSet, ScopedPermission

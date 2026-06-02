@@ -5,7 +5,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app import app as fastapi_app
-from auth.utils.session import NewSessionDep, Session as UserSession
+from auth import Session as UserSession
+from auth.utils.session import NewSessionDep
 
 
 @pytest.fixture(scope="session")

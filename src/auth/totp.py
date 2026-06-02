@@ -9,11 +9,11 @@ from pydantic import BaseModel
 from sqlalchemy import delete, select, insert
 from starlette.responses import JSONResponse
 
-from auth.utils.helpers import sudo, UserDep, SessionDep
 from auth.utils.jwt import create_token, verify_token, BaseJWTClaims
 from config import cfg
 from model import DatabaseDep
 from utils.img import img2base64
+from .dependencies import sudo, UserDep, SessionDep
 from .model import User, Issuer, IdentityProvider
 
 router = APIRouter()

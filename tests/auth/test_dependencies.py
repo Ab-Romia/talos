@@ -5,8 +5,9 @@ import pytest
 from starlette.requests import Request
 
 from app import app as fastapi_app
-from auth.utils import helpers
-from auth.utils.helpers import UserDep, OptionalUserDep
+from auth import dependencies
+from auth.dependencies import UserDep, OptionalUserDep
+from auth.utils import errors
 from auth.utils.jwt import create_token
 from auth.utils.session import SessionClaims, verified_session, unverified_session
 
@@ -158,7 +159,7 @@ class TestSudoTokenDependency:
             sudo_exp=datetime.now(timezone.utc) + timedelta(minutes=1),
         )
 
-        helpers.sudo(claims)
+        dependencies.sudo(claims)
 
     def test_when_not_sudo(self, db_session, test_user, test_session):
         from datetime import timezone, datetime
@@ -169,8 +170,8 @@ class TestSudoTokenDependency:
             sudo_exp=None,
         )
 
-        with pytest.raises(Exception):
-            helpers.sudo(claims)
+        with pytest.raises(errors.SudoRequired):
+            dependencies.sudo(claims)
 
     def test_when_session_not_found(self, db_session, test_user):
         from datetime import timezone, datetime

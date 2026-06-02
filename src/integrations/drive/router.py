@@ -9,8 +9,8 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 
+from auth.dependencies import active_user
 from auth.model import ProviderToken, User
-from auth.utils.helpers import active_user
 from files.dependencies import get_storage, get_workspace_member
 from files.exceptions import FileTooLarge, UnsupportedFileType
 from files.service import FileService

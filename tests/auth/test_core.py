@@ -6,10 +6,11 @@ from fastapi import status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from auth.core import activate_sudo, logout, revoke_token, initiate_signup, complete_signup
+from auth import Session as UserSession
 from auth.model import User, IdentityProvider, Issuer
+from auth.router import activate_sudo, logout, revoke_token, initiate_signup, complete_signup
 from auth.utils.jwt import verify_token
-from auth.utils.session import SessionClaims, Session as UserSession
+from auth.utils.session import SessionClaims
 
 
 class TestSignup:

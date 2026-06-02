@@ -9,13 +9,13 @@ from webauthn.helpers.exceptions import InvalidRegistrationResponse, InvalidAuth
 from webauthn.helpers.structs import PublicKeyCredentialDescriptor, AuthenticatorSelectionCriteria, \
     ResidentKeyRequirement
 
-from auth.utils.helpers import sudo, UserDep
-from auth.utils.jwt import create_token, verify_token, BaseJWTClaims
-from auth.utils.session import NewSessionDep
 from config import cfg
 from model import DatabaseDep
+from .dependencies import sudo, UserDep
 from .model import Issuer, IdentityProvider
 from .utils import errors
+from .utils.jwt import create_token, verify_token, BaseJWTClaims
+from .utils.session import NewSessionDep
 
 router = APIRouter()
 

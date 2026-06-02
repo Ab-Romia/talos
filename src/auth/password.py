@@ -9,11 +9,10 @@ from sqlalchemy import select, or_, update
 from config import cfg
 from model import DatabaseDep
 from utils.email import send_email
-from .model import User, IdentityProvider, Issuer
+from .dependencies import sudo
+from .model import User, IdentityProvider, Issuer, Session as DBSession
 from .utils import errors, jwt
-from .utils.helpers import sudo
-from .utils.jwt import BaseJWTClaims
-from .utils.session import revoke_by_uid, SessionDep, NewSessionDep, Session as DBSession
+from .utils.session import revoke_by_uid, SessionDep, NewSessionDep
 
 router = APIRouter()
 
@@ -65,7 +64,7 @@ def password_authenticate(
         session.requires_totp = True
 
 
-class ForgotPasswordClaims(BaseJWTClaims):
+class ForgotPasswordClaims(jwt.BaseJWTClaims):
     requires_totp: bool
     identity_provider_id: uuid.UUID
 

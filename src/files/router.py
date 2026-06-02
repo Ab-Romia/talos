@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 
-from auth.utils.helpers import UserDep
+from auth import UserDep
 from auth.utils.session import verified_session
 from config import cfg
 from files.dependencies import get_storage, StorageDep

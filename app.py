@@ -9,7 +9,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import text, exc
 from sqlalchemy.orm import Session
 
-from auth import auth_router
+from auth.router import router as auth_router
 from auth.utils.session import SessionMiddleware
 from chat.realtime import sio
 from config import cfg

@@ -6,21 +6,29 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, status, Form, HTTPException, Body
 from fastapi.responses import RedirectResponse
-from psycopg import errors as pg_errors
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
 from config import cfg
 from model import DatabaseDep
 from utils.email import send_email
+from utils.exceptions import ExceptionMapper
 from utils.ratelimit import email_ratelimit
+from .dependencies import sudo, UserDep
 from .model import User
+from .oauth import router as oauth_router
 from .password import create_password_identity, hash_password
+from .password import router as pass_router
+from .totp import router as totp_router
 from .utils import jwt
 from .utils import session as s
-from .utils.helpers import sudo, UserDep
+from .webauthn import router as webauthn_router
 
-router = APIRouter()
+router = APIRouter(prefix="/auth", tags=["auth"])
+router.include_router(pass_router, prefix="/password")
+router.include_router(totp_router, prefix="/totp")
+router.include_router(oauth_router, prefix="/oauth")
+router.include_router(webauthn_router, prefix="/passkey")
 
 
 class InitSignupClaims(jwt.BaseJWTClaims):
@@ -36,15 +44,22 @@ async def initiate_signup(email: Annotated[str, Form()], db: DatabaseDep):
 
     try:
         with db.begin_nested():
-            db.add(User(username='usr-' + uuid.uuid7().hex,
-                        primary_email=email))
+            db.add(User(username='usr-' + uuid.uuid7().hex, primary_email=email))
             db.flush()
             db.rollback()
     except IntegrityError as e:
-        if "email_format" in str(e.orig):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email format")
-        elif "ix_users_primary_email" in str(e.orig):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already exists")
+        ExceptionMapper(
+            base_exc=IntegrityError,
+            responses={
+                "ix_users_primary_email": HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                                        detail="Email already exists"),
+                "email_format": HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                              detail="Invalid email format"),
+            },
+            default_response=HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                           detail="Invalid email format"),
+            mapper=lambda exc: exc.orig.diag.constraint_name
+        ).apply(e)
 
     token = jwt.create_token(InitSignupClaims(
         exp=datetime.now(timezone.utc) + timedelta(hours=1),
@@ -87,8 +102,6 @@ def complete_signup(
         db: DatabaseDep,
         name: Annotated[str | None, Body()] = None,
 ):
-    # TODO:
-    #  - Rate limit
     claims = jwt.verify_token(email_token, return_model=InitSignupClaims)
 
     for auth_method in auth_info:
@@ -113,19 +126,22 @@ def complete_signup(
         db.flush()
     except IntegrityError as e:
         db.rollback()
-        err = str(e.orig)
-        if "email_format" in err:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                                detail="Invalid email format")
-        elif "ix_users_username" in err:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                                detail="Username already exists")
-        elif "ix_users_primary_email" in err:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                                detail="Email already exists")
-        else:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                                detail=f"Invalid input: {err}")
+        ExceptionMapper(
+            base_exc=IntegrityError,
+            responses={
+                "ix_users_username": HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                                   detail="Username already exists"),
+                "username_format": HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                                 detail="Invalid username format"),
+                "ix_users_primary_email": HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                                        detail="Email already exists"),
+                "email_format": HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                              detail="Invalid email format"),
+            },
+            default_response=HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                           detail="Invalid input"),
+            mapper=lambda exc: exc.orig.diag.constraint_name
+        ).apply(e)
 
     for auth_method in auth_info:
         match auth_method:

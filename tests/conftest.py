@@ -10,10 +10,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import app
-from auth.model import User, IdentityProvider, Issuer
+from auth.model import User, IdentityProvider, Issuer, Session as UserSession
 from auth.password import hash_password
 from auth.utils.jwt import create_token
-from auth.utils.session import SessionClaims, Session as UserSession
+from auth.utils.session import SessionClaims
 from files.model import FileAttachment, ProcessingStatus
 from files.storage import MinIOStorage
 from model import SessionLocal

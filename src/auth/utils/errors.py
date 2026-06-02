@@ -1,9 +1,10 @@
-from typing import Iterable
+from typing import Iterable, TYPE_CHECKING
 
 from fastapi import HTTPException
 from starlette import status
 
-from permissions.model import ScopedPermission
+if TYPE_CHECKING:
+    from permissions.model import ScopedPermission
 
 
 class AuthException(HTTPException):

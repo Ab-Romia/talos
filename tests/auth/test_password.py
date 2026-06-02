@@ -1,9 +1,9 @@
 from fastapi import status
 from sqlalchemy import select
 
+from auth import Session as UserSession
 from auth.model import IdentityProvider, Issuer
 from auth.password import hash_password, verify_password, password_authenticate, change_password
-from auth.utils.session import Session as UserSession
 
 
 class TestPasswordHashing:
