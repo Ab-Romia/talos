@@ -1,5 +1,4 @@
 services:
-  # ── Application ──
   app:
     build:
       context: .
@@ -8,12 +7,6 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-talos_app}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-talos}
-      MILVUS_HOST: milvus-standalone
-      MINIO__INTERNAL_ENDPOINT: minio:9000
-      MINIO__EXTERNAL_ENDPOINT: ${MINIO_EXTERNAL_ENDPOINT:-localhost:9000}
-      REDIS__URL: redis://redis:6379
     ports:
       - "8000:8000"
     depends_on:
@@ -47,9 +40,6 @@ services:
       redis:
         condition: service_healthy
 
-  # ── Infrastructure ──
-
-  # PostgreSQL Database
   postgres:
     image: postgres:latest
     hostname: postgres
@@ -57,9 +47,9 @@ services:
     env_file:
       - .env
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-talos_app}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB:-talos}
+      POSTGRES_USER: ${DATABASE__USER}
+      POSTGRES_PASSWORD: ${DATABASE__PASSWORD}
+      POSTGRES_DB: ${DATABASE__NAME}
     ports:
       - "5432:5432"
     volumes:
@@ -70,16 +60,18 @@ services:
       timeout: 5s
       retries: 5
 
-  # Database Admin UI
-  adminer:
-    image: adminer
-    hostname: adminer
+  postgres-test:
+    image: postgres:latest
+    hostname: postgres-test
     restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${DATABASE__USER}
+      POSTGRES_PASSWORD: ${DATABASE__PASSWORD}
+      POSTGRES_DB: ${DATABASE__NAME}_test
     ports:
-      - "8080:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
+      - "5433:5432"
 
   etcd:
     container_name: milvus-etcd
@@ -101,9 +93,11 @@ services:
   minio:
     container_name: milvus-minio
     image: minio/minio
+    env_file:
+      - .env
     environment:
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
+      MINIO_ACCESS_KEY: ${MINIO__ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO__SECRET_KEY}
     ports:
       - "9001:9001"
       - "9000:9000"
@@ -116,21 +110,26 @@ services:
       timeout: 20s
       retries: 3
 
+  # create bucket and set alias for minio client
   minio-init:
-    image: quay.io/minio/mc:latest
+    container_name: minio-init
+    image: minio/mc
+    env_file:
+      - .env
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO__ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO__SECRET_KEY}
+    command: >
+      sh -c "
+        mc alias set local http://minio:9000 ${MINIO__ACCESS_KEY} ${MINIO__SECRET_KEY};
+        mc mb local/talos || true;
+      "
     depends_on:
       minio:
         condition: service_healthy
-    restart: "no"
-    entrypoint: >
-      /bin/sh -c "
-      /usr/bin/mc alias set talos http://minio:9000 minioadmin minioadmin;
-      /usr/bin/mc mb --ignore-existing talos/talos-uploads;
-      exit 0;
-      "
 
   redis:
-    image: redis:7-alpine
+    image: redis:latest
     hostname: redis
     restart: unless-stopped
     ports:
@@ -147,8 +146,6 @@ services:
     container_name: milvus-standalone
     image: milvusdb/milvus
     command: [ "milvus", "run", "standalone" ]
-    #    security_opt:
-    #      - seccomp:unconfined
     environment:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000

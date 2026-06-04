@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from auth import active_user
 from auth.model import User
-from files.storage import MinIOStorage
+from files.storage import S3Storage
 from model import DatabaseDep
 from workspace.model import Workspace
 
@@ -33,9 +33,9 @@ def get_workspace_member(
     return workspace
 
 
-def get_storage(request: Request) -> MinIOStorage:
+def get_storage(request: Request) -> S3Storage:
     """Retrieve the MinIOStorage instance from the app state."""
-    storage: MinIOStorage | None = getattr(request.app.state, "minio_storage", None)
+    storage: S3Storage | None = getattr(request.app.state, "minio_storage", None)
     if storage is None:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -44,4 +44,4 @@ def get_storage(request: Request) -> MinIOStorage:
     return storage
 
 
-StorageDep = Annotated[MinIOStorage, Depends(get_storage)]
+StorageDep = Annotated[S3Storage, Depends(get_storage)]

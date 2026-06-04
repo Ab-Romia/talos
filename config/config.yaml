@@ -18,6 +18,10 @@ auth:
       access_token_url: https://github.com/login/oauth/access_token
       authorize_url: https://github.com/login/oauth/authorize
       client_kwargs: { "scope": "read:user user:email" }
-rabbitmq:
+database:
   host: localhost
-  port: 5672
+  port: 5432
+minio:
+  public_endpoint: http://172.20.0.4:9000
+  internal_endpoint: http://172.20.0.4:9000
+  bucket_name: talos

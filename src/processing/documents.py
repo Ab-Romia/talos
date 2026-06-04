@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from config import global_rag_config
 from files.model import FileAttachment
-from files.storage import MinIOStorage
+from files.storage import S3Storage
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -18,7 +18,7 @@ logger = get_logger(__name__)
 async def process_document(
         file_record: FileAttachment,
         db: Session,
-        storage: MinIOStorage,
+        storage: S3Storage,
 ):
     """Download file from MinIO, extract text, chunk, and ingest into Milvus."""
     ext = os.path.splitext(file_record.original_filename)[1].lower()

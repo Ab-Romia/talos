@@ -1,11 +1,11 @@
-import pytest
 from io import BytesIO
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 
+import pytest
 from minio.error import S3Error
 
-from files.exceptions import StorageError
-from files.storage import MinIOStorage
+from files.errors import StorageError
+from files.storage import S3Storage
 
 
 def _make_storage():
@@ -15,9 +15,9 @@ def _make_storage():
         external = MagicMock()
         MockMinio.side_effect = [internal, external]
 
-        storage = MinIOStorage(
+        storage = S3Storage(
             internal_endpoint="localhost:9000",
-            external_endpoint="localhost:9000",
+            public_endpoint="localhost:9000",
             access_key="minioadmin",
             secret_key="minioadmin",
         )

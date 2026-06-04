@@ -15,7 +15,7 @@ from auth.password import hash_password
 from auth.utils.jwt import create_token
 from auth.utils.session import SessionClaims
 from files.model import FileAttachment, ProcessingStatus
-from files.storage import MinIOStorage
+from files.storage import S3Storage
 from model import SessionLocal
 from permissions.model import Role, RolePermission, Permission, PermissionScope, DEFAULT_EVERYONE_ROLE_ID, \
     STATIC_ROLE_ID, ScopedPermission
@@ -184,7 +184,7 @@ def expired_token(test_user: User, test_session: SessionClaims) -> str:
 def mock_storage():
     """Fully mocked MinIOStorage. Upload_file drains the stream the same
     way minio-py does in prod, so the HashingReader actually hashes."""
-    storage = AsyncMock(spec=MinIOStorage)
+    storage = AsyncMock(spec=S3Storage)
     storage.bucket_name = "talos-uploads"
 
     async def _drain_then_return(*, storage_key, data, size, content_type):

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from config import cfg
-from files.exceptions import FileTooLarge, UnsupportedFileType
+from files.errors import FileTooLarge, UnsupportedFileType
 from files.model import FileAttachment, ProcessingStatus, MessageFile
 from files.service import FileService
 

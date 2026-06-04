@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from config import cfg
 from files.model import FileAttachment
-from files.storage import MinIOStorage
+from files.storage import S3Storage
 from utils.logger import get_logger
 
 THUMBNAIL_SIZE = cfg().files.thumbnail_size
@@ -20,7 +20,7 @@ logger = get_logger(__name__)
 async def process_image(
         file_record: FileAttachment,
         db: Session,
-        storage: MinIOStorage,
+        storage: S3Storage,
 ):
     """Download image from MinIO, generate thumbnail, upload thumbnail."""
     ext = os.path.splitext(file_record.original_filename)[1].lower()

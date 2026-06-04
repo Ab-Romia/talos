@@ -19,7 +19,7 @@ from starlette.datastructures import UploadFile
 
 from config import cfg
 from files.service import FileService
-from files.storage import MinIOStorage
+from files.storage import S3Storage
 
 
 async def main(path: str) -> None:
@@ -28,9 +28,9 @@ async def main(path: str) -> None:
     expected_sha = hashlib.sha256(body).hexdigest()
 
     storage_cfg = cfg().minio
-    storage = MinIOStorage(
+    storage = S3Storage(
         internal_endpoint=storage_cfg.internal_endpoint,
-        external_endpoint=storage_cfg.external_endpoint,
+        public_endpoint=storage_cfg.external_endpoint,
         access_key=storage_cfg.access_key,
         secret_key=storage_cfg.secret_key,
         bucket_name=storage_cfg.bucket_name,

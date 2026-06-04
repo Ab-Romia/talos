@@ -9,7 +9,7 @@ from auth import UserDep
 from auth.utils.session import verified_session
 from config import cfg
 from files.dependencies import get_storage, StorageDep
-from files.exceptions import FileTooLarge, UnsupportedFileType
+from files.errors import FileTooLarge, UnsupportedFileType
 from files.schemas import (
     FileDownloadResponse,
     FileListResponse,
@@ -18,7 +18,7 @@ from files.schemas import (
     FileUploadResponse,
 )
 from files.service import FileService
-from files.storage import MinIOStorage
+from files.storage import S3Storage
 from model import DatabaseDep
 from utils.logger import get_logger
 
@@ -38,7 +38,7 @@ async def upload_file(
         workspace_id: uuid.UUID,
         file: Annotated[UploadFile, File(...)],
         user: UserDep,
-        storage: Annotated[MinIOStorage, Depends(get_storage)],
+        storage: Annotated[S3Storage, Depends(get_storage)],
         channel_id: Annotated[uuid.UUID | None, Query()] = None,
 ):
     """Upload a file to a workspace. MIME type is validated via magic bytes."""
@@ -97,7 +97,7 @@ def get_file_metadata(file_id: uuid.UUID, db: DatabaseDep):
 async def download_file(
         workspace_id: uuid.UUID,
         file_id: uuid.UUID,
-        storage: Annotated[MinIOStorage, Depends(get_storage)],
+        storage: Annotated[S3Storage, Depends(get_storage)],
         db: DatabaseDep,
 ):
     """Generate a pre-signed download URL for a file."""

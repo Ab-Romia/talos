@@ -51,15 +51,15 @@ def recover_stuck_processing(session_factory) -> int:
 async def on_startup(ctx):
     """Initialize DB session factory and MinIO storage for the worker."""
     from model import SessionLocal
-    from files.storage import MinIOStorage
+    from files.storage import S3Storage
 
     app_cfg = cfg()
     minio_cfg = app_cfg.minio
 
     ctx["db_session_factory"] = SessionLocal
-    ctx["minio_storage"] = MinIOStorage(
+    ctx["minio_storage"] = S3Storage(
         internal_endpoint=minio_cfg.internal_endpoint,
-        external_endpoint=minio_cfg.external_endpoint,
+        public_endpoint=minio_cfg.external_endpoint,
         access_key=minio_cfg.access_key,
         secret_key=minio_cfg.secret_key,
         secure=minio_cfg.secure,

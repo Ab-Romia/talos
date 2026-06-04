@@ -14,7 +14,7 @@ from auth.utils.session import SessionMiddleware
 from chat.realtime import sio
 from config import cfg
 from files.router import router as files_router
-from files.storage import MinIOStorage
+from files.storage import S3Storage
 from integrations.drive import drive_router
 from notifications.router import notifications as notifications_router
 from utils.exceptions import dbapi_error_handler
@@ -25,7 +25,8 @@ templates = Jinja2Templates(directory="frontend/templates")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from utils.logger import get_logger
+    from chat.storage import bind_chat_storage, DatabaseStorageBackend
+    from broker import broker
     from model import Base, engine
 
     with Session(engine) as session:
@@ -34,46 +35,23 @@ async def lifespan(app: FastAPI):
 
     Base.metadata.create_all(engine)
 
-    storage = MinIOStorage(
-        internal_endpoint=cfg().minio.internal_endpoint,
-        external_endpoint=cfg().minio.external_endpoint,
-        access_key=cfg().minio.access_key,
-        secret_key=cfg().minio.secret_key.get_secret_value(),
-        secure=cfg().minio.secure,
-        bucket_name=cfg().minio.bucket_name,
-    )
-    try:
-        await storage.ensure_bucket()
-        app.state.minio_storage = storage
-    except Exception:
-        get_logger(__name__).error("Failed to ensure MinIO bucket", exc_info=True)
+    bind_chat_storage(DatabaseStorageBackend())
 
-    # Initialize async Redis client for cache layer + chat module
-    try:
-        from chat import bind_chat_storage, DatabaseStorageBackend
-
-        async_redis = redis.asyncio.from_url(cfg().redis.url, decode_responses=True)
-        bind_chat_storage(DatabaseStorageBackend())
-
-        app.state.redis = async_redis
-    except Exception:
-        get_logger(__name__).error("Failed to initialize Redis client", exc_info=True)
-        app.state.redis = None
-
-    app.state.arq_pool = None
-
-    from broker import broker
+    app.state.minio_storage = S3Storage(config=cfg().minio)
+    app.state.redis = redis.asyncio.from_url(cfg().redis.url, decode_responses=True)
 
     if not broker.is_worker_process:
         await broker.startup()
+    await app.state.minio_storage.connect()
+    app.state.arq_pool = None
 
     yield
 
     # Cleanup
     if not broker.is_worker_process:
         await broker.startup()
-    if app.state.redis:
-        await app.state.redis.aclose()
+    await app.state.redis.aclose()
+    await app.state.minio_storage.connect()
 
 
 app = FastAPI(title='Talos', lifespan=lifespan)

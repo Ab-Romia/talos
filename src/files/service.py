@@ -11,9 +11,9 @@ from sqlalchemy.orm import Session
 
 from chat import Message
 from config import cfg
-from files.exceptions import FileTooLarge, StorageError, UnsupportedFileType
+from files.errors import FileTooLarge, StorageError, UnsupportedFileType
 from files.model import FileAttachment, ProcessingStatus, MessageFile
-from files.storage import MinIOStorage
+from files.storage import S3Storage
 from files.streaming import HashingReader
 from utils.datetime import utcnow
 from utils.logger import get_logger
@@ -28,7 +28,7 @@ THUMBNAIL_SIZE = cfg().files.thumbnail_size
 
 
 class FileService:
-    def __init__(self, db: Session, storage: MinIOStorage | None = None):
+    def __init__(self, db: Session, storage: S3Storage | None = None):
         self.db = db
         self.storage = storage
 

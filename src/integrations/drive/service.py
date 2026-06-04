@@ -14,10 +14,10 @@ from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
 
 from config import cfg
-from files.exceptions import FileTooLarge, UnsupportedFileType
+from files.errors import FileTooLarge, UnsupportedFileType
 from files.model import FileAttachment
 from files.service import FileService
-from files.storage import MinIOStorage
+from files.storage import S3Storage
 from utils.logger import get_logger
 from .client import DriveClient
 from .constants import GOOGLE_DOC_EXPORTS
@@ -29,7 +29,7 @@ ALLOWED_MIME_TYPES = cfg().files.allowed_mime_types
 
 
 class DriveImportService:
-    def __init__(self, db: Session, storage: MinIOStorage, user_id: uuid.UUID):
+    def __init__(self, db: Session, storage: S3Storage, user_id: uuid.UUID):
         self.db = db
         self.storage = storage
         self.user_id = user_id

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from config import cfg
-from files.exceptions import FileTooLarge, UnsupportedFileType
+from files.errors import FileTooLarge, UnsupportedFileType
 from integrations.drive.service import DriveImportService
 
 

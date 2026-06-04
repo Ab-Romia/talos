@@ -12,9 +12,9 @@ from sqlalchemy import select
 from auth.dependencies import active_user
 from auth.model import ProviderToken, User
 from files.dependencies import get_storage, get_workspace_member
-from files.exceptions import FileTooLarge, UnsupportedFileType
+from files.errors import FileTooLarge, UnsupportedFileType
 from files.service import FileService
-from files.storage import MinIOStorage
+from files.storage import S3Storage
 from model import DatabaseDep
 from workspace.model import Workspace, Channel
 from .client import DriveClient
@@ -93,7 +93,7 @@ async def import_drive_file(
         user: User = Depends(active_user),
         workspace: Workspace = Depends(get_workspace_member),
         db: DatabaseDep = None,
-        storage: MinIOStorage = Depends(get_storage),
+        storage: S3Storage = Depends(get_storage),
 ):
     """Import a Drive file into the workspace and enqueue background processing.
 
