@@ -15,7 +15,9 @@ from utils.logger import get_logger
 from workspace.model import WorkspaceMember, Channel
 from .model import MessageSchema
 
+mgr = socketio.AsyncRedisManager(cfg().redis.url, channel="sio#")
 sio = socketio.AsyncServer(
+    client_manager=mgr,
     async_mode="asgi",
     logger=False,
     engineio_logger=False,

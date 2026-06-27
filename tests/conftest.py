@@ -2,7 +2,6 @@ import uuid
 from datetime import timedelta
 from functools import lru_cache
 from typing import Callable
-from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,8 +13,7 @@ from auth.model import User, IdentityProvider, Issuer, Session as UserSession
 from auth.password import hash_password
 from auth.utils.jwt import create_token
 from auth.utils.session import SessionClaims
-from files.model import FileAttachment, ProcessingStatus
-from files.storage import MinIOStorage
+from filesystem.model import File, FileStatus
 from model import SessionLocal
 from permissions.model import Role, RolePermission, Permission, PermissionScope, DEFAULT_EVERYONE_ROLE_ID, \
     STATIC_ROLE_ID, ScopedPermission
@@ -181,37 +179,12 @@ def expired_token(test_user: User, test_session: SessionClaims) -> str:
 
 
 @pytest.fixture
-def mock_storage():
-    """Fully mocked MinIOStorage. Upload_file drains the stream the same
-    way minio-py does in prod, so the HashingReader actually hashes."""
-    storage = AsyncMock(spec=MinIOStorage)
-    storage.bucket_name = "talos-uploads"
-
-    async def _drain_then_return(*, storage_key, data, size, content_type):
-        while data.read(64 * 1024):
-            pass
-        return "test-etag"
-
-    storage.upload_file = AsyncMock(side_effect=_drain_then_return)
-    storage.download_file = AsyncMock(return_value=b"file content")
-    storage.download_file_to_path = AsyncMock()
-    storage.delete_file = AsyncMock()
-    storage.ensure_bucket = AsyncMock()
-    storage.generate_presigned_download_url = AsyncMock(
-        return_value="http://localhost:9000/presigned"
-    )
-    storage.generate_presigned_upload_url = AsyncMock(
-        return_value="http://localhost:9000/presigned-upload"
-    )
-    return storage
-
-
-@pytest.fixture
 def sample_file_record():
     """A FileAttachment with sensible defaults for unit tests."""
+    # TODO: replace with an actual file
     file_id = uuid.uuid4()
     workspace_id = uuid.uuid4()
-    return FileAttachment(
+    return File(
         id=file_id,
         workspace_id=workspace_id,
         channel_id=None,
@@ -219,8 +192,8 @@ def sample_file_record():
         original_filename="test.pdf",
         content_type="application/pdf",
         size_bytes=1024,
-        checksum="abc123def456",
-        processing_status=ProcessingStatus.UPLOADED,
+        sha256checksum="abc123def456",
+        processing_status=FileStatus.UPLOADED,
     )
 
 

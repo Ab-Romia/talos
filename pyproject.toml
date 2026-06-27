@@ -47,6 +47,12 @@ dependencies = [
     "taskiq-redis>=1.0.9",
     "pywebpush>=2.3.0",
     "python-socketio>=5.16.2",
+    "aioboto3>=11.2.0",
+    "aiogoogle>=5.17.0",
+    "fsspec>=2023.6.0",
+    "s3fs>=2023.6.0",
+    "pyrefly>=0.45.0",
+    "httpx>=0.28.1",
 ]
 
 [dependency-groups]

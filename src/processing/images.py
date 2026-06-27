@@ -1,15 +1,13 @@
-"""Image processing: thumbnail generation."""
-
 import os
 import tempfile
 from io import BytesIO
 
 from PIL import Image
+from fsspec.asyn import AsyncFileSystem
 from sqlalchemy.orm import Session
 
 from config import cfg
-from files.model import FileAttachment
-from files.storage import MinIOStorage
+from files.model import File
 from utils.logger import get_logger
 
 THUMBNAIL_SIZE = cfg().files.thumbnail_size
@@ -17,13 +15,10 @@ THUMBNAIL_SIZE = cfg().files.thumbnail_size
 logger = get_logger(__name__)
 
 
-async def process_image(
-        file_record: FileAttachment,
-        db: Session,
-        storage: MinIOStorage,
-):
-    """Download image from MinIO, generate thumbnail, upload thumbnail."""
-    ext = os.path.splitext(file_record.original_filename)[1].lower()
+# TODO: update storage interface
+async def process_image(file_record: File, db: Session, storage: AsyncFileSystem):
+    """Download an image from MinIO, generate a thumbnail, upload thumbnail."""
+    ext = os.path.splitext(file_record.filename)[1].lower()
 
     with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
         tmp_path = tmp.name

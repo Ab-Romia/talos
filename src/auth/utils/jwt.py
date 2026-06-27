@@ -1,6 +1,6 @@
 import uuid
 from functools import lru_cache
-from typing import TypeVar, Type
+from typing import TypeVar, Type, Self
 
 from joserfc import jwe, jwt
 from joserfc.errors import JoseError, ExpiredTokenError
@@ -17,9 +17,17 @@ class BaseJWTClaims(BaseModel):
     exp: DATETIME
 
     iss: str = cfg().app_host
+
     # aud: str | list[str] | None = None
     # iat: datetime | None = None
     # nbf: datetime | None = None
+
+    @classmethod
+    def decode(cls, token: str, sub: uuid.UUID = None) -> Self:
+        return verify_token(token, sub=sub, return_model=cls)
+
+    def encode(self) -> str:
+        return create_token(self)
 
 
 def now():

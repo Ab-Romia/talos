@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Protocol
 from uuid import UUID
 
 from sqlalchemy import select
@@ -11,23 +12,21 @@ DATETIME_MIN = datetime.fromtimestamp(0, timezone.utc)
 DATETIME_MAX = datetime.fromtimestamp(2 ** 33 - 1, timezone.utc)  # ~ year 2286
 
 
-class StorageBackend:
-    """Abstract storage backend interface."""
+class ChatStorageBackend(Protocol):
+    """Abstract chat storage backend interface."""
 
-    async def put(self, message: MessageSchema) -> None:
-        raise NotImplementedError
+    async def put(self, message: MessageSchema) -> None: ...
 
     async def get(self, channel_id: UUID, limit: int | None = None, offset: int = 0,
                   newer_than: datetime = DATETIME_MIN,
                   older_than: datetime = DATETIME_MAX,
                   except_ids: set[UUID] = None) -> list[MessageSchema]:
-        raise NotImplementedError
+        ...
 
-    async def get_by_id(self, message_id: UUID) -> MessageSchema | None:
-        raise NotImplementedError
+    async def get_by_id(self, message_id: UUID) -> MessageSchema | None: ...
 
 
-class DatabaseStorageBackend(StorageBackend):
+class DatabaseStorageBackend(ChatStorageBackend):
     """Cold storage layer using PostgreSQL."""
 
     def __init__(self, session_factory=None) -> None:
@@ -69,13 +68,13 @@ class DatabaseStorageBackend(StorageBackend):
             await db.commit()
 
 
-def bind_chat_storage(storage: StorageBackend):
+def bind_chat_storage(storage: ChatStorageBackend):
     """Dependency: two-tier cache with injected backends."""
     global _storage
     _storage = storage
 
 
-def get_storage() -> StorageBackend:
+def get_storage() -> ChatStorageBackend:
     """Dependency: singleton cache instance."""
     if _storage is None:
         raise RuntimeError("Cache not initialized. Call build_cache() on app startup.")
@@ -83,4 +82,4 @@ def get_storage() -> StorageBackend:
 
 
 # Default singleton instance
-_storage: StorageBackend | None = None
+_storage: ChatStorageBackend | None = None

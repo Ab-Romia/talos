@@ -42,12 +42,13 @@ class AuthConfig(BaseModel):
 
 
 class MinIOConfig(BaseModel):
-    internal_endpoint: str = "localhost:9000"
-    external_endpoint: str = "localhost:9000"
+    internal_endpoint: str = "127.0.0.1:9000"
+    public_endpoint: str = "127.0.0.1:9000"
     access_key: str = "minioadmin"
     secret_key: SecretStr = SecretStr("minioadmin")
     secure: bool = False
-    bucket_name: str = "talos-uploads"
+    bucket: str = "talos"
+    max_file_size: int = 50 * 1024 * 1024  # 50 MiB
 
 
 class FilesConfig(BaseModel):
@@ -102,13 +103,31 @@ class PushConfig(BaseModel):
     vapid_subject: str
 
 
+class DatabaseConfig(BaseModel):
+    protocol: str = "postgresql+psycopg"
+    async_protocol: str = "postgresql+psycopg"
+    host: str
+    port: int = 5432
+    name: str
+    user: str
+    password: SecretStr
+
+    @property
+    def url(self) -> str:
+        return f"{self.protocol}://{self.user}:{self.password.get_secret_value()}@{self.host}:{self.port}/{self.name}"
+
+    @property
+    def async_url(self) -> str:
+        return f"{self.async_protocol}://{self.user}:{self.password.get_secret_value()}@{self.host}:{self.port}/{self.name}"
+
+
 class Config(BaseSettings):
     is_test: bool = False
     app_name: str = "Talos"
     app_host: str
     app_port: int
 
-    database_url: SecretStr
+    database: DatabaseConfig = None
 
     auth: AuthConfig = None
     minio: MinIOConfig = MinIOConfig()
