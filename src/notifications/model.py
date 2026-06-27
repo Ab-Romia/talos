@@ -8,7 +8,7 @@ from sqlalchemy import DateTime, ForeignKey, Enum, Uuid, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from model import Base
+from database import Base
 from utils.datetime import utcnow
 
 

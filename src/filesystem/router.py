@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
 
 from auth import active_user
-from model import DatabaseDep
+from database import DatabaseDep
 from utils.logger import get_logger
 from workspace import require_perms
 from . import service

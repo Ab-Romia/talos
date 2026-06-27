@@ -8,7 +8,7 @@ from sqlalchemy import Uuid, ForeignKey, DateTime, func
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from model import Base
+from database import Base
 
 if TYPE_CHECKING:
     from permissions.model import Role

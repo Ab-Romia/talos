@@ -11,7 +11,7 @@ from starlette.responses import RedirectResponse
 from auth.model import User, Session
 from auth.utils import errors
 from auth.utils.session import SessionDep, auth_token, unverified_session, UnverifiedSessionDep
-from model import DatabaseDep
+from database import DatabaseDep
 
 
 # TODO:

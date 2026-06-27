@@ -12,7 +12,7 @@ from starlette.responses import RedirectResponse
 from auth.model import IdentityProvider, Issuer, User, ProviderToken
 from auth.utils.session import UnverifiedSessionDep, NewSessionDep
 from config import cfg
-from model import DatabaseDep
+from database import DatabaseDep
 from utils.logger import get_logger
 
 logger = get_logger(__name__)

@@ -4,7 +4,7 @@ from typing import Annotated
 from fastapi import Depends, Path
 
 from auth import UserIdDep
-from model import DatabaseDep
+from database import DatabaseDep
 from permissions import require_perms as default_require_perms
 from workspace.model import Workspace, Channel
 

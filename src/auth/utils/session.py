@@ -9,8 +9,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from auth.model import Session
 from config import cfg
-from model import DatabaseDep
-from model.utils import DATETIME
+from database import DatabaseDep
+from utils.types import DATETIME
 from .jwt import verify_token, BaseJWTClaims
 from ..utils import errors, jwt
 

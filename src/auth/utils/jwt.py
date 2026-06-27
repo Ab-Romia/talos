@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from auth.utils import errors
 from config import cfg
-from model.utils import UUID, DATETIME
+from utils.types import UUID, DATETIME
 
 
 class BaseJWTClaims(BaseModel):

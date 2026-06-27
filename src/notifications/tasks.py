@@ -7,7 +7,7 @@ from taskiq.message import TaskiqMessage
 
 from broker import broker, register_callback
 from config import cfg
-from model import SessionLocal
+from database import SessionLocal
 from utils.datetime import utcnow
 from utils.logger import get_logger
 from .model import NotificationsChannel, NotificationDelivery, DeliveryStatus, NotificationSchema, \

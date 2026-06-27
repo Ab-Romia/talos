@@ -7,7 +7,7 @@ from fsspec.asyn import AsyncFileSystem
 from sqlalchemy.orm import Session
 
 from config import cfg
-from files.model import File
+from filesystem.model import File
 from utils.logger import get_logger
 
 THUMBNAIL_SIZE = cfg().files.thumbnail_size

@@ -9,7 +9,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sqlalchemy.orm import Session
 
 from config import global_rag_config
-from files.model import File
+from filesystem.model import File
 from utils.logger import get_logger
 
 logger = get_logger(__name__)

@@ -7,7 +7,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select, or_, update
 
 from config import cfg
-from model import DatabaseDep
+from database import DatabaseDep
 from utils.email import send_email
 from .dependencies import sudo
 from .model import User, IdentityProvider, Issuer, Session as DBSession

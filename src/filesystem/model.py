@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import DateTime, ForeignKey, String, BigInteger, Index, text, func, event, select, ForeignKeyConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from model import Base
+from database import Base
 
 if TYPE_CHECKING:
     from workspace.model import Channel

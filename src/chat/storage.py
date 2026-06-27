@@ -4,7 +4,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 
-from model import AsyncSessionLocal
+from database import AsyncSessionLocal
 from utils.exceptions import handle_exceptions
 from .model import MessageSchema, Message
 
