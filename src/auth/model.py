@@ -8,12 +8,12 @@ from sqlalchemy import Uuid, ForeignKey, DateTime, func
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from files.model import FileAttachment
 from model import Base
 
 if TYPE_CHECKING:
     from permissions.model import Role
     from workspace.model import Workspace
+    from files.model import File
 
 
 class Issuer(PyEnum):
@@ -44,8 +44,8 @@ class User(Base):
         secondary="workspace_members",
         back_populates="members")
     roles: Mapped[list[Role]] = relationship(secondary="users_roles", back_populates="users")
-    uploaded_files: Mapped[list[FileAttachment]] = relationship(
-        FileAttachment,
+    uploaded_files: Mapped[list[File]] = relationship(
+        "File",
         back_populates="uploader",
         cascade="all, delete-orphan",
     )
@@ -99,7 +99,7 @@ class ProviderToken(Base):
     access_token: Mapped[str] = mapped_column()
     refresh_token: Mapped[str | None] = mapped_column()
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    scope: Mapped[str | None] = mapped_column()
+    scopes: Mapped[str | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=func.now(), onupdate=func.now()

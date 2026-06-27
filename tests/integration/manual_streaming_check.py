@@ -18,7 +18,7 @@ from unittest.mock import MagicMock
 from starlette.datastructures import UploadFile
 
 from config import cfg
-from files.service import FileService
+from files.service__ import FileService
 from files.storage import S3Storage
 
 
@@ -33,7 +33,7 @@ async def main(path: str) -> None:
         public_endpoint=storage_cfg.external_endpoint,
         access_key=storage_cfg.access_key,
         secret_key=storage_cfg.secret_key,
-        bucket_name=storage_cfg.bucket_name,
+        bucket_name=storage_cfg.bucket,
     )
     await storage.ensure_bucket()
 
@@ -52,8 +52,8 @@ async def main(path: str) -> None:
     result = await svc.upload(upload, workspace_id, uploader_id)
     rss_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
-    assert result.checksum == expected_sha, (
-        f"checksum mismatch: service={result.checksum} expected={expected_sha}"
+    assert result.sha256checksum == expected_sha, (
+        f"checksum mismatch: service={result.sha256checksum} expected={expected_sha}"
     )
 
     downloaded = await storage.download_file(result.storage_key)

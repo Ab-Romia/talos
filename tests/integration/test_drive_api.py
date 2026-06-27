@@ -5,10 +5,10 @@ from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from integrations.drive.router import drive_status, list_drive_files, import_drive_file
 
 from auth.model import ProviderToken
 from config import cfg
-from integrations.drive.router import drive_status, list_drive_files, import_drive_file
 
 
 @pytest.fixture
@@ -104,7 +104,7 @@ class TestDriveImport:
     def test_happy_path_runs_through_upload(
             self, client, test_workspace, drive_token, db_session, mock_arq_pool, path
     ):
-        from files.model import FileAttachment
+        from files.model import File
 
         with patch("integrations.drive.service.DriveClient") as MockClient:
             instance = MockClient.return_value
@@ -126,7 +126,7 @@ class TestDriveImport:
         assert body["filename"] == "report.pdf"
         assert body["drive_file_id"] == "abc"
         # Persisted to the DB
-        record = db_session.get(FileAttachment, uuid.UUID(body["file_id"]))
+        record = db_session.get(File, uuid.UUID(body["file_id"]))
         assert record is not None
         # Same enqueue path as direct upload
         mock_arq_pool.enqueue_job.assert_called_once()

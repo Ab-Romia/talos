@@ -13,9 +13,7 @@ from auth.router import router as auth_router
 from auth.utils.session import SessionMiddleware
 from chat.realtime import sio
 from config import cfg
-from files.router import router as files_router
-from files.storage import S3Storage
-from integrations.drive import drive_router
+from files.storage.gdrive.router import router as gdrive_proxy_router
 from notifications.router import notifications as notifications_router
 from utils.exceptions import dbapi_error_handler
 from workspace.router import workspace as workspace_router, channel as channel_router
@@ -37,12 +35,10 @@ async def lifespan(app: FastAPI):
 
     bind_chat_storage(DatabaseStorageBackend())
 
-    app.state.minio_storage = S3Storage(config=cfg().minio)
     app.state.redis = redis.asyncio.from_url(cfg().redis.url, decode_responses=True)
 
     if not broker.is_worker_process:
         await broker.startup()
-    await app.state.minio_storage.connect()
     app.state.arq_pool = None
 
     yield
@@ -51,18 +47,16 @@ async def lifespan(app: FastAPI):
     if not broker.is_worker_process:
         await broker.startup()
     await app.state.redis.aclose()
-    await app.state.minio_storage.connect()
 
 
 app = FastAPI(title='Talos', lifespan=lifespan)
 
 app.mount('/socket.io', socketio.ASGIApp(sio), name='socketio')
-app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
+app.include_router(auth_router, prefix="/api", tags=["auth"])
 app.include_router(notifications_router, prefix="/api")
-app.include_router(files_router, prefix="/api")
-app.include_router(drive_router, prefix="/api")
 app.include_router(workspace_router, prefix="/api")
 app.include_router(channel_router, prefix="/api")
+app.include_router(gdrive_proxy_router, prefix="/api/storage", tags=["gdrive-proxy"])
 
 # TODO: replace with reverse proxy
 app.add_middleware(

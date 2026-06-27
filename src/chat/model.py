@@ -8,10 +8,10 @@ from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import ForeignKey, Uuid, DateTime, func
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 
-from files.model import FileAttachment
 from model import Base
 
 if TYPE_CHECKING:
+    from files.model import File
     from workspace.model import Channel
 
 
@@ -50,5 +50,4 @@ class Message(Base):
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
 
     channel: Mapped[Channel] = relationship("Channel", back_populates="messages")
-    files: Mapped[list[FileAttachment]] = relationship("FileAttachment", secondary="message_files",
-                                                       back_populates="messages")
+    files: Mapped[list[File]] = relationship("File", secondary="message_files", back_populates="message")

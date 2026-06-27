@@ -1,250 +1,273 @@
-"""File upload and management endpoints."""
-
 import uuid
-from typing import Annotated
+from typing import Annotated, Callable, Literal
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
+from starlette.responses import JSONResponse
 
-from auth import UserDep
-from auth.utils.session import verified_session
-from config import cfg
-from files.dependencies import get_storage, StorageDep
-from files.errors import FileTooLarge, UnsupportedFileType
-from files.schemas import (
-    FileDownloadResponse,
-    FileListResponse,
-    FileMetadata,
-    FileThumbnailResponse,
-    FileUploadResponse,
-)
-from files.service import FileService
-from files.storage import S3Storage
+from auth import active_user
+from files.model import FileMetadata
+from files.storage.dependencies import FSDep
 from model import DatabaseDep
 from utils.logger import get_logger
+from workspace import require_perms
+from . import service
 
 logger = get_logger(__name__)
 
-router = APIRouter()
+
+class FileUploadResponse(BaseModel):
+    file_id: uuid.UUID
+    upload_url: str
 
 
-@router.post(
-    "/workspaces/{workspace_id}/files",
-    response_model=FileUploadResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-)
-async def upload_file(
-        request: Request,
-        db: DatabaseDep,
+class GetResponse(BaseModel):
+    metadata: FileMetadata
+    download_url: str | None = None
+
+
+class FileListResponse(BaseModel):
+    files: list[FileMetadata]
+    next_cursor: str | None
+
+
+class FileCreateRequest(BaseModel):
+    create_type: Literal["file"] = "file"
+    workspace_id: uuid.UUID
+    channel_id: uuid.UUID | None
+    user_id: uuid.UUID
+    header: bytes
+    sha256checksum: str
+    size: int
+    parent_uri: str
+    filename: str | None = None
+
+
+class DirectoryCreateRequest(BaseModel):
+    create_type: Literal["directory"] = "directory"
+    uri: str
+
+
+class FileUpdateRequest(BaseModel):
+    filename: str | None = None
+
+
+CreateRequest = Annotated[FileCreateRequest | DirectoryCreateRequest, Field(discriminator="create_type")]
+
+# Scope tuple: (workspace_id, channel_id | None)
+FilesScope = tuple[uuid.UUID, uuid.UUID | None]
+
+
+async def workspace_scope(
         workspace_id: uuid.UUID,
-        file: Annotated[UploadFile, File(...)],
-        user: UserDep,
-        storage: Annotated[S3Storage, Depends(get_storage)],
-        channel_id: Annotated[uuid.UUID | None, Query()] = None,
-):
-    """Upload a file to a workspace. MIME type is validated via magic bytes."""
-    content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > cfg().files.max_size:
-        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "File exceeds maximum size")
+        _user: Annotated[object, Depends(active_user)],
+) -> FilesScope:
+    """Extracts workspace path param; auth enforced by require_perms on each route."""
+    return workspace_id, None
 
-    svc = FileService(db, storage)
-    try:
-        db_file = await svc.upload(file, workspace_id, user.id, channel_id)
-    except FileTooLarge:
-        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "File exceeds maximum size")
-    except UnsupportedFileType as e:
-        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, str(e))
-    except ValueError as e:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
 
-    # Enqueue background processing
-    arq_pool = getattr(request.app.state, "arq_pool", None)
-    try:
-        await FileService.enqueue_processing(arq_pool, db_file.id)
-    except RuntimeError:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "File processing queue unavailable; try again later",
+async def channel_scope(
+        workspace_id: uuid.UUID,
+        channel_id: uuid.UUID,
+        _user: Annotated[object, Depends(active_user)],
+) -> FilesScope:
+    """Extracts workspace + channel path params; auth enforced by require_perms on each route."""
+    return workspace_id, channel_id
+
+
+def make_files_router(
+        prefix: str,
+        scope_dep: Callable,
+        name_prefix: str,
+) -> APIRouter:
+    """
+    Produce a files APIRouter for either workspace-scoped or channel-scoped paths.
+    Every handler is: unpack scope → call service → return.
+    Auth lives in scope_dep + require_perms. Logic lives in service.
+    """
+    router = APIRouter(prefix=prefix, tags=["files"])
+
+    @router.post(
+        "/{protocol_abbr}",
+        operation_id=f"{name_prefix}_create",
+        dependencies=[require_perms("files:write", "files:create")],
+        status_code=status.HTTP_202_ACCEPTED,
+        responses={
+            status.HTTP_201_CREATED: {"description": "Directory created"},
+            status.HTTP_208_ALREADY_REPORTED: {
+                "description": "File already exists with same checksum; existing metadata returned"
+            },
+            status.HTTP_202_ACCEPTED: {"description": "File record created; upload URL returned"},
+            status.HTTP_400_BAD_REQUEST: {"description": "Invalid request"},
+            status.HTTP_404_NOT_FOUND: {"description": "Invalid protocol or path"},
+            status.HTTP_503_SERVICE_UNAVAILABLE: {"description": "Storage backend unavailable"},
+        },
+    )
+    async def create_file_or_directory(
+            protocol_abbr: Literal["g", "m"],
+            payload: CreateRequest,
+            scope: Annotated[FilesScope, Depends(scope_dep)],
+            filesystem: FSDep,
+            db: DatabaseDep,
+    ):
+        """Create a file or directory. Files → signed upload URL. Directories → 201."""
+        ws_id, ch_id = scope
+        match payload:
+            case FileCreateRequest():
+                # Inject scope into payload if not already set (channel-scoped upload)
+                if payload.workspace_id != ws_id:
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, "workspace_id mismatch")
+                if ch_id is not None and payload.channel_id is None:
+                    payload = payload.model_copy(update={"channel_id": ch_id})
+                return await service.get_upload_url(db, filesystem, payload)
+            case DirectoryCreateRequest():
+                filesystem.mkdirs(payload.uri, exist_ok=True)
+                return JSONResponse(
+                    status_code=status.HTTP_201_CREATED,
+                    content={"status": "directory created", "path": payload.uri},
+                )
+
+    @router.get(
+        "/{protocol_abbr}",
+        operation_id=f"{name_prefix}_list",
+        response_model=FileListResponse,
+        dependencies=[require_perms("files:read")],
+    )
+    async def list_files(
+            protocol_abbr: Literal["g", "m"],
+            scope: Annotated[FilesScope, Depends(scope_dep)],
+            db: DatabaseDep,
+            content_type: Annotated[str | None, Query()] = None,
+            cursor: Annotated[str | None, Query()] = None,
+            limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    ):
+        """List files with cursor-based pagination. Channel scope auto-filters by channel_id."""
+        ws_id, ch_id = scope
+        files, next_cursor = service.list_files(
+            db=db,
+            workspace_id=ws_id,
+            channel_id=ch_id,
+            content_type=content_type,
+            cursor=cursor,
+            limit=limit,
+        )
+        return FileListResponse(
+            files=[FileMetadata.model_validate(f) for f in files],
+            next_cursor=next_cursor,
         )
 
-    return FileUploadResponse(
-        file_id=db_file.id,
-        status=db_file.processing_status,
-        filename=db_file.original_filename,
-        content_type=db_file.content_type,
-        size_bytes=db_file.size_bytes,
+    @router.get(
+        "/{protocol_abbr}/{file_or_dir_id}",
+        operation_id=f"{name_prefix}_get",
+        response_model=GetResponse,
+        responses={
+            status.HTTP_404_NOT_FOUND: {"description": "File not found"},
+            status.HTTP_204_NO_CONTENT: {"description": "File exists but not yet available"},
+        },
+        dependencies=[require_perms("files:read")],
     )
+    async def get_file(
+            protocol_abbr: Literal["g", "m"],
+            file_or_dir_id: uuid.UUID,
+            scope: Annotated[FilesScope, Depends(scope_dep)],
+            filesystem: FSDep,
+            db: DatabaseDep,
+            download: bool = False,
+    ):
+        """Get metadata and optionally a signed download URL. Directories return a file listing."""
+        ws_id, ch_id = scope
 
+        if filesystem.isdir(str(file_or_dir_id)):
+            files, next_cursor = service.list_files(
+                db=db,
+                workspace_id=ws_id,
+                channel_id=ch_id,
+                content_type=None,
+                cursor=None,
+                parent_uri=str(file_or_dir_id),
+                limit=1000,
+            )
+            return FileListResponse(files=[FileMetadata.model_validate(f) for f in files], next_cursor=next_cursor)
 
-@router.get(
-    "/workspaces/{workspace_id}/files/{file_id}/metadata",
-    response_model=FileMetadata,
-    dependencies=[Depends(verified_session)],
-)
-def get_file_metadata(file_id: uuid.UUID, db: DatabaseDep):
-    """Get metadata for a single file."""
-    svc = FileService(db, storage=None)
-    file = svc.get_file(file_id)
-    if file is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found")
-    return FileMetadata.model_validate(file)
-
-
-@router.get(
-    "/workspaces/{workspace_id}/files/{file_id}",
-    response_model=FileDownloadResponse,
-    dependencies=[Depends(verified_session)],
-)
-async def download_file(
-        workspace_id: uuid.UUID,
-        file_id: uuid.UUID,
-        storage: Annotated[S3Storage, Depends(get_storage)],
-        db: DatabaseDep,
-):
-    """Generate a pre-signed download URL for a file."""
-    svc = FileService(db, storage)
-    result = await svc.get_download_url(file_id)
-    if result is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found")
-
-    url, filename = result
-    return FileDownloadResponse(file_id=file_id, filename=filename, download_url=url)
-
-
-# --- Thumbnail (pre-signed URL) ---
-
-@router.get(
-    "/workspaces/{workspace_id}/files/{file_id}/thumbnail",
-    response_model=FileThumbnailResponse,
-    dependencies=[Depends(verified_session)]
-)
-async def get_file_thumbnail(file_id: uuid.UUID, storage: StorageDep, db: DatabaseDep):
-    """Return a pre-signed URL to the file's generated thumbnail, if any."""
-    svc = FileService(db, storage)
-    url = await svc.get_thumbnail_url(file_id)
-    if url is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Thumbnail not found")
-    return FileThumbnailResponse(file_id=file_id, thumbnail_url=url)
-
-
-# --- Retry processing ---
-
-@router.post(
-    "/workspaces/{workspace_id}/files/{file_id}/retry",
-    response_model=FileMetadata,
-    dependencies=[Depends(verified_session)],
-)
-async def retry_file_processing(request: Request, file_id: uuid.UUID, db: DatabaseDep):
-    """Re-enqueue a file for processing. Valid for UPLOADED and FAILED states."""
-    svc = FileService(db, storage=None)
-    try:
-        file = svc.reset_for_retry(file_id)
-    except ValueError as e:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
-
-    if file is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found")
-
-    arq_pool = getattr(request.app.state, "arq_pool", None)
-    try:
-        await FileService.enqueue_processing(arq_pool, file.id)
-    except RuntimeError:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "File processing queue unavailable; try again later",
+        file = await service.file_info(
+            db=db,
+            filesystem=filesystem,
+            file_id=file_or_dir_id,
+            workspace_id=ws_id,
+            channel_id=ch_id,
         )
 
-    return FileMetadata.model_validate(file)
+        if not download:
+            return GetResponse(metadata=file)
 
+        url = await service.get_download_url(db, filesystem, file.file_path)
+        return GetResponse(metadata=file, download_url=url)
 
-# --- Processing status ---
-
-@router.get(
-    "/workspaces/{workspace_id}/files/{file_id}/status",
-    dependencies=[Depends(verified_session)],
-)
-def get_file_status(file_id: uuid.UUID, db: DatabaseDep):
-    """Get the processing status of a file."""
-    svc = FileService(db, storage=None)
-    file = svc.get_file(file_id)
-    if file is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found")
-    return {
-        "file_id": str(file.id),
-        "processing_status": file.processing_status.value,
-        "processing_error": file.processing_error,
-        "chunk_count": file.chunk_count,
-    }
-
-
-@router.get(
-    "/workspaces/{workspace_id}/files",
-    response_model=FileListResponse,
-    dependencies=[Depends(verified_session)],
-)
-def list_files(
-        workspace_id: uuid.UUID,
-        db: DatabaseDep,
-        channel_id: Annotated[uuid.UUID | None, Query()] = None,
-        content_type: Annotated[str | None, Query()] = None,
-        cursor: Annotated[str | None, Query()] = None,
-        limit: Annotated[int, Query(ge=1, le=100)] = 20,
-):
-    """List files in a workspace with cursor-based pagination."""
-    svc = FileService(db, storage=None)
-    files, next_cursor = svc.list_files(
-        workspace_id=workspace_id,
-        channel_id=channel_id,
-        content_type=content_type,
-        cursor=cursor,
-        limit=limit,
+    @router.patch(
+        "/{protocol_abbr}/{file_id}",
+        operation_id=f"{name_prefix}_update_meta",
+        dependencies=[require_perms("files:write")],
+        status_code=status.HTTP_200_OK,
+        response_model=FileMetadata,
     )
-    return FileListResponse(
-        files=[FileMetadata.model_validate(f) for f in files],
-        next_cursor=next_cursor,
+    async def update_file_meta(
+            protocol_abbr: Literal["g", "m"],
+            file_id: uuid.UUID,
+            payload: FileUpdateRequest,
+            scope: Annotated[FilesScope, Depends(scope_dep)],
+            db: DatabaseDep,
+    ):
+        """Partial update of file metadata (e.g. rename)."""
+        ws_id, ch_id = scope
+        return await service.update_file_meta(db, file_id, ws_id, payload)
+
+    @router.put(
+        "/{protocol_abbr}/{file_id}",
+        operation_id=f"{name_prefix}_replace",
+        dependencies=[require_perms("files:write")],
+        status_code=status.HTTP_202_ACCEPTED,
     )
+    async def replace_file(
+            protocol_abbr: Literal["g", "m"],
+            file_id: uuid.UUID,
+            payload: FileCreateRequest,
+            scope: Annotated[FilesScope, Depends(scope_dep)],
+            filesystem: FSDep,
+            db: DatabaseDep,
+    ):
+        """Replace file content entirely; returns new signed upload URL."""
+        ws_id, ch_id = scope
+        return await service.replace_file(db, filesystem, file_id, ws_id, payload)
+
+    @router.delete(
+        "/{file_id}",
+        operation_id=f"{name_prefix}_delete",
+        response_model=FileMetadata,
+        dependencies=[require_perms("files:write")],
+    )
+    async def delete_file(
+            file_id: uuid.UUID,
+            scope: Annotated[FilesScope, Depends(scope_dep)],
+            db: DatabaseDep,
+    ):
+        """Soft-delete a file (sets deleted_at)."""
+        ws_id, _ch_id = scope
+        file = service.soft_delete(db, file_id, ws_id)
+        if file is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found")
+        return FileMetadata.model_validate(file)
+
+    return router
 
 
-# --- Soft delete ---
-
-@router.delete(
-    "/workspaces/{workspace_id}/files/{file_id}",
-    response_model=FileMetadata,
-    dependencies=[Depends(verified_session)],
+workspace = make_files_router(
+    prefix="/files",
+    scope_dep=workspace_scope,
+    name_prefix="ws_files",
 )
-def delete_file(
-        workspace_id: uuid.UUID,
-        file_id: uuid.UUID,
-        db: DatabaseDep,
-):
-    """Soft-delete a file (sets deleted_at)."""
-    svc = FileService(db, storage=None)
-    try:
-        file = svc.soft_delete(file_id, workspace_id)
-    except Exception:
-        logger.exception("soft_delete failed", file_id=str(file_id))
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Vector store unavailable; file not deleted",
-        )
-    if file is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found")
-    return FileMetadata.model_validate(file)
 
-
-# --- Attach file to message ---
-
-@router.post(
-    "/workspaces/{workspace_id}/channels/{channel_id}/messages/{message_id}/files",
-    dependencies=[Depends(verified_session)]
+channel = make_files_router(
+    prefix="/files",
+    scope_dep=channel_scope,
+    name_prefix="ch_files",
 )
-def attach_file_to_message(
-        message_id: uuid.UUID,
-        file_id: Annotated[uuid.UUID, Query(...)],
-        db: DatabaseDep,
-):
-    """Attach an existing file to a message."""
-    svc = FileService(db, storage=None)
-    success = svc.attach_to_message(file_id, message_id)
-    if not success:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "File or message not found")
-    return {"status": "attached", "file_id": str(file_id), "message_id": str(message_id)}

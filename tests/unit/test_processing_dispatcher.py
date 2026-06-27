@@ -1,11 +1,11 @@
 """Unit tests for the processing task dispatcher (audit fixes)."""
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from files.model import ProcessingStatus
+from files.model import FileStatus
 
 
 @pytest.mark.unit
@@ -16,7 +16,7 @@ class TestProcessFileDispatcher:
         from processing.tasks import process_file
 
         sample_file_record.content_type = "application/x-fictional"
-        sample_file_record.processing_status = ProcessingStatus.UPLOADED
+        sample_file_record.status = FileStatus.UPLOADED
 
         db = MagicMock()
         db.get.return_value = sample_file_record
@@ -26,18 +26,18 @@ class TestProcessFileDispatcher:
         with pytest.raises(ValueError, match="No processor"):
             await process_file(ctx, str(sample_file_record.id))
 
-        assert sample_file_record.processing_status == ProcessingStatus.FAILED
+        assert sample_file_record.status == FileStatus.PROCESSING_FAILED
         assert "No processor" in (sample_file_record.processing_error or "")
 
     @pytest.mark.asyncio
     async def test_missing_row_during_processing_does_not_re_raise(self):
         """Audit bug #3: vanished file row should log + return, not retry forever."""
         from processing.tasks import process_file
-        from files.model import FileAttachment
+        from files.model import File
 
-        existing = MagicMock(spec=FileAttachment)
+        existing = MagicMock(spec=File)
         existing.id = uuid.uuid4()
-        existing.processing_status = ProcessingStatus.UPLOADED
+        existing.processing_status = FileStatus.UPLOADED
         existing.content_type = "text/plain"
 
         db = MagicMock()

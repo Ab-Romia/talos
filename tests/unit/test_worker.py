@@ -34,16 +34,16 @@ class TestRecoverStuckProcessing:
         return record
 
     def test_marks_old_processing_rows_as_failed(self):
-        from files.model import ProcessingStatus
+        from files.model import FileStatus
         from processing.worker import recover_stuck_processing, STUCK_AGE
 
-        stuck = self._make_file(ProcessingStatus.PROCESSING, STUCK_AGE + timedelta(minutes=5))
+        stuck = self._make_file(FileStatus.PROCESSING, STUCK_AGE + timedelta(minutes=5))
         factory, session = self._build_session_factory([stuck], [])
 
         recovered = recover_stuck_processing(factory)
 
         assert recovered == 1
-        assert stuck.processing_status == ProcessingStatus.FAILED
+        assert stuck.processing_status == FileStatus.PROCESSING_FAILED
         assert stuck.processing_error == "worker restarted while processing"
         session.commit.assert_called_once()
 

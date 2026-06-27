@@ -4,10 +4,10 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from integrations.drive.service import DriveImportService
 
 from config import cfg
 from files.errors import FileTooLarge, UnsupportedFileType
-from integrations.drive.service import DriveImportService
 
 
 @pytest.mark.unit

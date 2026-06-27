@@ -3,13 +3,13 @@ from typing import Annotated
 
 from fastapi import Depends, Path
 
-from auth.dependencies import user_id
+from auth import UserIdDep
 from model import DatabaseDep
 from permissions import require_perms as default_require_perms
 from workspace.model import Workspace, Channel
 
 
-def is_owner(user_id: Annotated[uuid.UUID, Depends(user_id)],
+def is_owner(user_id: UserIdDep,
              workspace_id: Annotated[uuid.UUID | None, Path(default_factory=lambda: None)],
              channel_id: Annotated[uuid.UUID | None, Path(default_factory=lambda: None)],
              db: DatabaseDep) -> bool:

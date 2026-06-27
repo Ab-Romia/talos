@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from chat.model import Message
-from files.model import FileAttachment, ProcessingStatus
+from files.model import File, FileStatus
 
 
 @pytest.fixture
@@ -26,14 +26,14 @@ def test_message(db_session, test_workspace, test_channel, test_user):
 
 @pytest.fixture
 def test_file_record(db_session, test_workspace, test_user):
-    file_record = FileAttachment(
+    file_record = File(
         workspace_id=test_workspace.id,
         uploader_id=test_user.id,
         original_filename="test.txt",
         content_type="text/plain",
         size_bytes=100,
         checksum=uuid.uuid4().hex,
-        processing_status=ProcessingStatus.UPLOADED,
+        processing_status=FileStatus.UPLOADED,
     )
     db_session.add(file_record)
     db_session.commit()
@@ -46,7 +46,7 @@ def test_file_record(db_session, test_workspace, test_user):
 
 @pytest.fixture
 def indexed_file_record(db_session, test_file_record):
-    test_file_record.processing_status = ProcessingStatus.INDEXED
+    test_file_record.processing_status = FileStatus.INDEXED
     db_session.flush()
     return test_file_record
 
@@ -60,7 +60,7 @@ def channel_file_record(db_session, test_file_record, test_channel):
 
 @pytest.fixture
 def file_service(test_storage, db_session):
-    from files.service import FileService
+    from files.service__ import FileService
 
     return FileService(storage=test_storage, db=db_session)
 

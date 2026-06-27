@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from chat.model import Message
-from files.model import FileAttachment, ProcessingStatus
+from files.model import File, FileStatus
 from tests.conftest import test_workspace, test_channel
 
 
@@ -35,10 +35,10 @@ def _make_file_in_db(db_session, workspace_id, channel_id=None, uploader_id=None
         content_type="text/plain",
         size_bytes=100,
         checksum=uuid.uuid4().hex,
-        processing_status=ProcessingStatus.UPLOADED,
+        processing_status=FileStatus.UPLOADED,
     )
     defaults.update(overrides)
-    f = FileAttachment(**defaults)
+    f = File(**defaults)
     db_session.add(f)
     db_session.flush()
     return f
@@ -69,7 +69,7 @@ def client(db_session, test_user, test_workspace, mock_storage, mock_arq_pool):
     from fastapi.testclient import TestClient
     from auth.dependencies import active_user
     from auth.utils.session import verified_session
-    from files.dependencies import get_workspace_member, get_storage
+    from files.dependencies import workspace_membership, get_storage
     from app import app
 
     # Replace the lifespan with a no-op to avoid connecting to MinIO/Redis
@@ -85,7 +85,7 @@ def client(db_session, test_user, test_workspace, mock_storage, mock_arq_pool):
 
     app.dependency_overrides[active_user] = lambda: test_user
     app.dependency_overrides[verified_session] = lambda: None
-    app.dependency_overrides[get_workspace_member] = lambda: test_workspace
+    app.dependency_overrides[workspace_membership] = lambda: test_workspace
     app.dependency_overrides[get_storage] = lambda: mock_storage
 
     with TestClient(app, raise_server_exceptions=False) as c:

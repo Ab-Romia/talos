@@ -2,11 +2,11 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, func, Uuid, event
+from sqlalchemy import DateTime, ForeignKey, func, Uuid, event, UniqueConstraint
 from sqlalchemy.ext.orderinglist import ordering_list
 from sqlalchemy.orm import mapped_column, Mapped, relationship, object_session
 
-from files.model import FileAttachment
+from files.model import File
 from model import Base
 
 if TYPE_CHECKING:
@@ -32,7 +32,7 @@ class Workspace(Base):
     owner = relationship("User")
     channels: Mapped[list[Channel]] = relationship("Channel", back_populates="workspace", cascade="all, delete-orphan")
     members = relationship("User", secondary="workspace_members", back_populates="workspaces")
-    files: Mapped[list[FileAttachment]] = relationship("FileAttachment", back_populates="workspace")
+    files: Mapped[list[File]] = relationship("File", back_populates="workspace")
 
     roles: Mapped[list[Role]] = relationship(  # type: ignore[forward-reference]
         "Role",
@@ -55,11 +55,18 @@ class Channel(Base):
 
     messages: Mapped[list["Message"]] = relationship("Message", back_populates="channel", cascade="all, delete-orphan")
     workspace: Mapped[Workspace] = relationship("Workspace", back_populates="channels")
-    files: Mapped[list[FileAttachment]] = relationship("FileAttachment", back_populates="channel")
+    files: Mapped[list[File]] = relationship("File", back_populates="channel",
+                                             foreign_keys="File.channel_id",
+                                             cascade="all, delete-orphan")
     roles_overrides: Mapped[list["ChannelOverrides"]] = relationship(  # type: ignore[forward-reference]
         "ChannelRoleOverride",
         back_populates="channel",
         cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "id", name="uq_channel_workspace"),
+        UniqueConstraint("name", "workspace_id", name="uq_channel_name_workspace")
     )
 
 

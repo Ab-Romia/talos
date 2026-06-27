@@ -26,3 +26,15 @@ class StorageError(FileError):
         self.operation = operation
         self.detail = detail
         super().__init__(f"Storage error during {operation}: {detail}")
+
+
+class FileNotFound(FileError):
+    pass
+
+
+class InvalidPath(FileError):
+    pass
+
+
+class AlreadyExists(FileError):
+    pass

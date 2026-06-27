@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from PIL import Image
 
-from files.model import FileAttachment, ProcessingStatus
+from files.model import File, FileStatus
 
 
 def _create_test_image(width, height, mode="RGB", fmt="PNG"):
@@ -20,13 +20,13 @@ def _create_test_image(width, height, mode="RGB", fmt="PNG"):
 
 
 def _make_record(filename="photo.png", content_type="image/png"):
-    record = MagicMock(spec=FileAttachment)
+    record = MagicMock(spec=File)
     record.id = uuid.uuid4()
     record.workspace_id = uuid.uuid4()
     record.original_filename = filename
     record.content_type = content_type
     record.storage_key = f"workspaces/ws/channels/general/{uuid.uuid4()}.png"
-    record.processing_status = ProcessingStatus.PROCESSING
+    record.processing_status = FileStatus.PROCESSING
     record.thumbnail_storage_key = None
     return record
 

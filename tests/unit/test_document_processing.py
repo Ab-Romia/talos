@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from files.model import FileAttachment, ProcessingStatus
+from files.model import File, FileStatus
 
 
 @pytest.mark.unit
@@ -75,12 +75,12 @@ class TestExtractText:
 @pytest.mark.unit
 class TestProcessDocument:
     def _make_record(self, content_type="text/plain", filename="test.txt"):
-        record = MagicMock(spec=FileAttachment)
+        record = MagicMock(spec=File)
         record.id = uuid.uuid4()
         record.workspace_id = uuid.uuid4()
         record.original_filename = filename
         record.content_type = content_type
-        record.processing_status = ProcessingStatus.PROCESSING
+        record.processing_status = FileStatus.PROCESSING
         record.chunk_count = None
         return record
 

@@ -2,7 +2,7 @@ import uuid
 
 import pytest
 
-from files.model import ProcessingStatus
+from files.model import FileStatus
 
 
 @pytest.mark.integration
@@ -13,14 +13,14 @@ class TestMetadataAPI:
         assert resp.status_code == 200
         data = resp.json()
         assert data["id"] == str(f.id)
-        assert data["original_filename"] == f.original_filename
+        assert data["original_filename"] == f.filename
 
     def test_get_metadata_404(self, client, test_workspace):
         resp = client.get(f"/api/workspaces/{test_workspace.id}/files/{uuid.uuid4()}/metadata")
         assert resp.status_code == 404
 
     def test_get_status_fields(self, client, test_workspace, make_file):
-        f = make_file(test_workspace.id, processing_status=ProcessingStatus.INDEXED, chunk_count=5)
+        f = make_file(test_workspace.id, processing_status=FileStatus.INDEXED, chunk_count=5)
         resp = client.get(f"/api/workspaces/{test_workspace.id}/files/{f.id}/status")
         assert resp.status_code == 200
         data = resp.json()

@@ -13,12 +13,17 @@ from auth.model import IdentityProvider, Issuer, User, ProviderToken
 from auth.utils.session import UnverifiedSessionDep, NewSessionDep
 from config import cfg
 from model import DatabaseDep
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 oauth = OAuth()
 
 for name, client in cfg().auth.oauth_clients.items():
-    oauth.register(name=name, **client.model_dump())
+    oauth.register(name=name,
+                   client_secret=client.client_secret.get_secret_value(),
+                   **client.model_dump(exclude="client_secret"))
 
 
 class OIDC(BaseModel):
@@ -151,14 +156,15 @@ async def oauth_callback(provider: ProviderParam,
 
     session.sub = user.id
 
+    _persist_provider_token(db, user.id, provider, token)
+
     if not user.signup_complete:
         return RedirectResponse(url="/complete_signup", status_code=status.HTTP_303_SEE_OTHER)
-
-    _persist_provider_token(db, user.id, provider, token)
 
     return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
 
 
+# TODO: this should be a separate opt-in
 def _persist_provider_token(db, user_id, provider: str, token: dict):
     """
     Upsert the OAuth access/refresh token returned by the provider.
@@ -170,8 +176,10 @@ def _persist_provider_token(db, user_id, provider: str, token: dict):
     """
     if provider != "google":
         return
+    # TODO: remove
+    print(token)
 
-    access_token = token.get("access_token")
+    access_token: str | None = token.get("access_token")
     if not access_token:
         return
 
@@ -187,7 +195,7 @@ def _persist_provider_token(db, user_id, provider: str, token: dict):
             ProviderToken.provider == provider,
         )
     )
-    refresh_token = token.get("refresh_token") or (existing.refresh_token if existing else None)
+    refresh_token: str | None = token.get("refresh_token") or (existing.refresh_token if existing else None)
 
     if existing is None:
         db.add(ProviderToken(

@@ -43,10 +43,10 @@ class TestRetryStuckProcessing:
     def test_retry_reclaims_stuck_processing(
             self, client, test_workspace, make_file, db_session, mock_arq_pool
     ):
-        from files.model import FileAttachment, ProcessingStatus
+        from files.model import File, FileStatus
         from processing.worker import STUCK_AGE
 
-        f = make_file(test_workspace.id, processing_status=ProcessingStatus.PROCESSING)
+        f = make_file(test_workspace.id, processing_status=FileStatus.PROCESSING)
         # Backdate updated_at past the stuck threshold
         f.updated_at = utcnow() - STUCK_AGE - timedelta(seconds=60)
         db_session.flush()
@@ -55,16 +55,16 @@ class TestRetryStuckProcessing:
         assert resp.status_code == 200
 
         db_session.expire_all()
-        record = db_session.get(FileAttachment, f.id)
-        assert record.processing_status == ProcessingStatus.UPLOADED
+        record = db_session.get(File, f.id)
+        assert record.status == FileStatus.UPLOADED
         mock_arq_pool.enqueue_job.assert_called_once()
 
     def test_retry_rejects_active_processing(
             self, client, test_workspace, make_file, db_session
     ):
-        from files.model import ProcessingStatus
+        from files.model import FileStatus
 
-        f = make_file(test_workspace.id, processing_status=ProcessingStatus.PROCESSING)
+        f = make_file(test_workspace.id, processing_status=FileStatus.PROCESSING)
         # updated_at is recent (just made), so it's still considered active
         resp = client.post(f"/api/workspaces/{test_workspace.id}/files/{f.id}/retry")
         assert resp.status_code == 409
@@ -77,9 +77,9 @@ class TestSoftDeleteVectorFailure:
     def test_soft_delete_aborts_when_vector_cleanup_fails(
             self, client, test_workspace, make_file, db_session
     ):
-        from files.model import FileAttachment, ProcessingStatus
+        from files.model import File, FileStatus
 
-        f = make_file(test_workspace.id, processing_status=ProcessingStatus.INDEXED)
+        f = make_file(test_workspace.id, processing_status=FileStatus.INDEXED)
 
         with patch(
                 "rag.vector_store.delete_file_chunks",
@@ -89,16 +89,16 @@ class TestSoftDeleteVectorFailure:
 
         assert resp.status_code == 503
         db_session.expire_all()
-        record = db_session.get(FileAttachment, f.id)
+        record = db_session.get(File, f.id)
         assert record.deleted_at is None  # not tombstoned
 
     def test_soft_delete_skips_vector_call_for_unindexed(
             self, client, test_workspace, make_file, db_session
     ):
         """UPLOADED/PROCESSING/FAILED files have no chunks to clean."""
-        from files.model import ProcessingStatus
+        from files.model import FileStatus
 
-        f = make_file(test_workspace.id, processing_status=ProcessingStatus.UPLOADED)
+        f = make_file(test_workspace.id, processing_status=FileStatus.UPLOADED)
         with patch(
                 "rag.vector_store.delete_file_chunks",
                 side_effect=AssertionError("should not be called"),

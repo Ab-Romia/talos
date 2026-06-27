@@ -47,7 +47,8 @@ class MinIOConfig(BaseModel):
     access_key: str = "minioadmin"
     secret_key: SecretStr = SecretStr("minioadmin")
     secure: bool = False
-    bucket_name: str = "talos"
+    bucket: str = "talos"
+    max_file_size: int = 50 * 1024 * 1024  # 50 MiB
 
 
 class FilesConfig(BaseModel):

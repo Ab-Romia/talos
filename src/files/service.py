@@ -1,306 +1,325 @@
-"""Business logic for file operations."""
-
-import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 import magic
-from fastapi import UploadFile
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from fastapi import HTTPException
+from fsspec.asyn import AsyncFileSystem
+from sqlalchemy import orm, select
+from starlette import status
 
-from chat import Message
 from config import cfg
-from files.errors import FileTooLarge, StorageError, UnsupportedFileType
-from files.model import FileAttachment, ProcessingStatus, MessageFile
-from files.storage import S3Storage
-from files.streaming import HashingReader
-from utils.datetime import utcnow
+from files import errors
+from files.model import File, FileStatus, FileMetadata
+from files.storage.minio import MinIOFileSystem
 from utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from files.router import FileCreateRequest, FileUpdateRequest
 
 logger = get_logger(__name__)
 
-MAX_FILE_SIZE = cfg().files.max_size
-ALLOWED_MIME_TYPES = cfg().files.allowed_mime_types
-DOCUMENT_MIME_TYPES = cfg().files.document_mime_types
-IMAGE_MIME_TYPES = cfg().files.image_mime_types
-THUMBNAIL_SIZE = cfg().files.thumbnail_size
+
+async def get_download_url(db: orm.Session, filesystem: AsyncFileSystem, file_uri: str) -> str:
+    """Return a signed GET URL for the given file URI."""
+    file = db.execute(
+        select(File).where(File.uri == file_uri)
+    ).scalar_one_or_none()
+
+    if file is None:
+        raise errors.FileNotFound(f"No DB record for URI: {file_uri}")
+
+    if file.processing_status == FileStatus.PENDING:
+        raise HTTPException(status.HTTP_204_NO_CONTENT)
+
+    try:
+        url = filesystem.sign(file.uri, client_method="get_object")
+    except Exception as e:
+        logger.exception("Failed to generate signed download URL", file_uri=file.uri)
+        raise errors.StorageError("get_url", "Failed to generate download URL") from e
+
+    return url
 
 
-class FileService:
-    def __init__(self, db: Session, storage: S3Storage | None = None):
-        self.db = db
-        self.storage = storage
+async def get_upload_url(
+        db: orm.Session,
+        filesystem: AsyncFileSystem,
+        payload: "FileCreateRequest",
+) -> str:
+    """
+    Create a DB record and return a signed PUT URL.
+    Raises FileTooLarge, InvalidPath, AlreadyExists, StorageError.
+    """
+    if isinstance(filesystem, MinIOFileSystem) and payload.size > cfg().minio.max_file_size:
+        raise errors.FileTooLarge(payload.size, cfg().minio.max_file_size)
 
-    async def upload(self,
-                     file: UploadFile,
-                     uploader_id: uuid.UUID,
-                     workspace_id: uuid.UUID | None = None,
-                     channel_id: uuid.UUID | None = None
-                     ) -> FileAttachment:
-        """
-            Upload a file and persist metadata.
-            Channel-scoped if channel_id is provided (ignores workspace_id).
-            Otherwise, workspace-scoped and channel_id is ignored (but workspace_id is required).
-        """
-        if workspace_id is None and channel_id is None:
-            raise ValueError("Either workspace_id or channel_id must be provided")
+    if filesystem is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "No filesystem available")
 
-        detected_mime = await self._validate_mime_type(file)
+    detected_mime = magic.from_buffer(payload.header, mime=True)
 
-        db_file = FileAttachment(
-            channel_id=channel_id,
-            workspace_id=workspace_id,
-            uploader_id=uploader_id,
-            original_filename=file.filename or "unnamed",
-            content_type=detected_mime,
-            size_bytes=0,
-            checksum="",
-            processing_status=ProcessingStatus.UPLOADED,
+    db_file = File(
+        channel_id=payload.channel_id,
+        workspace_id=payload.workspace_id,
+        uploader_id=payload.user_id,
+        filename=payload.filename or "unnamed",
+        content_type=detected_mime,
+        size_bytes=payload.size,
+        sha256checksum=payload.sha256checksum,
+        processing_status=FileStatus.PENDING,
+    )
+
+    db.add(db_file)
+    db.flush()  # populate db_file.id without committing
+
+    # TODO: abac
+    uri = f"{payload.parent_uri}/{db_file.filename}"
+
+    parent_exists = filesystem.exists(payload.parent_uri)
+    parent_is_dir = filesystem.isdir(payload.parent_uri)
+    duplicate = filesystem.exists(uri)
+
+    if not parent_exists or not parent_is_dir:
+        db.rollback()
+        raise errors.InvalidPath("Parent path does not exist or is not a directory")
+
+    if duplicate:
+        db.rollback()
+        raise errors.AlreadyExists("File with same name already exists at target location")
+
+    try:
+        signed_url = filesystem.sign(
+            uri,
+            operation="put_object",
+            filename=db_file.filename,
+            content_type=db_file.content_type,
         )
-        self.db.add(db_file)
-        self.db.flush()
+    except Exception as e:
+        db.rollback()
+        logger.exception("Failed to generate signed upload URL", file_id=str(db_file.id))
+        raise errors.StorageError("put_url", "Failed to generate upload URL") from e
 
+    db_file.uri = filesystem.unstrip_protocol(uri)
+
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.exception("DB commit failed after generating upload URL", file_id=str(db_file.id))
+        raise errors.StorageError("db_commit", "Failed to persist file record") from e
+
+    logger.info("Generated signed upload URL", file_id=str(db_file.id), filename=db_file.filename)
+    return signed_url
+
+
+async def file_info(
+        db: orm.Session,
+        filesystem: AsyncFileSystem,
+        workspace_id: uuid.UUID,
+        channel_id: uuid.UUID | None = None,
+        uploader_id: uuid.UUID | None = None,
+        file_uri: str | None = None,
+        file_id: uuid.UUID | None = None,
+        index_if_missing: bool = False,
+) -> FileMetadata:
+    """
+    Return file metadata, optionally indexing files found in storage but not in DB.
+
+    Lookup order: file_id → file_uri → storage.
+    Raises FileNotFound if not found in DB or storage.
+    """
+    file = None
+
+    if file_id is not None:
+        file = db.execute(
+            select(File)
+            .where(File.id == file_id)
+            .where(File.workspace_id == workspace_id)
+            .where(File.deleted_at.is_(None))
+        ).scalar_one_or_none()
+    elif file_uri is not None:
+        file = db.execute(
+            select(File)
+            .where(File.workspace_id == workspace_id)
+            .where(File.uri == file_uri)
+            .where(File.deleted_at.is_(None))
+        ).scalar_one_or_none()
+
+    if file is not None:
+        return FileMetadata.model_validate(file)
+
+    if file_uri is None:
+        raise errors.FileNotFound("File not found in database and no URI provided for storage lookup")
+
+    # File exists in storage but not DB — happens for externally-uploaded objects.
+    try:
+        file_meta = filesystem.info(file_uri)
+    except FileNotFoundError as e:
+        raise errors.FileNotFound(f"File not found in DB or storage: {file_uri}") from e
+
+    file = File(
+        workspace_id=workspace_id,
+        channel_id=channel_id,
+        uploader_id=uploader_id,
+        filename=file_meta["name"],
+        content_type=file_meta.get("type", "application/octet-stream"),
+        size_bytes=file_meta.get("size", 0),
+        sha256checksum=file_meta.get("sha256checksum"),
+        processing_status=FileStatus.UPLOADED,
+        uri=filesystem.unstrip_protocol(file_uri),
+        created_at=file_meta.get("created_at"),
+        updated_at=file_meta.get("updated_at"),
+    )
+
+    if index_if_missing:
+        db.add(file)
         try:
-            file_size, checksum = await self._upload(file, db_file.id.hex, detected_mime)
-        except FileTooLarge, StorageError:
-            self.db.rollback()
-            raise
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.exception("Failed to index externally-uploaded file", file_uri=file_uri)
+            raise errors.StorageError("index", "Failed to index file") from e
 
-        db_file.size_bytes = file_size
-        db_file.checksum = checksum
+    return FileMetadata.model_validate(file)
 
-        self.db.commit()
 
-        logger.info("File uploaded",
-                    file_id=str(db_file.id),
-                    filename=db_file.original_filename,
-                    content_type=db_file.content_type,
-                    size_bytes=db_file.size_bytes)
-        return db_file
+def list_files(
+        db: orm.Session,
+        workspace_id: uuid.UUID,
+        channel_id: uuid.UUID | None,
+        content_type: str | None,
+        cursor: str | None,
+        limit: int,
+        parent_uri: str | None = None,
+) -> tuple[list[File], str | None]:
+    """
+    Return (files, next_cursor). Cursor is the stringified UUID of the last seen file.
+    Soft-deleted files are excluded. Filters: workspace, optional channel, optional
+    content_type prefix, optional parent_uri (directory listing).
+    """
+    q = (
+        select(File)
+        .where(File.workspace_id == workspace_id)
+        .where(File.deleted_at.is_(None))
+        .order_by(File.id)
+    )
 
-    @staticmethod
-    async def _validate_mime_type(file: UploadFile) -> str | None:
-        """
-        Detect MIME type from the file header and validate against allowed types.
-        """
-        detected_mime = magic.from_descriptor(file.file.fileno(), mime=True)
+    if channel_id is not None:
+        q = q.where(File.channel_id == channel_id)
 
-        if detected_mime not in ALLOWED_MIME_TYPES:
-            raise UnsupportedFileType(detected_mime)
+    if content_type is not None:
+        # Support prefix match: "image/" matches "image/png", "image/jpeg", etc.
+        if content_type.endswith("/"):
+            q = q.where(File.content_type.like(f"{content_type}%"))
+        else:
+            q = q.where(File.content_type == content_type)
 
-        return detected_mime
+    if parent_uri is not None:
+        q = q.where(File.uri.like(f"{parent_uri}/%"))
 
-    async def _upload(self, file: UploadFile, key: str, mime: str) -> tuple[int, str]:
-        """Upload file bytes to object storage under a precomputed key."""
-        # TODO: Verify this:
-        # Size from the spooled body. Starlette has fully received the
-        # multipart body into UploadFile.file before this handler runs,
-        # so seek/tell is authoritative.
-        underlying = file.file
-        underlying.seek(0, os.SEEK_END)
-        file_size = underlying.tell()
-        underlying.seek(0)
-        if file_size > MAX_FILE_SIZE:
-            raise FileTooLarge(file_size, MAX_FILE_SIZE)
+    if cursor is not None:
+        try:
+            cursor_id = uuid.UUID(cursor)
+            q = q.where(File.id > cursor_id)
+        except ValueError:
+            logger.warning("Invalid cursor value ignored", cursor=cursor)
 
-        reader = HashingReader(underlying)
-        await self.storage.upload_file(
-            storage_key=key,
-            data=reader,
-            size=file_size,
-            content_type=mime,
-        )
+    q = q.limit(limit + 1)
+    rows = db.execute(q).scalars().all()
 
-        return file_size, reader.checksum
+    has_next = len(rows) > limit
+    page = rows[:limit]
+    next_cursor = str(page[-1].id) if has_next and page else None
 
-    def get_file(self, file_id: uuid.UUID) -> FileAttachment | None:
-        """Retrieve file metadata, scoped to workspace. Returns None if not found or deleted."""
-        return self.db.scalar(
-            select(FileAttachment)
-            .where(FileAttachment.id == file_id,
-                   FileAttachment.deleted_at.is_(None))
-        )
+    return list(page), next_cursor
 
-    async def get_download_url(self, file_id: uuid.UUID) -> tuple[str, str] | None:
-        """Return (download_url, filename) or None if a file not found."""
-        file = self.get_file(file_id)
-        if file is None:
-            return None
 
-        url = await self.storage.generate_presigned_download_url(
-            storage_key=file.id.hex,
-            original_filename=file.original_filename,
-        )
-        return url, file.original_filename
+async def update_file_meta(
+        db: orm.Session,
+        file_id: uuid.UUID,
+        workspace_id: uuid.UUID,
+        payload: "FileUpdateRequest",
+) -> FileMetadata:
+    """Partial update of mutable metadata fields (currently: filename)."""
+    file = db.execute(
+        select(File)
+        .where(File.id == file_id)
+        .where(File.workspace_id == workspace_id)
+        .where(File.deleted_at.is_(None))
+    ).scalar_one_or_none()
 
-    def list_files(
-            self,
-            workspace_id: uuid.UUID,
-            channel_id: uuid.UUID | None = None,
-            content_type: str | None = None,
-            cursor: str | None = None,
-            limit: int = 20,
-    ) -> tuple[list[FileAttachment], str | None]:
-        """List files with cursor-based pagination. Returns (files, next_cursor)."""
-        query = (
-            select(FileAttachment)
-            .where(
-                FileAttachment.workspace_id == workspace_id,
-                FileAttachment.deleted_at.is_(None),
-            )
-            .order_by(FileAttachment.created_at.desc(), FileAttachment.id.desc())
-            .limit(limit + 1)
-        )
+    if file is None:
+        raise errors.FileNotFound(f"File {file_id} not found in workspace {workspace_id}")
 
-        if channel_id is not None:
-            query = query.where(FileAttachment.channel_id == channel_id)
+    if payload.filename is not None:
+        file.filename = payload.filename
 
-        if content_type is not None:
-            query = query.where(FileAttachment.content_type == content_type)
+    file.updated_at = datetime.now(timezone.utc)
 
-        if cursor is not None:
-            # cursor format: "{created_at_iso}|{uuid}"
-            try:
-                ts_str, id_str = cursor.split("|", 1)
-                # URL decoding converts "+" in the tz offset (e.g. "+00:00") to a space,
-                # so put it back before parsing the ISO timestamp.
-                ts_str = ts_str.replace(" ", "+")
-                cursor_ts = datetime.fromisoformat(ts_str)
-                cursor_id = uuid.UUID(id_str)
-                query = query.where(
-                    (FileAttachment.created_at < cursor_ts)
-                    | (
-                            (FileAttachment.created_at == cursor_ts)
-                            & (FileAttachment.id < cursor_id)
-                    )
-                )
-            except (ValueError, TypeError):
-                pass  # invalid cursor, ignore
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.exception("update_file_meta commit failed", file_id=str(file_id))
+        raise errors.StorageError("db_commit", "Failed to persist metadata update") from e
 
-        results = list(self.db.scalars(query).all())
+    return FileMetadata.model_validate(file)
 
-        next_cursor = None
-        if len(results) > limit:
-            results = results[:limit]
-            last = results[-1]
-            next_cursor = f"{last.created_at.isoformat()}|{last.id}"
 
-        return results, next_cursor
+async def replace_file(
+        db: orm.Session,
+        filesystem: AsyncFileSystem,
+        file_id: uuid.UUID,
+        workspace_id: uuid.UUID,
+        payload: "FileCreateRequest",
+) -> str:
+    """
+    Soft-delete the existing record and create a new one, returning a signed upload URL.
+    Preserves file_id lineage via soft-delete rather than in-place mutation.
+    """
+    existing = db.execute(
+        select(File)
+        .where(File.id == file_id)
+        .where(File.workspace_id == workspace_id)
+        .where(File.deleted_at.is_(None))
+    ).scalar_one_or_none()
 
-    def soft_delete(self, file_id: uuid.UUID, workspace_id: uuid.UUID) -> FileAttachment | None:
-        """Soft-delete a file. Returns the file or None if not found.
+    if existing is None:
+        raise errors.FileNotFound(f"File {file_id} not found in workspace {workspace_id}")
 
-        Vector chunks are removed before the row is marked deleted so a
-        failure to clean Milvus does not leave orphaned, queryable chunks
-        behind a tombstoned file. Only INDEXED files have chunks to delete;
-        other states are skipped.
-        """
-        file = self.get_file(file_id)
-        if file is None:
-            return None
+    existing.deleted_at = datetime.now(timezone.utc)
+    db.flush()
 
-        if file.processing_status == ProcessingStatus.INDEXED:
-            from rag.vector_store import delete_file_chunks
-            try:
-                delete_file_chunks(str(file_id), workspace_id=str(workspace_id))
-            except Exception as e:
-                logger.error(
-                    "Failed to delete file chunks from vector store; aborting soft-delete",
-                    file_id=str(file_id),
-                    error=str(e),
-                )
-                raise
+    return await get_upload_url(db, filesystem, payload)
 
-        file.deleted_at = utcnow()
-        self.db.commit()
-        self.db.refresh(file)
 
-        logger.info("File soft-deleted", file_id=str(file_id))
-        return file
+def soft_delete(
+        db: orm.Session,
+        file_id: uuid.UUID,
+        workspace_id: uuid.UUID,
+) -> File | None:
+    """
+    Set deleted_at on the file record. Returns the updated record or None if not found.
+    Does not remove storage objects — physical deletion is handled async by a background job.
+    """
+    file = db.execute(
+        select(File)
+        .where(File.id == file_id)
+        .where(File.workspace_id == workspace_id)
+        .where(File.deleted_at.is_(None))
+    ).scalar_one_or_none()
 
-    @staticmethod
-    async def enqueue_processing(arq_pool, file_id: uuid.UUID) -> None:
-        """Enqueue the background processing job for a file.
+    if file is None:
+        return None
 
-        Raises RuntimeError if the ARQ pool is unavailable so the caller
-        can translate that to an HTTP error. Using the file id as the ARQ
-        job id keeps enqueues idempotent per file.
-        """
-        if arq_pool is None:
-            raise RuntimeError("ARQ pool not available")
-        await arq_pool.enqueue_job(
-            "process_file",
-            str(file_id),
-            _job_id=f"process_{file_id}",
-        )
+    file.deleted_at = datetime.now(timezone.utc)
 
-    def reset_for_retry(self, file_id: uuid.UUID) -> FileAttachment | None:
-        """Reset a file so it can be reprocessed.
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.exception("soft_delete commit failed", file_id=str(file_id))
+        raise
 
-        Returns the file flipped back to UPLOADED, or None if missing.
-        Raises ValueError when the file is INDEXED (nothing to retry) or
-        when it is genuinely still being processed by a live worker
-        (PROCESSING with a recent updated_at). PROCESSING rows whose
-        updated_at is older than the stuck threshold are treated as
-        crashed-worker leftovers and reclaimed by this call so the user
-        does not have to wait for the periodic sweep.
-        """
-        from processing.worker import STUCK_AGE
-        from utils.datetime import utcnow
-
-        file = self.get_file(file_id)
-        if file is None:
-            return None
-        if file.processing_status == ProcessingStatus.INDEXED:
-            raise ValueError("Cannot retry file in indexed state")
-        if file.processing_status == ProcessingStatus.PROCESSING:
-            age = utcnow() - file.updated_at
-            if age < STUCK_AGE:
-                raise ValueError("Cannot retry file in processing state")
-
-        file.processing_status = ProcessingStatus.UPLOADED
-        file.processing_error = None
-        file.chunk_count = None
-        self.db.commit()
-        self.db.refresh(file)
-        return file
-
-    async def get_thumbnail_url(self, file_id: uuid.UUID) -> str | None:
-        """Return a presigned URL to the thumbnail, or None if there isn't one."""
-        file = self.get_file(file_id)
-        if file is None:
-            return None
-
-        return await self.storage.generate_presigned_download_url(
-            storage_key=file.id.hex,
-            original_filename=f"thumb_{file.original_filename}.jpg",
-        )
-
-    def attach_to_message(self, file_id: uuid.UUID, message_id: uuid.UUID, ) -> bool:
-        """Attach an existing file to a message. Returns True on success.
-
-        When channel_id is provided, the message must belong to that
-        channel — otherwise a caller could pass any channel in the URL
-        and have it accepted.
-        """
-        file = self.get_file(file_id)
-        if file is None:
-            return False
-
-        msg = self.db.get(Message, message_id)
-
-        if msg is None:
-            return False
-
-        # Check if already attached (idempotent)
-        if self.db.get(MessageFile, (message_id, file_id)) is not None:
-            return True
-
-        mf = MessageFile(message_id=message_id, file_id=file_id, )
-        self.db.add(mf)
-        self.db.commit()
-
-        logger.info("File attached to message", file_id=str(file_id), message_id=str(message_id))
-
-        return True
+    logger.info("File soft-deleted", file_id=str(file_id))
+    return file

@@ -76,10 +76,10 @@ class TestUploadAPI:
         assert resp.status_code == 202
         file_id = resp.json()["file_id"]
 
-        from files.model import FileAttachment
-        record = db_session.get(FileAttachment, uuid.UUID(file_id))
+        from files.model import File
+        record = db_session.get(File, uuid.UUID(file_id))
         assert record is not None
-        assert record.original_filename == "persist.txt"
+        assert record.filename == "persist.txt"
 
     def test_channel_upload_derives_workspace_id(self, client, test_workspace, test_channel, db_session):
         resp = client.post(
@@ -88,9 +88,9 @@ class TestUploadAPI:
         )
         assert resp.status_code == 202
 
-        from files.model import FileAttachment
+        from files.model import File
         file_id = uuid.UUID(resp.json()["file_id"])
-        record = db_session.get(FileAttachment, file_id)
+        record = db_session.get(File, file_id)
         assert record is not None
         assert record.channel_id == test_channel.id
         assert record.workspace_id == test_workspace.id
@@ -101,11 +101,11 @@ class TestRetryAPI:
     def test_retry_resets_failed_file_and_enqueues(
             self, client, test_workspace, make_file, db_session, mock_arq_pool
     ):
-        from files.model import FileAttachment, ProcessingStatus
+        from files.model import File, FileStatus
 
         f = make_file(
             test_workspace.id,
-            processing_status=ProcessingStatus.FAILED,
+            processing_status=FileStatus.PROCESSING_FAILED,
             processing_error="something went wrong",
             chunk_count=None,
         )
@@ -113,15 +113,15 @@ class TestRetryAPI:
         assert resp.status_code == 200
 
         db_session.expire_all()
-        record = db_session.get(FileAttachment, f.id)
-        assert record.processing_status == ProcessingStatus.UPLOADED
+        record = db_session.get(File, f.id)
+        assert record.status == FileStatus.UPLOADED
         assert record.processing_error is None
         mock_arq_pool.enqueue_job.assert_called_once()
 
     def test_retry_rejects_indexed_file(self, client, test_workspace, make_file):
-        from files.model import ProcessingStatus
+        from files.model import FileStatus
 
-        f = make_file(test_workspace.id, processing_status=ProcessingStatus.INDEXED)
+        f = make_file(test_workspace.id, processing_status=FileStatus.INDEXED)
         resp = client.post(f"/api/workspaces/{test_workspace.id}/files/{f.id}/retry")
         assert resp.status_code == 409
 

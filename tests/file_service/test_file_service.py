@@ -7,8 +7,8 @@ import pytest
 
 from config import cfg
 from files.errors import FileTooLarge, UnsupportedFileType
-from files.model import FileAttachment, ProcessingStatus, MessageFile
-from files.service import FileService
+from files.model import File, FileStatus, MessageFile
+from files.service__ import FileService
 
 
 # TODO: use actual test files
@@ -49,7 +49,7 @@ class TestFileServiceUpload:
 
         result = await svc.upload(upload, test_user.id, test_workspace.id)
         expected = hashlib.sha256(content).hexdigest()
-        assert result.checksum == expected
+        assert result.sha256checksum == expected
 
     @pytest.mark.asyncio
     @patch("files.service.magic.from_descriptor", return_value="text/plain")
@@ -68,12 +68,12 @@ class TestFileServiceUpload:
         svc = FileService(db_session, mock_storage)
 
         result = await svc.upload(test_uploaded_file, test_user.id, test_workspace.id)
-        stored = db_session.get(FileAttachment, result.id)
+        stored = db_session.get(File, result.id)
 
         assert stored is not None
-        assert stored.original_filename == "test.txt"
+        assert stored.filename == "test.txt"
         assert stored.content_type == "text/plain"
-        assert stored.processing_status == ProcessingStatus.UPLOADED
+        assert stored.status == FileStatus.UPLOADED
 
     @pytest.mark.asyncio
     @patch("files.service.magic.from_descriptor", return_value="text/plain")
@@ -83,7 +83,7 @@ class TestFileServiceUpload:
         svc = FileService(db_session, mock_storage)
 
         result = await svc.upload(test_uploaded_file, test_user.id, test_workspace.id)
-        assert result.processing_status == ProcessingStatus.UPLOADED
+        assert result.status == FileStatus.UPLOADED
 
 
 @pytest.mark.unit
@@ -106,7 +106,7 @@ class TestFileServiceQueries:
             self, db_session, mock_storage, test_workspace, test_file_record
     ):
         mock_storage.generate_presigned_download_url.return_value = "http://localhost:9000/presigned"
-        test_file_record.original_filename = "test.pdf"
+        test_file_record.filename = "test.pdf"
         db_session.flush()
         svc = FileService(db_session, mock_storage)
 
@@ -203,14 +203,14 @@ class TestFileServiceListFiles:
             self, db_session, test_workspace, test_user
     ):
         for i in range(21):
-            record = FileAttachment(
+            record = File(
                 workspace_id=test_workspace.id,
                 uploader_id=test_user.id,
                 original_filename=f"file-{i}.txt",
                 content_type="text/plain",
                 size_bytes=100,
                 checksum=f"checksum-{i}",
-                processing_status=ProcessingStatus.UPLOADED,
+                processing_status=FileStatus.UPLOADED,
             )
             db_session.add(record)
             db_session.flush()
@@ -228,14 +228,14 @@ class TestFileServiceListFiles:
             self, db_session, test_workspace, test_user
     ):
         for i in range(20):
-            record = FileAttachment(
+            record = File(
                 workspace_id=test_workspace.id,
                 uploader_id=test_user.id,
                 original_filename=f"file-{i}.txt",
                 content_type="text/plain",
                 size_bytes=100,
                 checksum=f"checksum-{i}",
-                processing_status=ProcessingStatus.UPLOADED,
+                processing_status=FileStatus.UPLOADED,
             )
             db_session.add(record)
             db_session.flush()

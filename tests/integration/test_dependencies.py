@@ -2,15 +2,15 @@ import uuid
 
 import pytest
 from fastapi import HTTPException
+from files.dependencies import workspace_membership, get_storage
 
 from auth.model import User
-from files.dependencies import get_workspace_member, get_storage
 
 
 @pytest.mark.integration
 class TestGetWorkspaceMember:
     def test_valid(self, db_session, test_user, test_workspace):
-        result = get_workspace_member(
+        result = workspace_membership(
             workspace_id=test_workspace.id,
             user=test_user,
             db=db_session,
@@ -19,7 +19,7 @@ class TestGetWorkspaceMember:
 
     def test_not_found_404(self, db_session, test_user):
         with pytest.raises(HTTPException) as exc_info:
-            get_workspace_member(
+            workspace_membership(
                 workspace_id=uuid.uuid4(),
                 user=test_user,
                 db=db_session,
@@ -39,7 +39,7 @@ class TestGetWorkspaceMember:
         db_session.flush()
 
         with pytest.raises(HTTPException) as exc_info:
-            get_workspace_member(
+            workspace_membership(
                 workspace_id=test_workspace.id,
                 user=other_user,
                 db=db_session,
