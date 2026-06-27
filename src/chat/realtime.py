@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import BitString
 from sqlalchemy.orm import Session
 
 from config import cfg
-from model import SessionLocal
+from database import SessionLocal
 from utils.logger import get_logger
 from workspace.model import WorkspaceMember, Channel
 from .model import MessageSchema

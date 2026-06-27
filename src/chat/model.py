@@ -2,16 +2,16 @@ import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Literal, TYPE_CHECKING
-from uuid import uuid4, UUID
+from uuid import UUID
 
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import ForeignKey, Uuid, DateTime, func
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 
-from model import Base
+from database import Base
 
 if TYPE_CHECKING:
-    from files.model import File
+    from filesystem.model import File
     from workspace.model import Channel
 
 
@@ -22,7 +22,7 @@ class MessageRole(str, Enum):
 
 
 class MessageSchema(BaseModel):
-    id: UUID = Field(default_factory=uuid4)
+    id: UUID = Field(default_factory=uuid.uuid7)
     channel_id: UUID
     sender_id: UUID
     role: MessageRole = MessageRole.USER  # default is USER as its majority, only override this if AI response/system notification.

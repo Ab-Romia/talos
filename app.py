@@ -25,7 +25,7 @@ templates = Jinja2Templates(directory="frontend/templates")
 async def lifespan(app: FastAPI):
     from chat.storage import bind_chat_storage, DatabaseStorageBackend
     from broker import broker
-    from model import Base, engine
+    from database import Base, engine
 
     with Session(engine) as session:
         session.execute(text("CREATE EXTENSION IF NOT EXISTS citext;"))

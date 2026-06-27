@@ -9,7 +9,7 @@ from sqlalchemy.dialects.postgresql import BitString
 
 from auth.dependencies import UserIdDep
 from config import cfg
-from model import DatabaseDep
+from database import DatabaseDep
 from .model import Role, ChannelRoleOverride as Override, STATIC_ROLE_ID, PermissionScope, Permission, PermissionSet, \
     ScopedPermission
 

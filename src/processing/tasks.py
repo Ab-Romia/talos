@@ -7,8 +7,8 @@ from sqlalchemy import update as sa_update
 
 from broker import broker
 from config import cfg
-from files.model import File, FileStatus
-from model import AsyncSessionLocal
+from database import AsyncSessionLocal
+from filesystem.model import File, FileStatus
 from utils.logger import get_logger
 
 logger = get_logger(__name__)

@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from auth.utils.session import SessionDep
-from model import DatabaseDep
+from database import DatabaseDep
 from workspace import require_perms as require
 from .realtime import get_channel_online
 from .service import (

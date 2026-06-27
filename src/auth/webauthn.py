@@ -10,7 +10,7 @@ from webauthn.helpers.structs import PublicKeyCredentialDescriptor, Authenticato
     ResidentKeyRequirement
 
 from config import cfg
-from model import DatabaseDep
+from database import DatabaseDep
 from .dependencies import sudo, UserDep
 from .model import Issuer, IdentityProvider
 from .utils import errors

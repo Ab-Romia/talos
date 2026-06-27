@@ -7,7 +7,7 @@ from starlette import status
 
 from auth.dependencies import UserDep
 from config import cfg
-from model import DatabaseDep
+from database import DatabaseDep
 from utils.datetime import utcnow
 from .model import Notification, PushSubscription, NotificationSchema, PushSubscriptionRequest
 from .service import (

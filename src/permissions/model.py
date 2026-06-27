@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import BIT, BitString, ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship, foreign
 
 from config import cfg
-from model import Base
+from database import Base
 
 STATIC_ROLE_ID = uuid.UUID(int=0)
 DEFAULT_EVERYONE_ROLE_ID = uuid.UUID(int=1)

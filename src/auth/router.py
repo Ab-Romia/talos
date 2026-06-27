@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
 from config import cfg
-from model import DatabaseDep
+from database import DatabaseDep
 from utils.email import send_email
 from utils.exceptions import ExceptionMapper
 from utils.ratelimit import email_ratelimit

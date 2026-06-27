@@ -11,7 +11,7 @@ from starlette.responses import StreamingResponse
 
 from auth.model import ProviderToken
 from auth.utils.jwt import BaseJWTClaims
-from model import DatabaseDep
+from database import DatabaseDep
 from .fs import GDriveFileSystem
 from ...model import File, FileStatus
 

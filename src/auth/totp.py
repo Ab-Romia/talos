@@ -11,7 +11,7 @@ from starlette.responses import JSONResponse
 
 from auth.utils.jwt import create_token, verify_token, BaseJWTClaims
 from config import cfg
-from model import DatabaseDep
+from database import DatabaseDep
 from utils.img import img2base64
 from .dependencies import sudo, UserDep, SessionDep
 from .model import User, Issuer, IdentityProvider
