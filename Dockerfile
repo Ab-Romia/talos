@@ -29,3 +29,8 @@ ENV PATH="/app/.venv/bin:$PATH"
 FROM base AS app
 EXPOSE 8000
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# ── MCP target: FastMCP integrations server ──
+FROM base AS mcp
+EXPOSE 8001
+CMD ["python", "-m", "integrations.mcp_server"]

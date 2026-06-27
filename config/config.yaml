@@ -25,3 +25,17 @@ minio:
   public_endpoint: http://172.20.0.4:9000
   internal_endpoint: http://172.20.0.4:9000
   bucket_name: talos
+
+# Integration non-secret defaults. Secrets (tokens) come from .env.
+# Whole blocks are omitted here when unconfigured; uncomment and fill to enable.
+#jira:
+#  base_url: https://yourorg.atlassian.net
+#  email: bot@yourorg.com
+#  project_key: TAL
+#github:
+#  owner: yourorg
+#  repo: gp_artifact
+#  default_base_branch: main
+mcp:
+  port: 8001
+  transport: streamable-http

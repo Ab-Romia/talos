@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 import redis.asyncio
 import socketio
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -57,6 +57,14 @@ app.include_router(notifications_router, prefix="/api")
 app.include_router(workspace_router, prefix="/api")
 app.include_router(channel_router, prefix="/api")
 app.include_router(gdrive_proxy_router, prefix="/api/storage", tags=["gdrive-proxy"])
+
+# Slack events webhook (only mounted when Slack is configured).
+from integrations.slack.app import slack_handler
+
+if slack_handler is not None:
+    @app.post("/api/slack/events", tags=["slack"])
+    async def slack_events(req: Request):
+        return await slack_handler.handle(req)
 
 # TODO: replace with reverse proxy
 app.add_middleware(
