@@ -11,9 +11,9 @@ from starlette.responses import StreamingResponse
 
 from auth.model import ProviderToken
 from auth.utils.jwt import BaseJWTClaims
-from files.model import File, FileStatus
 from model import DatabaseDep
 from .fs import GDriveFileSystem
+from ...model import File, FileStatus
 
 
 class UserCreds(BaseModel):

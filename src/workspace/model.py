@@ -6,7 +6,7 @@ from sqlalchemy import DateTime, ForeignKey, func, Uuid, event, UniqueConstraint
 from sqlalchemy.ext.orderinglist import ordering_list
 from sqlalchemy.orm import mapped_column, Mapped, relationship, object_session
 
-from files.model import File
+from filesystem.model import File
 from model import Base
 
 if TYPE_CHECKING:

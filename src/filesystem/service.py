@@ -9,13 +9,13 @@ from sqlalchemy import orm, select
 from starlette import status
 
 from config import cfg
-from files import errors
-from files.model import File, FileStatus, FileMetadata
-from files.storage.minio import MinIOFileSystem
 from utils.logger import get_logger
+from . import errors
+from .model import File, FileStatus, FileMetadata
+from .storage.minio import MinIOFileSystem
 
 if TYPE_CHECKING:
-    from files.router import FileCreateRequest, FileUpdateRequest
+    from .router import FileCreateRequest, FileUpdateRequest
 
 logger = get_logger(__name__)
 

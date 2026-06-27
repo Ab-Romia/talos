@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from chat.router import channel as channel_chat_router
-from files.router import workspace as workspace_files_router, channel as channel_files_router
+from filesystem.router import workspace as workspace_files_router, channel as channel_files_router
 from permissions.router import (
     workspace as workspace_permission_router,
     channel as channel_permission_router)

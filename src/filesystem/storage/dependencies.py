@@ -7,9 +7,9 @@ from fsspec.asyn import AsyncFileSystem
 from starlette import status
 
 from config import cfg
-from files import errors
 from model import DatabaseDep
 from workspace.model import Channel
+from .. import errors
 
 
 def filesystem(

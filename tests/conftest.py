@@ -13,7 +13,7 @@ from auth.model import User, IdentityProvider, Issuer, Session as UserSession
 from auth.password import hash_password
 from auth.utils.jwt import create_token
 from auth.utils.session import SessionClaims
-from files.model import File, FileStatus
+from filesystem.model import File, FileStatus
 from model import SessionLocal
 from permissions.model import Role, RolePermission, Permission, PermissionScope, DEFAULT_EVERYONE_ROLE_ID, \
     STATIC_ROLE_ID, ScopedPermission

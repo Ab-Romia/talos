@@ -6,12 +6,12 @@ from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
 
 from auth import active_user
-from files.model import FileMetadata
-from files.storage.dependencies import FSDep
 from model import DatabaseDep
 from utils.logger import get_logger
 from workspace import require_perms
 from . import service
+from .model import FileMetadata
+from .storage.dependencies import FSDep
 
 logger = get_logger(__name__)
 
