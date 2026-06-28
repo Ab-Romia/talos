@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from database import AsyncSessionLocal
 from utils.exceptions import handle_exceptions
-from .model import MessageSchema, Message
+from .model import Message, MessageSchema, parse_doc
 
 DATETIME_MIN = datetime.fromtimestamp(0, timezone.utc)
 DATETIME_MAX = datetime.fromtimestamp(2 ** 33 - 1, timezone.utc)  # ~ year 2286
@@ -17,11 +17,15 @@ class ChatStorageBackend(Protocol):
 
     async def put(self, message: MessageSchema) -> None: ...
 
-    async def get(self, channel_id: UUID, limit: int | None = None, offset: int = 0,
-                  newer_than: datetime = DATETIME_MIN,
-                  older_than: datetime = DATETIME_MAX,
-                  except_ids: set[UUID] = None) -> list[MessageSchema]:
-        ...
+    async def get(
+        self,
+        channel_id: UUID,
+        limit: int | None = None,
+        offset: int = 0,
+        newer_than: datetime = DATETIME_MIN,
+        older_than: datetime = DATETIME_MAX,
+        except_ids: set[UUID] | None = None,
+    ) -> list[MessageSchema]: ...
 
     async def get_by_id(self, message_id: UUID) -> MessageSchema | None: ...
 
@@ -33,9 +37,15 @@ class DatabaseStorageBackend(ChatStorageBackend):
         self._session_factory = session_factory or AsyncSessionLocal
 
     @handle_exceptions("Failed to load messages for channel {channel_id}", default_return=[])
-    async def get(self, channel_id: UUID, limit: int | None = None, offset: int = 0,
-                  newer_than=DATETIME_MIN, older_than=DATETIME_MAX,
-                  except_ids=None) -> list[MessageSchema]:
+    async def get(
+        self,
+        channel_id: UUID,
+        limit: int | None = None,
+        offset: int = 0,
+        newer_than=DATETIME_MIN,
+        older_than=DATETIME_MAX,
+        except_ids=None,
+    ) -> list[MessageSchema]:
         """Retrieve messages from PostgreSQL cold storage."""
         async with self._session_factory() as db:
             rows = await db.scalars(
@@ -64,22 +74,31 @@ class DatabaseStorageBackend(ChatStorageBackend):
     async def put(self, message: MessageSchema) -> None:
         """Persist a message to PostgreSQL cold storage."""
         async with self._session_factory() as db:
-            db.add(Message(**message.model_dump()))
+            row = Message(
+                id=message.id,
+                channel_id=message.channel_id,
+                sender_id=message.sender_id,
+                role=message.role,
+                sent_at=message.sent_at,
+            )
+            # parse_doc gives us a live Node so set_content can walk it
+            # for mentioned_user_ids extraction and byte-length tracking
+            row.set_content(parse_doc(message.content))
+            db.add(row)
             await db.commit()
 
 
-def bind_chat_storage(storage: ChatStorageBackend):
-    """Dependency: two-tier cache with injected backends."""
+def bind_chat_storage(storage: ChatStorageBackend) -> None:
+    """Bind the storage backend singleton (call on app startup)."""
     global _storage
     _storage = storage
 
 
 def get_storage() -> ChatStorageBackend:
-    """Dependency: singleton cache instance."""
+    """Return the bound storage singleton."""
     if _storage is None:
-        raise RuntimeError("Cache not initialized. Call build_cache() on app startup.")
+        raise RuntimeError("Storage not initialized. Call bind_chat_storage() on startup.")
     return _storage
 
 
-# Default singleton instance
 _storage: ChatStorageBackend | None = None
