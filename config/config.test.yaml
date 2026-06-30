@@ -2,6 +2,9 @@
 auth:
   permission_bitstring_length: 64
 
+minio:
+  bucket_name: test-bucket
+
 database:
   port: 5433
   name: talos_test
