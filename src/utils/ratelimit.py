@@ -7,7 +7,7 @@ from starlette import status
 
 from config import cfg
 
-backend = storage.storage_from_string(cfg().cache_backend)
+backend = storage.storage_from_string(cfg().redis.url)
 strategy = strategies.MovingWindowRateLimiter(backend)
 
 

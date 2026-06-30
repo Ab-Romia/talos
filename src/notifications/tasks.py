@@ -1,169 +1,104 @@
-import json
 import uuid
-from datetime import datetime
 
 from pywebpush import webpush_async, WebPushException
-from sqlalchemy import select, update, delete
-from sqlalchemy.orm import Session
+from sqlalchemy import update
+from starlette import status
+from taskiq.message import TaskiqMessage
 
-from broker import broker
+from broker import broker, register_callback
 from config import cfg
-from model import SessionLocal
+from database import SessionLocal
 from utils.datetime import utcnow
 from utils.logger import get_logger
-from .model import NotificationsChannel, Notification, PushSubscription, NotificationDelivery, DeliveryStatus
+from .model import NotificationsChannel, NotificationDelivery, DeliveryStatus, NotificationSchema, \
+    PushSubscriptionSchema, PushSubscription
 
 logger = get_logger(__name__)
 
-_RETRYABLE_WEB_PUSH_STATUSES = {408, 425, 429, 500, 502, 503, 504}
+
+def _on_web_push_failed(message: TaskiqMessage, exception: Exception):
+    """Callback invoked when web_push exhausts all retries. Marks delivery as FAILED."""
+    notification = message.args[0] if len(message.args) > 0 else message.kwargs.get("notification")
+    subscription = message.args[1] if len(message.args) > 1 else message.kwargs.get("subscription")
+
+    assert notification is not None, "NotificationSchema argument not found in message"
+    assert subscription is not None, "PushSubscriptionSchema argument not found in message"
+
+    _mark_failed(notification.id, subscription.id)
+
+    logger.info(f"Marked delivery as FAILED after exhausting retries"
+                f" for notification {notification.id}",
+                exc_info=exception)
 
 
-class RetryableWebPushError(RuntimeError):
-    """Raised when web push should be retried by Taskiq."""
+register_callback(_on_web_push_failed)
 
 
-def _is_retryable_web_push_exception(exc: WebPushException) -> bool:
-    response = getattr(exc, "response", None)
-    status = getattr(response, "status", None)
-    if status in _RETRYABLE_WEB_PUSH_STATUSES:
-        return True
+def _mark_failed(notification_id: uuid.UUID, subscription_id: uuid.UUID | None):
+    with SessionLocal() as db:
+        # Mark delivery as FAILED
+        db.execute(
+            update(NotificationDelivery)
+            .where(NotificationDelivery.notification_id == notification_id)
+            .where(NotificationDelivery.subscription_id == subscription_id)
+            .where(NotificationDelivery.status == DeliveryStatus.PENDING)
+            .values(status=DeliveryStatus.FAILED)
+        )
 
-    if response is None:
-        return False
+        # Mark subscription as deleted (soft delete) to prevent future attempts
+        if subscription_id is not None:
+            db.execute(
+                update(PushSubscription)
+                .where(PushSubscription.id == subscription_id)
+                .values(deleted_at=utcnow())
+            )
+        db.commit()
+
+
+@broker.task(retry_on_error=True, max_retries=5, delay=10,
+             on_failure=_on_web_push_failed.__name__)
+async def webpush(notification: NotificationSchema, subscription: PushSubscriptionSchema):
+    """
+    Send web push to a single PushSubscription using in-memory payloads.
+
+    On success marks overall NotificationDelivery as SENT. On retryable failure re-raises 
+    so Taskiq retries. On permanent failure removes subscription (410 Gone) or exits.
+    On exhausted retries the middleware callback marks delivery as FAILED.
+    """
+    logger.info(f"Processing web push subscription {subscription.id} for notification {notification.id}")
+
+    push_config = cfg().push
+    assert push_config is not None
 
     try:
-        payload = response.json()
-    except (TypeError, ValueError):
-        return False
+        await webpush_async(
+            subscription_info=subscription.model_dump(),
+            data=notification.model_dump_json(),
+            vapid_private_key=push_config.vapid_private_key,
+            vapid_claims={"sub": push_config.vapid_subject},
+        )
+    except WebPushException as exc:
+        # Push Subscription is no longer valid, mark as FAILED without retrying
+        if exc.response and exc.response.status in (status.HTTP_410_GONE, status.HTTP_404_NOT_FOUND):
+            _mark_failed(notification.id, subscription.id)
+            return
+        else:
+            raise  # Retry for other exceptions
 
-    errno = payload.get("errno") if isinstance(payload, dict) else None
-    return errno in {0, 301, 302, 503}
+    with SessionLocal() as db:
+        db.execute(
+            update(NotificationDelivery)
+            .where(
+                NotificationDelivery.notification_id == notification.id,
+                NotificationDelivery.channel == NotificationsChannel.PUSH,
+            )
+            .values(status=DeliveryStatus.SENT, sent_at=(utcnow()))
+        )
+        db.commit()
+        logger.info(f"Marked notification {notification.id} as SENT (via subscription {subscription.id})")
 
 
 @broker.task()
-async def email(notification_id: uuid.UUID):
-    logger.info(f"Processing email notification {notification_id}")
+async def email(notification: NotificationSchema):
+    # TODO:
     pass
-
-
-@broker.task(retry_on_error=True, max_retries=3)
-async def web_push(notification_id: uuid.UUID):
-    """
-    Send web push notifications to all subscribed users.
-    
-    Updates NotificationDelivery status to SENT or FAILED based on push results.
-    """
-    logger.info(f"Processing web push notification {notification_id}")
-
-    with SessionLocal() as db:
-        notification = db.get(Notification, notification_id)
-
-        if not notification:
-            logger.warning(f"Notification {notification_id} not found")
-            return
-
-        # TODO: verify that the notification is still relevant (e.g. not read or expired) before sending
-        #  verify that not already sent
-
-        push_config = cfg().push
-        if not push_config.vapid_private_key:
-            logger.error("VAPID private key not configured")
-            _update_delivery_status(db, notification_id, DeliveryStatus.FAILED)
-            return
-
-        # remove expired subscriptions
-        db.execute(
-            delete(PushSubscription)
-            .where(PushSubscription.user_id == notification.user_id)
-            .where(PushSubscription.expiration_time < utcnow())
-        )
-
-        subscriptions = db.scalars(
-            select(PushSubscription).where(PushSubscription.user_id == notification.user_id)
-        ).all()
-
-        if not subscriptions:
-            logger.debug(f"No push subscriptions found for user {notification.user_id}")
-            _update_delivery_status(db, notification_id, DeliveryStatus.FAILED)
-            return
-
-        notification_json = json.dumps(
-            {
-                "title": notification.title,
-                "body": notification.body,
-                "data": notification.data,
-            }
-        )
-
-        sent_count = 0
-        retryable_failure_count = 0
-        permanent_failure_count = 0
-
-        for subscription in subscriptions:
-            try:
-                await webpush_async(
-                    subscription_info={
-                        "endpoint": subscription.endpoint,
-                        "keys": subscription.keys,
-                    },
-                    data=notification_json,
-                    vapid_private_key=push_config.vapid_private_key,
-                    vapid_claims={"sub": push_config.vapid_subject or "mailto:admin@example.com"},
-                )
-            except WebPushException as exc:
-                if _is_retryable_web_push_exception(exc):
-                    retryable_failure_count += 1
-                    logger.warning(f"Retryable push failure for subscription {subscription.id}: {exc}")
-                else:
-                    permanent_failure_count += 1
-                    logger.warning(f"Permanent push failure for subscription {subscription.id}: {exc}")
-            else:
-                sent_count += 1
-                logger.debug(f"Successfully sent push to subscription {subscription.id}")
-
-        if sent_count > 0:
-            _update_delivery_status(db, notification_id, DeliveryStatus.SENT, sent_at=utcnow())
-            logger.info(
-                f"Web push delivery completed for {notification_id}: {sent_count} sent, "
-                f"{retryable_failure_count} retryable failures, {permanent_failure_count} permanent failures"
-            )
-            return
-
-        if retryable_failure_count > 0:
-            logger.warning(f"Web push delivery for {notification_id} hit retryable failure; Taskiq will retry")
-            raise RetryableWebPushError(f"web push delivery retryable for {notification_id}")
-
-        _update_delivery_status(db, notification_id, DeliveryStatus.FAILED)
-        logger.error(f"Web push delivery failed for {notification_id}: all subscriptions failed")
-
-
-@broker.task
-async def websocket(notification_id: uuid.UUID):
-    """
-    Decides whether to route via low-latency WebSocket
-    or fallback to WebPush based on current Redis state.
-    """
-    # Check if the user has at least one active tab open
-    # The user is online. Push instantly via Socket.IO room.
-
-
-def _update_delivery_status(
-        db: Session,
-        notification_id: uuid.UUID,
-        status: DeliveryStatus,
-        sent_at: datetime | None = None
-) -> None:
-    """Update the NotificationDelivery status for a given notification."""
-    stmt = (
-        update(NotificationDelivery)
-        .where(
-            NotificationDelivery.notification_id == notification_id,
-            NotificationDelivery.channel == NotificationsChannel.PUSH,
-        )
-        .values(status=status)
-    )
-    if sent_at is not None:
-        stmt = stmt.values(sent_at=sent_at)
-
-    db.execute(stmt)
-    db.commit()

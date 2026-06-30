@@ -12,12 +12,16 @@ auth:
       access_token_url: https://oauth2.googleapis.com/token
       authorize_url: https://accounts.google.com/o/oauth2/v2/auth
       server_metadata_url: https://accounts.google.com/.well-known/openid-configuration
-      client_kwargs: { "scope": "openid email profile https://www.googleapis.com/auth/drive.file", "access_type": "offline", "prompt": "consent" }
+      client_kwargs: { "scope": "openid email profile https://www.googleapis.com/auth/drive.file" }
     github:
       api_base_url: https://api.github.com/
       access_token_url: https://github.com/login/oauth/access_token
       authorize_url: https://github.com/login/oauth/authorize
       client_kwargs: { "scope": "read:user user:email" }
-rabbitmq:
+database:
   host: localhost
-  port: 5672
+  port: 5432
+minio:
+  public_endpoint: http://172.20.0.4:9000
+  internal_endpoint: http://172.20.0.4:9000
+  bucket_name: talos

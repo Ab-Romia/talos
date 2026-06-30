@@ -1,13 +1,17 @@
 from datetime import timedelta
 
-from arq.connections import RedisSettings
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr, SecretBytes
 from pydantic_settings import BaseSettings, SettingsConfigDict, PydanticBaseSettingsSource, YamlConfigSettingsSource
+
+
+def is_pytest() -> bool:
+    import os
+    return "IS_TEST" in os.environ
 
 
 class OAuthClient(BaseModel):
     client_id: str
-    client_secret: str
+    client_secret: SecretStr
     api_base_url: str
     access_token_url: str
     authorize_url: str
@@ -20,7 +24,7 @@ class AuthConfig(BaseModel):
 
     totp_valid_window: int = 1
 
-    jwe_secret: bytes
+    jwe_secret: SecretBytes
     jwt_header: dict
 
     sudo_max_age: timedelta = timedelta(minutes=10)
@@ -38,12 +42,13 @@ class AuthConfig(BaseModel):
 
 
 class MinIOConfig(BaseModel):
-    internal_endpoint: str = "localhost:9000"
-    external_endpoint: str = "localhost:9000"
+    internal_endpoint: str = "127.0.0.1:9000"
+    public_endpoint: str = "127.0.0.1:9000"
     access_key: str = "minioadmin"
-    secret_key: str = "minioadmin"
+    secret_key: SecretStr = SecretStr("minioadmin")
     secure: bool = False
-    bucket_name: str = "talos-uploads"
+    bucket: str = "talos"
+    max_file_size: int = 50 * 1024 * 1024  # 50 MiB
 
 
 class FilesConfig(BaseModel):
@@ -78,64 +83,57 @@ class FilesConfig(BaseModel):
     thumbnail_size: tuple[int, int] = (300, 300)
 
 
-class RabbitMQConfig(BaseModel):
-    host: str = "localhost"
-    port: int = 5672
-    username: str
-    password: str
-    virtual_host: str = "/"
-    notification_queue: str = "talos_notifcation_queue"
-
-
 class RedisConfig(BaseModel):
     host: str = "localhost"
     port: int = 6379
     database: int = 0
-    password: str
-    username: str
+    password: SecretStr = ""
+    username: str = ""
 
     @property
     def url(self) -> str:
-        auth_part = f"{self.username}:{self.password}@" if self.username and self.password else ""
+        auth_part = f"{self.username}:{self.password.get_secret_value()}@" if self.username and self.password else ""
         return f"redis://{auth_part}{self.host}:{self.port}/{self.database}"
-
-    def to_redis_settings(self) -> RedisSettings:
-        return RedisSettings(**self.model_dump())
 
 
 class PushConfig(BaseModel):
     """Web Push configuration for VAPID."""
-    vapid_private_key: str | None = None
-    vapid_public_key: str | None = None
-    vapid_subject: str | None = None
+    vapid_private_key: str
+    vapid_public_key: str
+    vapid_subject: str
+
+
+class DatabaseConfig(BaseModel):
+    protocol: str = "postgresql+psycopg"
+    async_protocol: str = "postgresql+psycopg"
+    host: str
+    port: int = 5432
+    name: str
+    user: str
+    password: SecretStr
+
+    @property
+    def url(self) -> str:
+        return f"{self.protocol}://{self.user}:{self.password.get_secret_value()}@{self.host}:{self.port}/{self.name}"
+
+    @property
+    def async_url(self) -> str:
+        return f"{self.async_protocol}://{self.user}:{self.password.get_secret_value()}@{self.host}:{self.port}/{self.name}"
 
 
 class Config(BaseSettings):
+    is_test: bool = False
     app_name: str = "Talos"
     app_host: str
     app_port: int
-    # Where the browser should land after OAuth (Vite default in dev)
-    frontend_origin: str = "http://localhost:5173"
-    # Path on the SPA (App.jsx redirects / → /chat; /chat is fine for a direct “home”)
-    frontend_post_oauth_path: str = "/chat"
-    # Must match the authorized redirect origin in Google/GitHub (e.g. http://localhost:8000).
-    # If empty, defaults to http://{app_host}:{app_port} so local IdP configs keep working
-    # without console changes.
-    oauth_callback_base: str = ""
 
-    database_url: str
-    cache_backend: str = "memory://"
+    database: DatabaseConfig = None
 
     auth: AuthConfig = None
     minio: MinIOConfig = MinIOConfig()
-    redis: RedisConfig = None
+    redis: RedisConfig = RedisConfig()
     files: FilesConfig = FilesConfig()
-    # When True (default), run document embedding/indexing inside the API process so a
-    # separate `arq` worker is not required for local dev. Set False in production when
-    # using dedicated worker processes.
-    inline_file_processing: bool = True
-    rabbitmq: RabbitMQConfig = None
-    push: PushConfig = PushConfig()
+    push: PushConfig | None = None
 
     model_config = SettingsConfigDict(
         env_file='.env',
@@ -155,6 +153,12 @@ class Config(BaseSettings):
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (
             init_settings,
+            # override during pytest
+            *([YamlConfigSettingsSource(
+                settings_cls,
+                yaml_file="config/config.test.yaml",
+                deep_merge=True
+            )] if is_pytest() else ()),
             env_settings,
             dotenv_settings,
             YamlConfigSettingsSource(settings_cls),

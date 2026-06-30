@@ -1,40 +1,34 @@
 import uuid
 from datetime import timedelta
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 from sqlalchemy import select
 
-from backend.auth.model import User
 import notifications.tasks as tasks
-from notifications.model import Notification, NotificationsChannel, NotificationsType
+from auth.model import User
+from notifications.model import (
+    Notification,
+    PushSubscription,
+)
 from notifications.service import get_unread_count, get_user_notifications, mark_as_read, push_notification
 from utils.datetime import utcnow
 
 
 class TestNotificationService:
-    async def test_create_notification_defaults_to_in_app_only(self, db_session, test_user, monkeypatch):
-        email_kiq = AsyncMock(return_value=None)
-        web_push = AsyncMock(return_value=None)
-        monkeypatch.setattr(tasks, "email", SimpleNamespace(kiq=email_kiq))
-        monkeypatch.setattr(tasks, "web_push", web_push)
+    async def test_create_notification_with_no_subscriptions(self, db_session, test_user, monkeypatch):
+        web_push_kiq = AsyncMock(return_value=None)
+        monkeypatch.setattr(tasks.webpush, "kiq", web_push_kiq)
 
-        notifications = await push_notification(
-            db=db_session,
-            user_ids=test_user.id,
-            notif_type=NotificationsType.MESSAGE,
-            title="Title",
-            body="Body",
-            data=None,
-            channels=None,
-        )
+        notifications = await push_notification(db=db_session, user_ids=test_user.id, title="Title", body="Body",
+                                                data=None)
         notification = notifications[0]
 
         assert notification.user_id == test_user.id
         assert notification.title == "Title"
         assert notification.body == "Body"
         assert notification.data == {}
-        assert notification.deliveries == []
+        # No deliveries created since no subscriptions exist
+        assert len(notification.deliveries) == 0
 
         db_notification = db_session.scalar(
             select(Notification).where(Notification.id == notification.id)
@@ -42,14 +36,48 @@ class TestNotificationService:
         assert db_notification is not None
         assert db_notification.id == notification.id
         assert db_notification.data == {}
-        email_kiq.assert_not_awaited()
-        web_push.assert_not_awaited()
+        web_push_kiq.assert_not_awaited()
+
+    async def test_create_notification_enqueues_per_subscription(
+            self,
+            db_session,
+            test_user,
+            monkeypatch,
+    ):
+        # Create subscriptions
+        sub1 = PushSubscription(
+            user_id=test_user.id,
+            endpoint="https://example.com/push1",
+            keys={"p256dh": "key1", "auth": "secret1"},
+        )
+        sub2 = PushSubscription(
+            user_id=test_user.id,
+            endpoint="https://example.com/push2",
+            keys={"p256dh": "key2", "auth": "secret2"},
+        )
+        db_session.add_all([sub1, sub2])
+        db_session.commit()
+
+        web_push_kiq = AsyncMock(return_value=None)
+        monkeypatch.setattr(tasks.webpush, "kiq", web_push_kiq)
+
+        notifications = await push_notification(db=db_session, user_ids=test_user.id, title="Title", body="Body",
+                                                data=None)
+        notification = notifications[0]
+
+        # Should have 2 deliveries (one per subscription)
+        assert len(notification.deliveries) == 2
+        assert web_push_kiq.await_count == 2
+
+        # Verify deliveries have subscription_id set
+        delivery_sub_ids = {d.subscription_id for d in notification.deliveries}
+        assert delivery_sub_ids == {sub1.id, sub2.id}
 
     async def test_create_bulk_notifications_persists_all_and_enqueues_each(
-        self,
-        db_session,
-        test_user,
-        monkeypatch,
+            self,
+            db_session,
+            test_user,
+            monkeypatch,
     ):
         other_user = User(
             username=f"notif-{uuid.uuid4().hex[:8]}",
@@ -63,32 +91,31 @@ class TestNotificationService:
         db_session.commit()
         db_session.refresh(other_user)
 
-        email_kiq = AsyncMock(return_value=None)
-        web_push = AsyncMock(return_value=None)
-        monkeypatch.setattr(tasks, "email", SimpleNamespace(kiq=email_kiq))
-        monkeypatch.setattr(tasks, "web_push", web_push)
+        # Create subscription for first user
+        sub1 = PushSubscription(
+            user_id=test_user.id,
+            endpoint="https://example.com/push1",
+            keys={"p256dh": "key1", "auth": "secret1"},
+        )
+        # Create subscription for second user
+        sub2 = PushSubscription(
+            user_id=other_user.id,
+            endpoint="https://example.com/push2",
+            keys={"p256dh": "key2", "auth": "secret2"},
+        )
+        db_session.add_all([sub1, sub2])
+        db_session.commit()
+
+        web_push_kiq = AsyncMock(return_value=None)
+        monkeypatch.setattr(tasks.webpush, "kiq", web_push_kiq)
 
         user_ids = [test_user.id, other_user.id]
-        notifications = await push_notification(
-            db=db_session,
-            user_ids=user_ids,
-            notif_type=NotificationsType.MESSAGE,
-            title="Bulk",
-            body="Body",
-            data=None,
-            channels=[NotificationsChannel.EMAIL, NotificationsChannel.PUSH],
-        )
+        notifications = await push_notification(db=db_session, user_ids=user_ids, title="Bulk", body="Body", data=None)
 
         assert len(notifications) == len(user_ids)
         assert [n.user_id for n in notifications] == user_ids
-        assert email_kiq.await_count == len(user_ids)
-        assert web_push.await_count == len(user_ids)
-        assert {call.kwargs["notification_id"] for call in email_kiq.await_args_list} == {
-            notification.id for notification in notifications
-        }
-        assert {call.kwargs["notification_id"] for call in web_push.await_args_list} == {
-            notification.id for notification in notifications
-        }
+        # 2 notifications * 1 subscription each = 2 enqueued tasks
+        assert web_push_kiq.await_count == 2
 
         for notification in notifications:
             db_notification = db_session.scalar(
@@ -96,35 +123,6 @@ class TestNotificationService:
             )
             assert db_notification is not None
             assert db_notification.id == notification.id
-
-    async def test_create_notification_with_email_channel_adds_delivery_record(
-        self,
-        db_session,
-        test_user,
-        monkeypatch,
-    ):
-        email_kiq = AsyncMock(return_value=None)
-        web_push = AsyncMock(return_value=None)
-        monkeypatch.setattr(tasks, "email", SimpleNamespace(kiq=email_kiq))
-        monkeypatch.setattr(tasks, "web_push", web_push)
-
-        notification = (
-            await push_notification(
-                db=db_session,
-                user_ids=test_user.id,
-                notif_type=NotificationsType.MESSAGE,
-                title="Email",
-                body="Body",
-                data={"x": 1},
-                channels=NotificationsChannel.EMAIL,
-            )
-        )[0]
-
-        assert notification.data == {"x": 1}
-        assert len(notification.deliveries) == 1
-        assert notification.deliveries[0].channel == NotificationsChannel.EMAIL
-        email_kiq.assert_awaited_once_with(notification_id=notification.id)
-        web_push.assert_not_awaited()
 
     def test_mark_as_read(self, db_session, notification):
         notif = notification()
@@ -175,15 +173,8 @@ class TestNotificationService:
         notifications = []
         for index in range(4):
             notifications.extend(
-                await push_notification(
-                    db=db_session,
-                    user_ids=test_user.id,
-                    notif_type=NotificationsType.MESSAGE,
-                    title=f"Title {index}",
-                    body="Body",
-                    data=None,
-                    channels=None,
-                )
+                await push_notification(db=db_session, user_ids=test_user.id, title=f"Title {index}", body="Body",
+                                        data=None)
             )
 
         base_time = utcnow()
@@ -192,13 +183,7 @@ class TestNotificationService:
         notifications[1].read_at = utcnow()
         db_session.commit()
 
-        result = get_user_notifications(
-            db=db_session,
-            user_id=test_user.id,
-            limit=2,
-            offset=1,
-            unread_only=True,
-        )
+        result = get_user_notifications(db=db_session, user_id=test_user.id, limit=2, offset=1, unread_only=True)
 
         assert [n.id for n in result] == [notifications[2].id, notifications[0].id]
         assert all(n.read_at is None for n in result)

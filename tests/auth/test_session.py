@@ -5,7 +5,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app import app as fastapi_app
-from backend.auth.utils.session import NewSessionDep, Session as UserSession
+from auth import Session as UserSession
+from auth.utils.session import NewSessionDep
 
 
 @pytest.fixture(scope="session")
@@ -14,7 +15,7 @@ def test_session_path():
 
     def endpoint(session: NewSessionDep, user_id: uuid.UUID):
         session.sub = user_id
-        return {"session_id": str(session.jti), "user_id": str(session.sub)}
+        return {"session_id": session.jti.hex, "user_id": user_id.hex}
 
     fastapi_app.add_api_route(path, endpoint, methods=["GET"])
 

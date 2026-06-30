@@ -4,9 +4,9 @@ from unittest.mock import Mock, patch
 
 from fastapi import status
 
-from backend.auth.model import IdentityProvider, Issuer
-from backend.auth.utils.jwt import create_token, verify_token
-from backend.auth.webauthn import WebAuthnChallengeClaims, generate_passkey_new, verify_passkey, register_passkey, \
+from auth.model import IdentityProvider, Issuer
+from auth.utils.jwt import create_token, verify_token
+from auth.webauthn import WebAuthnChallengeClaims, generate_passkey_new, verify_passkey, register_passkey, \
     generate_passkey_for_auth
 
 
@@ -43,7 +43,7 @@ class TestGeneratePasskey:
 
 
 class TestRegisterPasskey:
-    @patch("backend.auth.webauthn.webauthn.verify_registration_response")
+    @patch("auth.webauthn.webauthn.verify_registration_response")
     def test_register(self, mock_verify, client, path, db_session, test_user, sudo_auth_token):
         from webauthn.helpers import bytes_to_base64url
 
@@ -98,7 +98,7 @@ class TestRegisterPasskey:
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    @patch("backend.auth.webauthn.webauthn.verify_registration_response")
+    @patch("auth.webauthn.webauthn.verify_registration_response")
     def test_with_verification_failure(self, mock_verify, client, path, db_session, test_user,
                                        sudo_auth_token):
         from webauthn.helpers.exceptions import InvalidRegistrationResponse
@@ -129,11 +129,10 @@ class TestRegisterPasskey:
 
 
 class TestVerifyPasskey:
-    @patch("backend.auth.webauthn.webauthn.verify_authentication_response")
+    @patch("auth.webauthn.webauthn.verify_authentication_response")
     def test_with_valid_credential(self, mock_verify, client, path, db_session, test_user):
         from webauthn.helpers import bytes_to_base64url
 
-        # Setup passkey for user
         credential_id = bytes_to_base64url(b"test-credential-id")
         identity = IdentityProvider(
             user_id=test_user.id,
@@ -213,11 +212,10 @@ class TestVerifyPasskey:
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    @patch("backend.auth.webauthn.webauthn.verify_authentication_response")
+    @patch("auth.webauthn.webauthn.verify_authentication_response")
     def test_updates_sign_count(self, mock_verify, client, path, db_session, test_user):
         from webauthn.helpers import bytes_to_base64url
 
-        # Setup passkey
         credential_id = bytes_to_base64url(b"test-credential-id")
         identity = IdentityProvider(
             user_id=test_user.id,
@@ -267,12 +265,11 @@ class TestVerifyPasskey:
         ).first()
         assert updated_identity.data["sign_count"] == 6
 
-    @patch("backend.auth.webauthn.webauthn.verify_authentication_response")
+    @patch("auth.webauthn.webauthn.verify_authentication_response")
     def test_with_verification_failure(self, mock_verify, client, path, db_session, test_user):
         from webauthn.helpers.exceptions import InvalidAuthenticationResponse
         from webauthn.helpers import bytes_to_base64url
 
-        # Setup passkey
         credential_id = bytes_to_base64url(b"test-credential-id")
         identity = IdentityProvider(
             user_id=test_user.id,

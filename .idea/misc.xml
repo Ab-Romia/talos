@@ -3,5 +3,8 @@
   <component name="Black">
     <option name="sdkName" value="uv (gp_artifact)" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="uv (Graduation Project)" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="uv (graduation-project)" project-jdk-type="Python SDK" />
+  <component name="PyPackaging">
+    <option name="earlyReleasesAsUpgrades" value="true" />
+  </component>
 </project>

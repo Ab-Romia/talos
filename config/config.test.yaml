@@ -1,0 +1,7 @@
+# Override configuration values for testing environment
+auth:
+  permission_bitstring_length: 64
+
+database:
+  port: 5433
+  name: talos_test

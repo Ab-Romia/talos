@@ -2,65 +2,68 @@
 
 import uuid
 
+import fsspec
 from sqlalchemy import update as sa_update
 
+from broker import broker
 from config import cfg
-from files.model import FileAttachment, ProcessingStatus
+from database import AsyncSessionLocal
+from filesystem.model import File, FileStatus
 from utils.logger import get_logger
-
-DOCUMENT_MIME_TYPES = cfg().files.document_mime_types
-IMAGE_MIME_TYPES = cfg().files.image_mime_types
 
 logger = get_logger(__name__)
 
 
-async def process_file(ctx: dict, file_id: str):
+# TODO: retry, backoff, timeout..
+@broker.task()
+async def process_file(file_id: uuid.UUID):
     """Main task dispatcher. Routes to document or image processor by MIME type."""
-    db_factory = ctx["db_session_factory"]
-    storage = ctx["minio_storage"]
+    storage = fsspec.filesystem("minio", config=cfg().minio)
 
-    fid = uuid.UUID(file_id)
-    with db_factory() as db:
-        # Atomically claim the file: flip status to PROCESSING only when the
-        # current state is workable (UPLOADED or FAILED). rowcount == 0 means
-        # another worker already owns it, it is already INDEXED, or the row is
-        # gone — all safe to skip.
+    with AsyncSessionLocal() as db:
+        """
+        Atomically claim the file: flip status to PROCESSING only when the
+        current state is workable (UPLOADED or FAILED). rowcount == 0 means
+        another worker already owns it, it is already INDEXED, or the row is
+        gone — all safe to skip.
+        """
+        # TODO: consider letting taskiq handle locking.
         result = db.execute(
-            sa_update(FileAttachment)
+            sa_update(File)
             .where(
-                FileAttachment.id == fid,
-                FileAttachment.processing_status.in_([
-                    ProcessingStatus.UPLOADED,
-                    ProcessingStatus.FAILED,
+                File.id == file_id,
+                File.processing_status.in_([
+                    FileStatus.UPLOADED,
+                    FileStatus.PROCESSING_FAILED,
                 ])
             )
-            .values(processing_status=ProcessingStatus.PROCESSING)
+            .values(processing_status=FileStatus.PROCESSING)
         )
         db.commit()
 
         if result.rowcount == 0:
-            file_record = db.get(FileAttachment, fid)
+            file_record = db.get(File, file_id)
             if file_record is None:
                 logger.warning("File not found for processing", file_id=file_id)
             else:
                 logger.info(
                     "File not in processable state, skipping",
                     file_id=file_id,
-                    status=file_record.processing_status.value,
+                    status=file_record.status.value,
                 )
             return
 
-        file_record = db.get(FileAttachment, fid)
+        file_record = db.get(File, file_id)
         if file_record is None:
             logger.warning("File row vanished after claim", file_id=file_id)
             return
 
         try:
-            if file_record.content_type in DOCUMENT_MIME_TYPES:
+            if file_record.content_type in cfg().files.document_mime_types:
                 from processing.documents import process_document
                 await process_document(file_record, db, storage)
 
-            elif file_record.content_type in IMAGE_MIME_TYPES:
+            elif file_record.content_type in cfg().files.image_mime_types:
                 from processing.images import process_image
                 await process_image(file_record, db, storage)
 
@@ -76,14 +79,14 @@ async def process_file(ctx: dict, file_id: str):
                 db.commit()
                 return
 
-            file_record.processing_status = ProcessingStatus.INDEXED
+            file_record.status = FileStatus.INDEXED
             db.commit()
             logger.info("File processing complete", file_id=file_id)
 
         except Exception as e:
             logger.exception("File processing failed", file_id=file_id)
             db.rollback()
-            file_record = db.get(FileAttachment, fid)
+            file_record = db.get(File, file_id)
             if file_record is None:
                 logger.error(
                     "File row disappeared during processing",
@@ -91,7 +94,7 @@ async def process_file(ctx: dict, file_id: str):
                     underlying_error=str(e)[:500],
                 )
                 return
-            file_record.processing_status = ProcessingStatus.FAILED
+            file_record.status = FileStatus.PROCESSING_FAILED
             file_record.processing_error = str(e)[:2048]
             db.commit()
             raise

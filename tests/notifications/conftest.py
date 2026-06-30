@@ -3,13 +3,13 @@ from typing import Callable
 import pytest
 from faker import Faker
 
-from notifications.model import Notification, NotificationsType
+from notifications.model import Notification, NotificationTag
 
 
 @pytest.fixture
 def notification(test_user, db_session) -> Callable[..., Notification]:
     def factory(
-            type_=NotificationsType.MESSAGE,
+            tags=None,
             title=None,
             body=None,
             data=None,
@@ -17,9 +17,11 @@ def notification(test_user, db_session) -> Callable[..., Notification]:
         faker = Faker()
         title = title or faker.sentence()
         body = body or faker.paragraph()
+        if tags is None:
+            tags = [NotificationTag.SYSTEM]
         return Notification(
             user_id=test_user.id,
-            type=type_,
+            tags=tags,
             title=title,
             body=body,
             data=data or {},
@@ -34,4 +36,23 @@ def test_notification(notification, db_session):
     db_session.add(n)
     db_session.commit()
 
-    return n
+    yield n
+
+    db_session.delete(n)
+    db_session.commit()
+
+
+@pytest.fixture
+def test_subscription(test_user, db_session):
+    from notifications.model import PushSubscription
+    subscription = PushSubscription(
+        user_id=test_user.id,
+        endpoint="https://example.com/push",
+        keys={"p256dh": "key", "auth": "secret"},
+    )
+    db_session.add(subscription)
+    db_session.commit()
+    yield subscription
+
+    db_session.delete(subscription)
+    db_session.commit()

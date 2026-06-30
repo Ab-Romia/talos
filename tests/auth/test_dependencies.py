@@ -5,10 +5,11 @@ import pytest
 from starlette.requests import Request
 
 from app import app as fastapi_app
-from backend.auth.utils import helpers
-from backend.auth.utils.helpers import UserDep, OptionalUserDep
-from backend.auth.utils.jwt import create_token
-from backend.auth.utils.session import SessionClaims, verified_session, unverified_session
+from auth import dependencies
+from auth.dependencies import UserDep, OptionalUserDep
+from auth.utils import errors
+from auth.utils.jwt import create_token
+from auth.utils.session import SessionClaims, verified_session, unverified_session
 
 
 @pytest.fixture(scope="session")
@@ -125,7 +126,7 @@ class TestGetSessionDependency:
         req = Request({"type": "http", "state": {}})
         req.state.set_session = None  # Initialize
 
-        unverified_sess = unverified_session(req, token)
+        unverified_sess = unverified_session(token, req)
         result = verified_session(next(unverified_sess), db_session)
 
         assert result.jti == test_session.jti
@@ -144,7 +145,7 @@ class TestGetSessionDependency:
         req = Request({"type": "http", "state": {}})
 
         with pytest.raises(Exception):
-            gen = verified_session(req, db_session, token)
+            gen = verified_session(next(unverified_session(req, token)), db_session)
             next(gen)
 
 
@@ -158,7 +159,7 @@ class TestSudoTokenDependency:
             sudo_exp=datetime.now(timezone.utc) + timedelta(minutes=1),
         )
 
-        helpers.sudo(claims)
+        dependencies.sudo(claims)
 
     def test_when_not_sudo(self, db_session, test_user, test_session):
         from datetime import timezone, datetime
@@ -169,8 +170,8 @@ class TestSudoTokenDependency:
             sudo_exp=None,
         )
 
-        with pytest.raises(Exception):
-            helpers.sudo(claims)
+        with pytest.raises(errors.SudoRequired):
+            dependencies.sudo(claims)
 
     def test_when_session_not_found(self, db_session, test_user):
         from datetime import timezone, datetime
@@ -187,5 +188,5 @@ class TestSudoTokenDependency:
         req = Request({"type": "http", "state": {}})
 
         with pytest.raises(Exception):
-            gen = verified_session(req, db_session, token)
+            gen = verified_session(next(unverified_session(req, token)), db_session)
             next(gen)

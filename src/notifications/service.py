@@ -1,4 +1,3 @@
-import itertools
 import uuid
 from typing import Any, Sequence, Iterable
 
@@ -7,33 +6,30 @@ from sqlalchemy.orm import Session
 
 from utils.datetime import utcnow
 from . import tasks
-from .model import Notification, NotificationsType, NotificationsChannel, NotificationDelivery
+from .model import Notification, NotificationsChannel, NotificationDelivery, PushSubscription, NotificationSchema, \
+    PushSubscriptionSchema, NotificationTag
 
 
 async def push_notification(
         db: Session,
         user_ids: Iterable[uuid.UUID] | uuid.UUID,
-        notif_type: NotificationsType,
-        title: str,
-        body: str,
+        title: str, body: str,
         data: dict[str, Any] | None = None,
-        channels: Iterable[NotificationsChannel] | NotificationsChannel | None = None,
+        tags: Iterable[NotificationTag] | None = None,
 ) -> list[Notification]:
     """Push a notification to one or more users and enqueue delivery tasks for the specified channels."""
     user_ids = [user_ids] if isinstance(user_ids, uuid.UUID) else list(user_ids)
-    if channels is None:
-        channels = [NotificationsChannel.IN_APP]
-    elif isinstance(channels, NotificationsChannel):
-        channels = [channels]
+
+    tags_list = list(tags) if tags is not None else []
 
     # TODO: query user preferences for channels and filter channels accordingly before enqueueing
     notifications = [
         Notification(
             user_id=user_id,
-            type=notif_type,
             title=title,
             body=body,
             data=data or {},
+            tags=tags_list,
         )
         for user_id in user_ids
     ]
@@ -41,16 +37,35 @@ async def push_notification(
     db.add_all(notifications)
     db.commit()
 
-    # enqueue tasks for each channel
-    for n, channel in itertools.product(notifications, channels):
-        match channel:
-            # TODO: is online check
-            case NotificationsChannel.EMAIL:
-                await tasks.email.kiq(notification_id=n.id)
-                n.deliveries.append(NotificationDelivery(channel=channel))
-            case NotificationsChannel.PUSH:
-                # await tasks.web_push.kiq(notification_id=n.id)
-                await tasks.web_push(notification_id=n.id)
+    # Enqueue delivery tasks for each notification
+    for n in notifications:
+        # TODO: is online check
+        is_online = False
+
+        if not is_online:
+            subscriptions = db.scalars(
+                select(PushSubscription)
+                .where(PushSubscription.user_id == n.user_id)
+                .where(PushSubscription.expiration_time.is_(None)
+                       | (PushSubscription.expiration_time > utcnow()))
+                .where(PushSubscription.deleted_at.is_(None))
+            ).all()
+
+            # Enqueue web_push for each subscription
+            for sub in subscriptions:
+                delivery = NotificationDelivery(
+                    notification_id=n.id,
+                    channel=NotificationsChannel.PUSH,
+                    subscription_id=sub.id,
+                )
+                db.add(delivery)
+
+                await tasks.webpush.kiq(
+                    notification=NotificationSchema.model_validate(n),
+                    subscription=PushSubscriptionSchema.model_validate(sub)
+                )
+
+        db.commit()
 
     return notifications
 
@@ -74,19 +89,23 @@ def mark_as_read(
     return True
 
 
-def get_user_notifications(
-        db: Session,
-        user_id: uuid.UUID,
-        limit: int = 20,
-        offset: int = 0,
-        unread_only: bool = False,
-) -> Sequence[Notification]:
+def get_user_notifications(db: Session, user_id: uuid.UUID, limit: int = 20,
+                           offset: int = 0, unread_only: bool = False,
+                           after_notification_id: uuid.UUID = None) -> Sequence[Notification]:
     stmt = select(Notification).where(
         Notification.user_id == user_id
     )
 
     if unread_only:
         stmt = stmt.where(Notification.read_at.is_(None))
+
+    if after_notification_id:
+        # TODO: using uuid7 with time-based ordering would eliminate the need for this extra query
+        subquery = select(Notification.created_at).where(
+            Notification.id == after_notification_id,
+            Notification.user_id == user_id
+        ).scalar_subquery()
+        stmt = stmt.where(Notification.created_at > subquery)
 
     return db.scalars(
         stmt

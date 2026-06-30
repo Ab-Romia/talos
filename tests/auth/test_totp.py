@@ -4,11 +4,11 @@ from fastapi import status
 from jinja2.utils import url_quote
 from sqlalchemy import select
 
-from backend.auth.model import IdentityProvider, Issuer
-from backend.auth.totp import create_totp_helper, TotpSetupClaims, delete_totp, register_totp, verify_totp, \
+from auth.model import IdentityProvider, Issuer
+from auth.totp import create_totp_helper, TotpSetupClaims, delete_totp, register_totp, verify_totp, \
     generate_totp
-from backend.auth.utils.jwt import create_token, verify_token
-from backend.auth.utils.session import SessionClaims
+from auth.utils.jwt import create_token, verify_token
+from auth.utils.session import SessionClaims
 
 
 class TestTOTP:
@@ -109,7 +109,7 @@ class TestTOTP:
         assert res3.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_verify_when_not_setup(self, client, path, db_session, test_user, test_session):
-        from backend.auth.utils.session import SessionClaims
+        from auth.utils.session import SessionClaims
         from datetime import timedelta, timezone, datetime
 
         claims = SessionClaims(

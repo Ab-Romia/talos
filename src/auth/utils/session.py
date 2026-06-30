@@ -1,0 +1,206 @@
+import uuid
+from datetime import datetime, timezone
+from typing import Annotated, override
+
+from fastapi import Request, Depends, Header, Cookie
+from pydantic import ConfigDict
+from sqlalchemy import select, func, delete
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from auth.model import Session
+from config import cfg
+from database import DatabaseDep
+from utils.types import DATETIME
+from .jwt import verify_token, BaseJWTClaims
+from ..utils import errors, jwt
+
+
+class SessionClaims(BaseJWTClaims):
+    model_config = ConfigDict(extra="allow")
+
+    requires_otp: bool = False
+    sudo_exp: DATETIME | None = None
+    _deleted: bool = False
+    _modified: bool = False
+    _verify: bool = False
+
+    def __setattr__(self, key, value):
+        super().__setattr__(key, value)
+        if key not in {"_deleted", "_modified"}:
+            super().__setattr__("_modified", True)
+
+    @property
+    def modified(self):
+        return self._modified
+
+    @property
+    def deleted(self):
+        return self._deleted
+
+    def clear(self):
+        self._deleted = True
+
+
+class SessionMiddleware(BaseHTTPMiddleware):
+    @override
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+
+        if "set_session" in request.state:
+            claims: SessionClaims = request.state.set_session
+        else:
+            return response
+
+        token = jwt.create_token(claims)
+        delta = claims.exp - datetime.now(timezone.utc)
+
+        accept_header = request.headers.get("accept", "*/*").split(",")
+        if "text/html" in accept_header:
+            if claims.deleted:
+                response.delete_cookie(key=cfg().auth.session_cookie_key, path="/")
+            elif claims.modified:
+                response.set_cookie(
+                    key=cfg().auth.session_cookie_key,
+                    value=token,
+                    path="/",
+                    secure=True,
+                    httponly=True,
+                    samesite="lax",
+                    max_age=int(delta.total_seconds())
+                )
+        else:
+            response.headers["X-Session-Token"] = token
+
+        return response
+
+
+def auth_token(authorization: Annotated[str, Header()] = None,
+               user_session: Annotated[str, Cookie()] = None):
+    if authorization is not None:
+        return (authorization
+                .removeprefix("Bearer")
+                .removeprefix("bearer")
+                .strip())
+    else:
+        return user_session
+
+
+def unverified_session(auth_token: Annotated[str, Depends(auth_token)], request: Request = None):
+    claims = None
+    if auth_token:
+        try:
+            claims = verify_token(auth_token, return_model=SessionClaims)
+        except errors.ExpiredToken:
+            pass
+
+    if claims is None:
+        claims = SessionClaims(exp=datetime.now(timezone.utc) + cfg().auth.session_max_age)
+
+    yield claims
+
+    # refresh every `threshold` minutes
+    last_refresh_dur = claims.exp - datetime.now(timezone.utc) - cfg().auth.session_max_age
+    if last_refresh_dur < cfg().auth.session_refresh_threshold:
+        claims.exp = datetime.now(timezone.utc) + cfg().auth.session_max_age
+
+    if request is not None and (claims.modified or claims.deleted):
+        request.state.set_session = claims
+
+
+def verified_session(claims: UnverifiedSessionDep, db: DatabaseDep):
+    """
+    Verify that the session is valid (exists in DB and not expired).
+    Updates last_used_at to implement sliding expiration.
+     """
+    session = db.scalar(
+        select(Session)
+        .where(Session.id == claims.jti,
+               Session.user_id == claims.sub)
+    )
+
+    if session is None:
+        raise errors.SessionExpired()
+
+    session.last_used_at = func.now()
+    db.commit()
+
+    return claims
+
+
+def new_session(claims: UnverifiedSessionDep, db: DatabaseDep):
+    # TODO: handle existing session (e.g. revoke previous session, or allow multiple sessions per user)
+    yield claims
+
+    assert claims.sub is not None, "User ID (sub) must be set for new session"
+    assert claims.jti is not None, "Session ID (jti) must be set for new session"
+
+    sess = Session(
+        id=claims.jti,
+        user_id=claims.sub,
+        last_used_at=func.now(),
+    )
+    db.merge(sess)
+    db.commit()
+
+
+SessionDep = Annotated[SessionClaims, Depends(verified_session, scope="function")]
+UnverifiedSessionDep = Annotated[SessionClaims, Depends(unverified_session, scope="function")]
+NewSessionDep = Annotated[SessionClaims, Depends(new_session, scope="function")]
+
+
+def revoke(session_id: uuid.UUID, db: DatabaseDep):
+    db.execute(
+        delete(Session)
+        .where(Session.id == session_id)
+    )
+    db.commit()
+
+
+def revoke_by_uid(user_id: uuid.UUID, db: DatabaseDep, except_id: uuid.UUID = None):
+    db.execute(
+        delete(Session)
+        .where(Session.user_id == user_id)
+        .where(Session.id != except_id)
+    )
+    db.commit()
+
+
+def get_by_uid(user_id: uuid.UUID, db: DatabaseDep):
+    rows = db.execute(
+        select(Session.id, Session.created_at, Session.last_used_at, Session.user_agent)
+        .where(Session.user_id == user_id)
+    ).all()
+
+    return [
+        {
+            "id": str(r.id),
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "last_used_at": r.last_used_at.isoformat() if r.last_used_at else None,
+            "user_agent": r.user_agent,
+        }
+        for r in rows
+    ]
+
+
+def get_all_sessions(db: DatabaseDep, user_id: uuid.UUID):
+    return db.scalars(
+        select(Session.id)
+        .where(Session.user_id == user_id)
+    ).all()
+
+
+def get_sessions_by_uid(uid, db):
+    rows = db.execute(
+        select(Session.id, Session.created_at, Session.last_used_at, Session.user_agent)
+        .where(Session.user_id == uid)
+    ).all()
+
+    return [
+        {
+            "id": str(r.id),
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "last_used_at": r.last_used_at.isoformat() if r.last_used_at else None,
+            "user_agent": r.user_agent,
+        }
+        for r in rows
+    ]
