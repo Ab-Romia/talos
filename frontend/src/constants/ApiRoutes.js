@@ -45,6 +45,14 @@ export const AUTHZ_SUMMARY = '/api/authorization/summary'
 export const AUTHZ_PLATFORM_ROLES = '/api/authorization/platform-roles'
 export const AUTHZ_PLATFORM_PERMISSIONS = '/api/authorization/platform-permissions'
 
+// Notifications
+export const NOTIFICATIONS = '/api/notifications/'
+export const NOTIFICATIONS_READ = '/api/notifications/read'
+export const NOTIFICATIONS_READ_ALL = '/api/notifications/read-all'
+export const NOTIFICATIONS_UNREAD_COUNT = '/api/notifications/unread-count'
+export const NOTIFICATIONS_VAPID_KEY = '/api/notifications/vapid-public-key'
+export const NOTIFICATIONS_SUBSCRIPTION = '/api/notifications/subscription'
+
 // Files
 export const FILES = (wsId) => `/api/workspaces/${wsId}/files`
 export const FILE_BY_ID = (wsId, fId) => `/api/workspaces/${wsId}/files/${fId}`

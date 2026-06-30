@@ -33,6 +33,7 @@ import {
 import { authService } from '../../services/auth'
 import { aiSettingsService } from '../../services/aiSettings'
 import { authorizationService } from '../../services/authorization'
+import NotificationsSettingsTab from './NotificationsSettingsTab'
 
 function TabPanel({ value, index, children }) {
   if (value !== index) return null
@@ -411,6 +412,7 @@ export default function SettingsPage() {
             <Tab label="Access" />
             <Tab label="Security" />
             <Tab label="Configuration" />
+            <Tab label="Notifications" />
           </Tabs>
 
           {/* Profile Tab */}
@@ -1032,6 +1034,10 @@ export default function SettingsPage() {
                 Save configuration
               </Button>
             </div>
+          </TabPanel>
+
+          <TabPanel value={tab} index={5}>
+            <NotificationsSettingsTab />
           </TabPanel>
         </div>
       </div>
