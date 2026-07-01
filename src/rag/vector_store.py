@@ -1,3 +1,4 @@
+import copy
 from dataclasses import dataclass
 
 from langchain_core.embeddings import Embeddings
@@ -8,6 +9,47 @@ from langchain_openai import OpenAIEmbeddings
 from pymilvus import connections, Collection, utility
 
 from config import global_rag_config
+
+
+def _link_milvus_client_orm(client) -> None:
+    """Register a MilvusClient's connection handler under the pymilvus ORM
+    `connections` registry so ORM Collection(using=alias) can reuse it.
+
+    langchain_milvus talks to Milvus via a MilvusClient but reads schema via the
+    ORM Collection API; the two use separate connection registries. Without this
+    bridge, ORM access raises "should create connection first". (This path had no
+    live caller on main until the /ask endpoint + chat indexer.)
+    """
+    alias = client._using
+    if alias in connections._alias_handlers:
+        return
+    connections._alias_handlers[alias] = client._handler
+    if "default" in connections._alias_config:
+        connections._alias_config[alias] = copy.deepcopy(connections._alias_config["default"])
+    else:
+        connections._alias_config[alias] = {
+            "address": f"{global_rag_config.milvus_host}:{global_rag_config.milvus_port}",
+            "user": "",
+            "db_name": "default",
+        }
+
+
+def _install_milvus_client_orm_bridge() -> None:
+    from pymilvus.milvus_client.milvus_client import MilvusClient
+
+    if getattr(MilvusClient.__init__, "_talos_orm_bridge", False):
+        return
+    _orig = MilvusClient.__init__
+
+    def _patched(self, *a, **kw):
+        _orig(self, *a, **kw)
+        _link_milvus_client_orm(self)
+
+    _patched._talos_orm_bridge = True
+    MilvusClient.__init__ = _patched
+
+
+_install_milvus_client_orm_bridge()
 
 __all__ = [
     "get_embeddings",
@@ -107,6 +149,9 @@ def get_workspace_vectorstore(
     embeddings: Embeddings | None = None,
 ) -> VectorStore:
     """Get vectorstore for workspace-scoped file chunks."""
+    # Establish the pymilvus ORM connection on the default alias first; otherwise
+    # accessing the collection raises "should create connection first" (this path
+    # had no live caller on main until the /ask endpoint + chat indexer).
     if embeddings is None:
         embeddings = get_embeddings(embedding_provider)
 
