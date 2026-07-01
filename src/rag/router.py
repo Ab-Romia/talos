@@ -51,14 +51,17 @@ class AskRequest(BaseModel):
     debug: bool = False  # log model + retrieved chunks + exact prompt for this call
 
 
-async def _load_unindexed_tail(channel_id: UUID, cap: int) -> list[BaseMessage]:
+async def _load_unindexed_tail(channel_id: UUID, cap: int) -> tuple[list[BaseMessage], set[str]]:
     """The channel's un-indexed tail (tier 1), chronological, capped.
 
-    These are exactly the messages not yet embedded into Milvus. A full tail
-    (len == cap) means the indexer is lagging, so warn.
+    Returns the history (for the prompt's chat_history slot) and the set of its
+    message_ids. The ids let RAGChain drop these from tier-2 recall, so a message
+    briefly present in both tiers (its vector is in Milvus before its indexed_at
+    commit lands) is still counted exactly once. A full tail (len == cap) means
+    the indexer is lagging, so warn.
     """
     if cap <= 0:
-        return []
+        return [], set()
     async with AsyncSessionLocal() as db:
         rows = list(await db.scalars(
             select(Message)
@@ -76,7 +79,8 @@ async def _load_unindexed_tail(channel_id: UUID, cap: int) -> list[BaseMessage]:
             AIMessage(content=m.content) if m.role == MessageRole.ASSISTANT
             else HumanMessage(content=m.content)
         )
-    return history
+    tail_ids = {str(m.id) for m in rows}
+    return history, tail_ids
 
 
 async def _persist_assistant_turn(channel_id: UUID, answer: str) -> None:
@@ -105,7 +109,7 @@ async def ask_question(channel_id: UUID, body: AskRequest, session: SessionDep):
 
     # Load the tail BEFORE persisting the current question, so this turn's
     # question isn't duplicated into its own chat_history.
-    history = await _load_unindexed_tail(channel_id, global_rag_config.chat_context_cap)
+    history, tail_ids = await _load_unindexed_tail(channel_id, global_rag_config.chat_context_cap)
     await store_message(channel_id=channel_id, user_id=cast(UUID, session.sub), content=body.question)
 
     file_ids = [str(fid) for fid in body.file_ids] if body.file_ids else None
@@ -115,6 +119,7 @@ async def ask_question(channel_id: UUID, body: AskRequest, session: SessionDep):
         file_ids=file_ids,
         chatroom_id=str(channel_id),
         chat_history=history,
+        exclude_message_ids=tail_ids,
     )
 
     async def stream():
@@ -127,30 +132,10 @@ async def ask_question(channel_id: UUID, body: AskRequest, session: SessionDep):
         await _persist_assistant_turn(channel_id, answer)
         if body.debug:
             import json
-            payload = _debug_payload(chain, history, body.question)
+            payload = chain.trace.as_dict()
             logger.info("ask.debug", model=payload["model"],
-                        chat_chunks=payload["chat_chunks"],
+                        chat_candidates=len(payload["chat_candidates"]),
                         injected_tail_size=payload["injected_tail_size"])
             yield _DEBUG_MARKER + json.dumps(payload, default=str)
 
     return StreamingResponse(stream(), media_type="text/plain; charset=utf-8")
-
-
-def _debug_payload(chain, history, question: str) -> dict:
-    """What /ask actually used: model, retrieved chunks, and the exact prompt."""
-    from config import RAG_PROMPT
-    prompt = "\n\n".join(
-        f"[{m.type}] {m.content}"
-        for m in RAG_PROMPT.format_messages(
-            context=chain.last_context, question=question, chat_history=history)
-    )
-    return {
-        "model": global_rag_config.openai_model,
-        "embedding_provider": global_rag_config.embedding_provider,
-        "rewritten_query": chain.last_query_info.get("rewritten_query"),
-        "file_chunks": [d.metadata for d in chain.retrieved_docs],
-        "chat_chunks": [{"message_id": d.metadata.get("message_id"), "text": d.page_content}
-                        for d in chain.last_chat_docs],
-        "injected_tail_size": len(history),
-        "prompt": prompt,
-    }

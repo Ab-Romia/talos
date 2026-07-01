@@ -29,6 +29,7 @@ class RAGChain:
         file_ids: list[str] | None = None,
         chatroom_id: str | None = None,
         chat_history: list | None = None,
+        exclude_message_ids: set[str] | None = None,
         *,
         retriever=None,
         chat_retriever=None,
@@ -61,6 +62,11 @@ class RAGChain:
         # the channel's un-indexed tail). Injected into the answer prompt's
         # chat_history slot; the indexed body is recalled via chat_retriever.
         self._injected_history = list(chat_history) if chat_history else []
+        # B5: message_ids already present in the injected tail (tier 1). A message
+        # can briefly be in both tiers (its vector is in Milvus before its
+        # indexed_at commit lands), so we drop those from chat recall to keep each
+        # message in exactly one tier of the context.
+        self._exclude_message_ids = set(exclude_message_ids or [])
 
         self.last_query_info = {}
 
@@ -145,11 +151,15 @@ class RAGChain:
         if not self.chat_retriever:
             return []
         try:
-            return self.chat_retriever.invoke(query)
+            docs = self.chat_retriever.invoke(query)
         except Exception:
             logger.warning("chat recall failed; degrading to file-only",
                            chatroom_id=self.chatroom_id, exc_info=True)
             return []
+        if self._exclude_message_ids:
+            docs = [d for d in docs
+                    if d.metadata.get("message_id") not in self._exclude_message_ids]
+        return docs
 
     # TODO: use prompt template
     def _format_docs(self, docs):
