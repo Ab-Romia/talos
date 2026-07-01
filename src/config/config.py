@@ -38,6 +38,15 @@ class RagConfig(BaseSettings):
 
     conversation_memory_k: int = 3
 
+    # Chat-memory indexing: the cron embeds messages older than the grace window
+    # (so live messages still in the un-indexed tail aren't indexed prematurely);
+    # chat_context_cap bounds the un-indexed tail injected directly per ask.
+    chat_index_interval_minutes: int = 5
+    chat_index_grace_seconds: int = 300
+    chat_index_batch_size: int = 500
+    chat_recall_k: int = 3
+    chat_context_cap: int = 50
+
     llm_temperature: float = 0.0
     llm_streaming: bool = True
 

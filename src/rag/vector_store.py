@@ -14,6 +14,7 @@ __all__ = [
     "get_vectorstore",
     "get_workspace_vectorstore",
     "delete_file_chunks",
+    "delete_message_chunks",
     "clear_collection",
     "get_collection_info",
 ]
@@ -149,4 +150,29 @@ def delete_file_chunks(
     client.delete(
         collection_name=collection_name,
         filter=" && ".join(parts),
+    )
+
+
+def delete_message_chunks(
+    message_id: str,
+    collection_name: str = WORKSPACE_COLLECTION,
+):
+    """Delete all chat-memory vector chunks for a given message_id from Milvus.
+
+    Mirrors delete_file_chunks; used to keep the chat indexer idempotent on
+    retry and to purge a message's vectors if it is ever deleted.
+    """
+    _ensure_milvus_connection()
+    if not utility.has_collection(collection_name):
+        return
+
+    from pymilvus import MilvusClient
+
+    client = MilvusClient(
+        uri=f"http://{global_rag_config.milvus_host}:{global_rag_config.milvus_port}"
+    )
+
+    client.delete(
+        collection_name=collection_name,
+        filter=f'message_id == "{message_id}"',
     )
