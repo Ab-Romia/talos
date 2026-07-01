@@ -45,6 +45,7 @@ class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=8000)
     file_ids: list[UUID] | None = None
     include_citations: bool = True
+    debug: bool = False  # log model + retrieved chunks + exact prompt for this call
 
 
 async def _load_unindexed_tail(channel_id: UUID, cap: int) -> list[BaseMessage]:
@@ -121,5 +122,31 @@ async def ask_question(channel_id: UUID, body: AskRequest, session: SessionDep):
         # Persist only the model answer (strip the citation footer).
         answer = "".join(parts).split(_CITATION_MARKER, 1)[0].strip()
         await _persist_assistant_turn(channel_id, answer)
+        if body.debug:
+            _log_debug(chain, history, body.question)
 
     return StreamingResponse(stream(), media_type="text/plain; charset=utf-8")
+
+
+def _log_debug(chain, history, question: str) -> None:
+    """Log what /ask actually used: model, retrieved chunks, and the exact prompt."""
+    from config import RAG_PROMPT
+    try:
+        prompt = "\n\n".join(
+            f"[{m.type}] {m.content}"
+            for m in RAG_PROMPT.format_messages(
+                context=chain.last_context, question=question, chat_history=history)
+        )
+        logger.info(
+            "ask.debug",
+            model=global_rag_config.openai_model,
+            embedding_provider=global_rag_config.embedding_provider,
+            rewritten_query=chain.last_query_info.get("rewritten_query"),
+            file_chunks=[d.metadata for d in chain.retrieved_docs],
+            chat_chunks=[{"message_id": d.metadata.get("message_id"), "text": d.page_content}
+                         for d in chain.last_chat_docs],
+            injected_tail_size=len(history),
+            prompt=prompt,
+        )
+    except Exception:
+        logger.warning("ask debug logging failed", exc_info=True)

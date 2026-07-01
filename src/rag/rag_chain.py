@@ -42,6 +42,9 @@ class RAGChain:
         self.chatroom_id = chatroom_id
         self.retrieved_docs: list[Document] = []
         self.chat_retriever = None
+        # Captured for debug/observability (the /ask debug flag reads these).
+        self.last_context = ""
+        self.last_chat_docs: list[Document] = []
         # Prior conversation turns supplied by the caller (the /ask endpoint loads
         # the channel's un-indexed tail). Injected into the answer prompt's
         # chat_history slot; the indexed body is recalled via chat_retriever.
@@ -116,6 +119,7 @@ class RAGChain:
         docs = self.retriever.invoke(rewritten)
         self.retrieved_docs = docs  # files only -> drives citations
         chat_docs = self._retrieve_chat(rewritten)
+        self.last_chat_docs = chat_docs  # captured for debug
         return docs + chat_docs  # context sees files + channel memory
 
     def _retrieve_chat(self, query: str):
@@ -129,9 +133,9 @@ class RAGChain:
             return []
 
     # TODO: use prompt template
-    @staticmethod
-    def _format_docs(docs):
-        return "\n\n".join(doc.page_content for doc in docs)
+    def _format_docs(self, docs):
+        self.last_context = "\n\n".join(doc.page_content for doc in docs)
+        return self.last_context
 
     def query(self, question: str, include_citations: bool = True) -> str:
         full_response = ""
