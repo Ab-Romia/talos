@@ -18,7 +18,7 @@ from utils.logger import get_logger
 
 from .compression import compression_retriever
 
-__all__ = ["get_retriever", "build_rag_pipeline"]
+__all__ = ["build_rag_pipeline"]
 
 logger = get_logger(__name__)
 
@@ -30,41 +30,6 @@ def _get_cross_encoder(model_name: str = CROSS_ENCODER_MODEL) -> HuggingFaceCros
     """Load the reranker once and reuse it for every request. Without this,
     a fresh transformer was being instantiated on every chat message."""
     return HuggingFaceCrossEncoder(model_name=model_name)
-
-
-# TODO: instead of passing boolean flags, pass reranker and retriever
-#  add more config options
-def get_retriever(
-        vectorstore: VectorStore,
-        documents: Iterable[Document],
-        config: RagConfig = global_rag_config,
-        search_kwargs: dict | None = None,
-):
-    base_search_kwargs = {"k": config.retrieval_top_k}
-    if search_kwargs:
-        base_search_kwargs.update(search_kwargs)
-    dense_retriever = vectorstore.as_retriever(
-        search_type="similarity", search_kwargs=base_search_kwargs
-    )
-
-    if config.use_hybrid_retrieval and documents:
-        bm25_retriever = BM25Retriever.from_documents(documents)
-        bm25_retriever.k = config.retrieval_top_k
-
-        base_retriever = EnsembleRetriever(
-            retrievers=[dense_retriever, bm25_retriever], weights=[0.5, 0.5]
-        )
-    else:
-        base_retriever = dense_retriever
-
-    if config.use_reranking:
-        model = _get_cross_encoder()
-        compressor = CrossEncoderReranker(model=model, top_n=config.retrieval_top_k)
-        return ContextualCompressionRetriever(
-            base_compressor=compressor, base_retriever=base_retriever
-        )
-
-    return base_retriever
 
 
 def build_rag_pipeline(
