@@ -109,7 +109,7 @@ const notificationsSlice = createSlice({
       if (!n || !n.id) return
       if (state.items.some((x) => x.id === n.id)) return
       state.items.unshift(n)
-      if (!n.is_read) state.unreadCount += 1
+      if (!n.read_at) state.unreadCount += 1
     },
     clearNotificationsError(state) {
       state.error = null
@@ -138,14 +138,15 @@ const notificationsSlice = createSlice({
       .addCase(markRead.fulfilled, (state, action) => {
         const id = action.payload
         const item = state.items.find((x) => x.id === id)
-        if (item && !item.is_read) {
-          item.is_read = true
+        if (item && !item.read_at) {
+          item.read_at = new Date().toISOString()
           state.unreadCount = Math.max(0, state.unreadCount - 1)
         }
       })
       .addCase(markAllRead.fulfilled, (state) => {
+        const now = new Date().toISOString()
         state.items.forEach((x) => {
-          x.is_read = true
+          if (!x.read_at) x.read_at = now
         })
         state.unreadCount = 0
       })

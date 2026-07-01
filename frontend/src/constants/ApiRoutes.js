@@ -47,7 +47,7 @@ export const AUTHZ_PLATFORM_PERMISSIONS = '/api/authorization/platform-permissio
 
 // Notifications
 export const NOTIFICATIONS = '/api/notifications/'
-export const NOTIFICATIONS_READ = '/api/notifications/read'
+export const NOTIFICATIONS_READ = (id) => `/api/notifications/${id}/read`
 export const NOTIFICATIONS_READ_ALL = '/api/notifications/read-all'
 export const NOTIFICATIONS_UNREAD_COUNT = '/api/notifications/unread-count'
 export const NOTIFICATIONS_VAPID_KEY = '/api/notifications/vapid-public-key'

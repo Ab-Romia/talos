@@ -9,12 +9,13 @@ import {
 } from '../constants/ApiRoutes'
 
 export const notificationsService = {
-  list({ limit = 20, offset = 0, unreadOnly = false } = {}) {
+  list({ limit = 20, offset = 0, unreadOnly = false, afterId = null } = {}) {
     const q = new URLSearchParams({
       limit: String(limit),
       offset: String(offset),
       unread_only: String(unreadOnly),
     })
+    if (afterId) q.set('after_notification_id', afterId)
     return api.get(`${NOTIFICATIONS}?${q.toString()}`)
   },
 
@@ -23,8 +24,7 @@ export const notificationsService = {
   },
 
   markRead(notificationId) {
-    const q = new URLSearchParams({ notification_id: notificationId })
-    return api.post(`${NOTIFICATIONS_READ}?${q.toString()}`)
+    return api.post(NOTIFICATIONS_READ(notificationId))
   },
 
   markAllRead() {

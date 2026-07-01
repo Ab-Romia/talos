@@ -1,10 +1,19 @@
-import { Bell, MessageSquare, AlertTriangle, Clock } from 'lucide-react'
+import { Bell, ShieldAlert, UserCheck, Tag, Users, Settings as SettingsIcon } from 'lucide-react'
 
-const TYPE_ICON = {
-  message: MessageSquare,
-  alert: AlertTriangle,
-  reminder: Clock,
-  system: Bell,
+const TAG_ICON = {
+  security: ShieldAlert,
+  account: UserCheck,
+  promotion: Tag,
+  social: Users,
+  system: SettingsIcon,
+}
+
+function pickIcon(tags) {
+  if (!Array.isArray(tags) || tags.length === 0) return Bell
+  for (const t of tags) {
+    if (TAG_ICON[t]) return TAG_ICON[t]
+  }
+  return Bell
 }
 
 function formatTime(iso) {
@@ -22,8 +31,8 @@ function formatTime(iso) {
 }
 
 export default function NotificationItem({ notification, onClick }) {
-  const Icon = TYPE_ICON[notification.type] || Bell
-  const unread = !notification.is_read
+  const Icon = pickIcon(notification.tags)
+  const unread = !notification.read_at
 
   return (
     <button
