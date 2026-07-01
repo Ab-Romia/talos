@@ -39,6 +39,9 @@ ask = APIRouter(tags=["rag"])
 # Matches the citation footer RAGChain.stream_query appends; kept OUT of the
 # stored assistant content so the next turn's history isn't polluted.
 _CITATION_MARKER = "\n\nSources:"
+# When debug is requested, the JSON debug payload is streamed after the answer,
+# preceded by this marker so a client can split it off.
+_DEBUG_MARKER = "\n\n__ASK_DEBUG__\n"
 
 
 class AskRequest(BaseModel):
@@ -123,30 +126,31 @@ async def ask_question(channel_id: UUID, body: AskRequest, session: SessionDep):
         answer = "".join(parts).split(_CITATION_MARKER, 1)[0].strip()
         await _persist_assistant_turn(channel_id, answer)
         if body.debug:
-            _log_debug(chain, history, body.question)
+            import json
+            payload = _debug_payload(chain, history, body.question)
+            logger.info("ask.debug", model=payload["model"],
+                        chat_chunks=payload["chat_chunks"],
+                        injected_tail_size=payload["injected_tail_size"])
+            yield _DEBUG_MARKER + json.dumps(payload, default=str)
 
     return StreamingResponse(stream(), media_type="text/plain; charset=utf-8")
 
 
-def _log_debug(chain, history, question: str) -> None:
-    """Log what /ask actually used: model, retrieved chunks, and the exact prompt."""
+def _debug_payload(chain, history, question: str) -> dict:
+    """What /ask actually used: model, retrieved chunks, and the exact prompt."""
     from config import RAG_PROMPT
-    try:
-        prompt = "\n\n".join(
-            f"[{m.type}] {m.content}"
-            for m in RAG_PROMPT.format_messages(
-                context=chain.last_context, question=question, chat_history=history)
-        )
-        logger.info(
-            "ask.debug",
-            model=global_rag_config.openai_model,
-            embedding_provider=global_rag_config.embedding_provider,
-            rewritten_query=chain.last_query_info.get("rewritten_query"),
-            file_chunks=[d.metadata for d in chain.retrieved_docs],
-            chat_chunks=[{"message_id": d.metadata.get("message_id"), "text": d.page_content}
-                         for d in chain.last_chat_docs],
-            injected_tail_size=len(history),
-            prompt=prompt,
-        )
-    except Exception:
-        logger.warning("ask debug logging failed", exc_info=True)
+    prompt = "\n\n".join(
+        f"[{m.type}] {m.content}"
+        for m in RAG_PROMPT.format_messages(
+            context=chain.last_context, question=question, chat_history=history)
+    )
+    return {
+        "model": global_rag_config.openai_model,
+        "embedding_provider": global_rag_config.embedding_provider,
+        "rewritten_query": chain.last_query_info.get("rewritten_query"),
+        "file_chunks": [d.metadata for d in chain.retrieved_docs],
+        "chat_chunks": [{"message_id": d.metadata.get("message_id"), "text": d.page_content}
+                        for d in chain.last_chat_docs],
+        "injected_tail_size": len(history),
+        "prompt": prompt,
+    }
