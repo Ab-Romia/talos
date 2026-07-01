@@ -1,5 +1,6 @@
 import copy
 from dataclasses import dataclass
+from functools import lru_cache
 
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore
@@ -77,7 +78,10 @@ def _ensure_milvus_connection():
         _milvus_connected = True
 
 
+@lru_cache(maxsize=None)
 def get_embeddings(provider: str | None = None) -> Embeddings:
+    # Cached: constructing the embedder (esp. the HuggingFace sentence-transformer)
+    # loads the model from disk and costs ~3.5s — otherwise paid on every query.
     if provider is None:
         provider = global_rag_config.embedding_provider
 
