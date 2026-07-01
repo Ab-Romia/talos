@@ -42,6 +42,10 @@ class RagConfig(BaseSettings):
     use_query_rewrite: bool = True
 
     compression_type: CompressionType = CompressionType.NONE
+    # Similarity floor for the embeddings-filter compressor. Configurable so the
+    # eval can calibrate it (0.76 was found too aggressive for
+    # text-embedding-3-small) and so what eval sweeps is what prod can ship.
+    compression_similarity_threshold: float = 0.76
 
     chunk_size: int = 1000
     chunk_overlap: int = 200

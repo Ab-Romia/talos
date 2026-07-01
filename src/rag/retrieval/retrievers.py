@@ -80,4 +80,6 @@ def build_rag_pipeline(
             base_compressor=compressor, base_retriever=base_retriever
         )
 
-    return compression_retriever(base_retriever, compression_type=config.compression_type)
+    return compression_retriever(
+        base_retriever, compression_type=config.compression_type, config=config
+    )
