@@ -5,6 +5,7 @@ from filesystem.router import workspace as workspace_files_router, channel as ch
 from permissions.router import (
     workspace as workspace_permission_router,
     channel as channel_permission_router)
+from rag.router import ask as channel_rag_router
 from workspace import require_perms
 
 workspace = APIRouter(
@@ -21,3 +22,4 @@ workspace.include_router(workspace_files_router)
 channel.include_router(channel_permission_router)
 channel.include_router(channel_chat_router)
 channel.include_router(channel_files_router)
+channel.include_router(channel_rag_router)
