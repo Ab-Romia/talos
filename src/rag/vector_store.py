@@ -79,23 +79,24 @@ def _ensure_milvus_connection():
 
 
 @lru_cache(maxsize=None)
-def get_embeddings(provider: str | None = None) -> Embeddings:
+def _build_embeddings(provider: str, model: str, api_key: str | None) -> Embeddings:
     # Cached: constructing the embedder (esp. the HuggingFace sentence-transformer)
     # loads the model from disk and costs ~3.5s — otherwise paid on every query.
-    if provider is None:
-        provider = global_rag_config.embedding_provider
-
+    # Keyed on (provider, model) so two different models don't collide.
     if provider == "openai":
-        return OpenAIEmbeddings(
-            model=global_rag_config.embedding_model,
-            api_key=global_rag_config.openai_api_key,
-        )
+        return OpenAIEmbeddings(model=model, api_key=api_key)
     elif provider == "huggingface":
         return HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2"
         )
     else:
         raise ValueError(f"Unknown embedding provider: {provider}")
+
+
+def get_embeddings(provider: str | None = None, config=global_rag_config) -> Embeddings:
+    provider = provider or config.embedding_provider
+    api_key = config.openai_api_key.get_secret_value() if config.openai_api_key else None
+    return _build_embeddings(provider, config.embedding_model, api_key)
 
 
 def get_vectorstore(

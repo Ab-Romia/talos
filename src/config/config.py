@@ -27,6 +27,11 @@ class RagConfig(BaseSettings):
     milvus_collection_name: str = "documents_v2"
 
     retrieval_top_k: int = 5
+    # Candidate pool the dense stage fetches BEFORE the cross-encoder reranks
+    # down to retrieval_top_k. Widening here is what lets reranking improve
+    # recall rather than merely reorder the same top_k. Ignored when
+    # use_reranking is False.
+    rerank_fetch_k: int = 20
     use_hybrid_retrieval: bool = False
     use_reranking: bool = True
     # HyDE and query rewriting each add an LLM call per query (latency + cost).

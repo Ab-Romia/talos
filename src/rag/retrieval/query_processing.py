@@ -44,18 +44,18 @@ def get_multiquery_retriever(base_retriever: BaseRetriever):
 
 # TODO: differentiate between query rewriter for retrieval vs generation
 #  Use different llm/configs
-def get_query_rewriter():
-    llm = get_llm()
+def get_query_rewriter(config=global_rag_config):
+    llm = get_llm(config=config)
     return QUERY_REWRITE_PROMPT | llm
 
 
-def get_hyde_embeddings():
-    base_embeddings = get_embeddings()
+def get_hyde_embeddings(config=global_rag_config):
+    base_embeddings = get_embeddings(config=config)
     hyde_llm = ChatOpenAI(
-        model="gpt-3.5-turbo",
+        model=config.openai_model,
         temperature=0.0,
         max_completion_tokens=150,
-        api_key=global_rag_config.openai_api_key,
+        api_key=config.openai_api_key,
     )
     return HypotheticalDocumentEmbedder.from_llm(
         llm=hyde_llm, base_embeddings=base_embeddings, prompt_key="web_search"
