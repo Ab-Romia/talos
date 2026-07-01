@@ -24,7 +24,7 @@ class RagConfig(BaseSettings):
 
     milvus_host: str = "localhost"
     milvus_port: int = 19530
-    milvus_collection_name: str = "documents_v2"
+    milvus_collection_name: str = "talos_documents"
 
     retrieval_top_k: int = 5
     # Candidate pool the dense stage fetches BEFORE the cross-encoder reranks

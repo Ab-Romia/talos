@@ -62,7 +62,10 @@ __all__ = [
     "get_collection_info",
 ]
 
-WORKSPACE_COLLECTION = "talos_documents"
+# Single source of truth for the product/ingest/indexer/CLI collection. Both
+# WORKSPACE_COLLECTION and global_rag_config.milvus_collection_name resolve here,
+# so the CLI and the app can no longer read different collections.
+WORKSPACE_COLLECTION = global_rag_config.milvus_collection_name
 
 _milvus_connected = False
 
