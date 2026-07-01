@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useSelector, useDispatch } from 'react-redux'
-import { refreshToken } from './store/authSlice'
+import { refreshToken, completeOAuthHandoff } from './store/authSlice'
 import * as R from './constants/Routes'
 
 const LoginPage = lazy(() => import('./pages/auth/LoginPage'))
@@ -37,17 +37,31 @@ export default function App() {
   const dispatch = useDispatch()
 
   useEffect(() => {
-    dispatch(refreshToken())
+    const params = new URLSearchParams(window.location.search)
+    const handoff = params.get('oauth_handoff')
+    if (handoff) {
+      void (async () => {
+        try {
+          await dispatch(completeOAuthHandoff(handoff)).unwrap()
+        } catch {}
+        params.delete('oauth_handoff')
+        const s = params.toString()
+        const next =
+          window.location.pathname + (s ? `?${s}` : '') + window.location.hash
+        window.history.replaceState(null, '', next)
+        dispatch(refreshToken())
+      })()
+    } else {
+      dispatch(refreshToken())
+    }
   }, [dispatch])
 
   return (
     <Suspense fallback={<Fallback />}>
     <Routes>
-      {/* Auth routes */}
       <Route path={R.LOGIN} element={<GuestRoute><LoginPage /></GuestRoute>} />
       <Route path={R.SIGNUP} element={<GuestRoute><SignupPage /></GuestRoute>} />
 
-      {/* App routes — wrapped in sidebar layout */}
       <Route path="/" element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
         <Route index element={<Navigate to={R.CHAT_PAGE} replace />} />
         <Route path="chat" element={<ChatPage />} />

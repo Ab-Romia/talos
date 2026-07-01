@@ -38,6 +38,7 @@ export const api = {
   get: (path) => request(path),
   post: (path, body) => request(path, { method: 'POST', body }),
   put: (path, body) => request(path, { method: 'PUT', body }),
+  patch: (path, body) => request(path, { method: 'PATCH', body }),
   delete: (path) => request(path, { method: 'DELETE' }),
   postForm: (path, data) => {
     const formData = new URLSearchParams()
@@ -49,5 +50,9 @@ export const api = {
       formData,
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     })
+  },
+  putQuery: (path, params) => {
+    const query = new URLSearchParams(params).toString()
+    return request(`${path}?${query}`, { method: 'PUT' })
   },
 }
