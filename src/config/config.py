@@ -29,6 +29,12 @@ class RagConfig(BaseSettings):
     retrieval_top_k: int = 5
     use_hybrid_retrieval: bool = False
     use_reranking: bool = True
+    # HyDE and query rewriting each add an LLM call per query (latency + cost).
+    # Gated so they can be turned off (e.g. local/low-VRAM runs, or the
+    # technical-corpus regimes where they don't help). Default preserves the
+    # prior always-on behaviour.
+    use_hyde: bool = True
+    use_query_rewrite: bool = True
 
     compression_type: CompressionType = CompressionType.NONE
 

@@ -49,8 +49,9 @@ class RAGChain:
 
         self.last_query_info = {}
 
-        self.query_rewriter = get_query_rewriter()
-        self.hyde = get_hyde_embeddings()
+        # Each of these is an extra LLM call per query; gate them by config.
+        self.query_rewriter = get_query_rewriter() if config.use_query_rewrite else None
+        self.hyde = get_hyde_embeddings() if config.use_hyde else None
 
         if workspace_id:
             self.vectorstore = get_workspace_vectorstore(embeddings=self.hyde)
@@ -103,13 +104,14 @@ class RAGChain:
         )
 
     def _rewrite_and_retrieve(self, question: str):
-        result = self.query_rewriter.invoke({"query": question})
-        if isinstance(result.content, list):
-            rewritten = str(result)
+        if self.query_rewriter is not None:
+            result = self.query_rewriter.invoke({"query": question})
+            rewritten = str(result) if isinstance(result.content, list) else result.content
+            rewritten = rewritten.strip()
         else:
-            rewritten = result.content
+            rewritten = question  # skip the extra LLM call; retrieve on the raw query
 
-        self.last_query_info["rewritten_query"] = rewritten.strip()
+        self.last_query_info["rewritten_query"] = rewritten
 
         docs = self.retriever.invoke(rewritten)
         self.retrieved_docs = docs  # files only -> drives citations
