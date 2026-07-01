@@ -74,6 +74,11 @@ def index_pending_messages(
     the count indexed.
     """
     from chat.model import Message
+    # Register related mappers before querying Message. The taskiq worker is a
+    # minimal process (not the full app), so Message.channel -> Channel and
+    # Message.files -> File won't resolve unless their modules are imported.
+    import workspace.model  # noqa: F401  (Channel, Workspace)
+    import filesystem.model  # noqa: F401  (File)
 
     if session_factory is None:
         from database import SessionLocal
