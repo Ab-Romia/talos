@@ -1,33 +1,34 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit'
 import { chatService } from '../services/chat'
+import { reconnectSocket } from '../services/socket'
 
 const ACTIVE_WS_KEY = 'talos:activeWorkspaceId'
 const ACTIVE_CR_KEY = 'talos:activeChatroomId'
 
 export const bootstrapWorkspaces = createAsyncThunk(
   'workspace/bootstrap',
-  async (_, { rejectWithValue, dispatch }) => {
+  async (_, { rejectWithValue }) => {
     try {
-      let workspaces = await chatService.getWorkspaces()
+      // GET /api/workspaces returns each workspace with its channels inline.
+      const workspaces = await chatService.getWorkspaces()
       if (!workspaces.length) {
-        const created = await chatService.createWorkspace('My Workspace')
-        workspaces = [created]
+        return {
+          workspaces: [],
+          activeWorkspaceId: null,
+          chatrooms: [],
+          activeChatroomId: null,
+        }
       }
       const savedWs = localStorage.getItem(ACTIVE_WS_KEY)
       const activeWs = workspaces.find((w) => w.id === savedWs) || workspaces[0]
-
-      const chatrooms = await dispatch(loadChatrooms(activeWs.id)).unwrap()
+      const chatrooms = activeWs.channels || []
       const savedCr = localStorage.getItem(ACTIVE_CR_KEY)
-      let activeCr = chatrooms.find((c) => c.id === savedCr) || chatrooms[0]
-      if (!activeCr) {
-        activeCr = await dispatch(
-          createChatroom({ workspaceId: activeWs.id, name: 'general' }),
-        ).unwrap()
-      }
+      const activeCr = chatrooms.find((c) => c.id === savedCr) || chatrooms[0] || null
       return {
         workspaces,
         activeWorkspaceId: activeWs.id,
-        activeChatroomId: activeCr.id,
+        chatrooms,
+        activeChatroomId: activeCr ? activeCr.id : null,
       }
     } catch (err) {
       return rejectWithValue(err.detail || 'Failed to load workspaces')
@@ -44,24 +45,33 @@ export const bootstrapWorkspaces = createAsyncThunk(
   },
 )
 
-export const loadChatrooms = createAsyncThunk(
-  'workspace/loadChatrooms',
-  async (workspaceId, { rejectWithValue }) => {
+export const switchWorkspace = createAsyncThunk(
+  'workspace/switch',
+  async (workspaceId, { getState, rejectWithValue }) => {
     try {
-      return await chatService.getChatrooms(workspaceId)
+      const { workspace } = getState()
+      const ws = workspace.workspaces.find((w) => w.id === workspaceId)
+      const chatrooms = ws?.channels || []
+      const activeCr = chatrooms[0] || null
+      return {
+        workspaceId,
+        chatrooms,
+        chatroomId: activeCr ? activeCr.id : null,
+      }
     } catch (err) {
-      return rejectWithValue(err.detail || 'Failed to load chatrooms')
+      return rejectWithValue(err.detail || 'Failed to switch workspace')
     }
   },
 )
 
 export const createWorkspace = createAsyncThunk(
   'workspace/create',
-  async (name, { rejectWithValue, dispatch }) => {
+  async (name, { rejectWithValue }) => {
     try {
       const ws = await chatService.createWorkspace(name)
-      await dispatch(loadChatrooms(ws.id))
-      return ws
+      // New channel rooms are only joined by the socket at connect time.
+      reconnectSocket()
+      return ws // { id, name, owner_id, channels:[{id,name}] }
     } catch (err) {
       return rejectWithValue(err.detail || 'Failed to create workspace')
     }
@@ -72,27 +82,11 @@ export const createChatroom = createAsyncThunk(
   'workspace/createChatroom',
   async ({ workspaceId, name }, { rejectWithValue }) => {
     try {
-      return await chatService.createChatroom(workspaceId, name)
+      const channel = await chatService.createChannel(workspaceId, name)
+      reconnectSocket()
+      return channel // { id, name }
     } catch (err) {
       return rejectWithValue(err.detail || 'Failed to create channel')
-    }
-  },
-)
-
-export const switchWorkspace = createAsyncThunk(
-  'workspace/switch',
-  async (workspaceId, { dispatch, rejectWithValue }) => {
-    try {
-      const chatrooms = await dispatch(loadChatrooms(workspaceId)).unwrap()
-      let activeCr = chatrooms[0]
-      if (!activeCr) {
-        activeCr = await dispatch(
-          createChatroom({ workspaceId, name: 'general' }),
-        ).unwrap()
-      }
-      return { workspaceId, chatroomId: activeCr.id }
-    } catch (err) {
-      return rejectWithValue(err.detail || 'Failed to switch workspace')
     }
   },
 )
@@ -126,42 +120,57 @@ const workspaceSlice = createSlice({
       })
       .addCase(bootstrapWorkspaces.fulfilled, (state, action) => {
         state.workspaces = action.payload.workspaces
+        state.chatrooms = action.payload.chatrooms
         state.activeWorkspaceId = action.payload.activeWorkspaceId
         state.activeChatroomId = action.payload.activeChatroomId
         state.loading = false
         try {
-          localStorage.setItem(ACTIVE_WS_KEY, action.payload.activeWorkspaceId)
-          localStorage.setItem(ACTIVE_CR_KEY, action.payload.activeChatroomId)
+          if (action.payload.activeWorkspaceId)
+            localStorage.setItem(ACTIVE_WS_KEY, action.payload.activeWorkspaceId)
+          if (action.payload.activeChatroomId)
+            localStorage.setItem(ACTIVE_CR_KEY, action.payload.activeChatroomId)
         } catch {}
       })
       .addCase(bootstrapWorkspaces.rejected, (state, action) => {
         state.loading = false
         state.error = action.payload
       })
-      .addCase(loadChatrooms.fulfilled, (state, action) => {
-        state.chatrooms = action.payload
+      .addCase(switchWorkspace.fulfilled, (state, action) => {
+        state.activeWorkspaceId = action.payload.workspaceId
+        state.chatrooms = action.payload.chatrooms
+        state.activeChatroomId = action.payload.chatroomId
+        try {
+          localStorage.setItem(ACTIVE_WS_KEY, action.payload.workspaceId)
+          if (action.payload.chatroomId)
+            localStorage.setItem(ACTIVE_CR_KEY, action.payload.chatroomId)
+        } catch {}
       })
       .addCase(createWorkspace.fulfilled, (state, action) => {
-        state.workspaces.push(action.payload)
-        state.activeWorkspaceId = action.payload.id
+        const ws = action.payload
+        state.workspaces.push(ws)
+        state.activeWorkspaceId = ws.id
+        state.chatrooms = ws.channels || []
+        state.activeChatroomId = state.chatrooms[0]?.id ?? null
         try {
-          localStorage.setItem(ACTIVE_WS_KEY, action.payload.id)
+          localStorage.setItem(ACTIVE_WS_KEY, ws.id)
+          if (state.activeChatroomId) localStorage.setItem(ACTIVE_CR_KEY, state.activeChatroomId)
         } catch {}
+      })
+      .addCase(createWorkspace.rejected, (state, action) => {
+        state.error = action.payload
       })
       .addCase(createChatroom.fulfilled, (state, action) => {
         state.chatrooms.push(action.payload)
         state.activeChatroomId = action.payload.id
+        // keep it on the active workspace's channel list
+        const ws = state.workspaces.find((w) => w.id === state.activeWorkspaceId)
+        if (ws) ws.channels = state.chatrooms
         try {
           localStorage.setItem(ACTIVE_CR_KEY, action.payload.id)
         } catch {}
       })
-      .addCase(switchWorkspace.fulfilled, (state, action) => {
-        state.activeWorkspaceId = action.payload.workspaceId
-        state.activeChatroomId = action.payload.chatroomId
-        try {
-          localStorage.setItem(ACTIVE_WS_KEY, action.payload.workspaceId)
-          localStorage.setItem(ACTIVE_CR_KEY, action.payload.chatroomId)
-        } catch {}
+      .addCase(createChatroom.rejected, (state, action) => {
+        state.error = action.payload
       })
   },
 })

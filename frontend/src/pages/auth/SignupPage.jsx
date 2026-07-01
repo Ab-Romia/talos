@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import TextField from '@mui/material/TextField'
 import Button from '@mui/material/Button'
 import IconButton from '@mui/material/IconButton'
@@ -9,15 +9,20 @@ import Alert from '@mui/material/Alert'
 import Divider from '@mui/material/Divider'
 import LinearProgress from '@mui/material/LinearProgress'
 import CircularProgress from '@mui/material/CircularProgress'
-import { Eye, EyeOff } from 'lucide-react'
+import { Eye, EyeOff, MailCheck } from 'lucide-react'
 import { signup, clearError } from '../../store/authSlice'
 import { authService } from '../../services/auth'
 import * as R from '../../constants/Routes'
 
+const MIN_PASSWORD = 12
+
 function getPasswordStrength(pw) {
   if (!pw) return { score: 0, label: '', color: 'inherit' }
-  let score = 0
-  if (pw.length >= 8) score++
+  // Length is a hard requirement — never call a sub-minimum password "Strong".
+  if (pw.length < MIN_PASSWORD) {
+    return { score: 1, label: `Too short — at least ${MIN_PASSWORD} characters`, color: 'error' }
+  }
+  let score = 1 // length requirement met
   if (/[A-Z]/.test(pw)) score++
   if (/[0-9]/.test(pw)) score++
   if (/[^A-Za-z0-9]/.test(pw)) score++
@@ -27,53 +32,137 @@ function getPasswordStrength(pw) {
     { label: 'Good', color: 'primary' },
     { label: 'Strong', color: 'success' },
   ]
-  return { score, ...levels[Math.min(score, 3)] }
+  return { score, ...levels[Math.min(score - 1, 3)] }
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+// Returns a { field: message } map of everything blocking submission.
+function validateSignup(form) {
+  const errors = {}
+  if (!form.name.trim()) errors.name = 'Enter your full name'
+  if (!form.username.trim()) errors.username = 'Choose a username'
+  if (!form.email.trim()) errors.email = 'Enter your email'
+  else if (!EMAIL_RE.test(form.email.trim())) errors.email = 'Enter a valid email address'
+  if (!form.password) errors.password = 'Enter a password'
+  else if (form.password.length < MIN_PASSWORD)
+    errors.password = `Password must be at least ${MIN_PASSWORD} characters`
+  if (!form.confirm) errors.confirm = 'Re-enter your password'
+  else if (form.password !== form.confirm) errors.confirm = 'Passwords do not match'
+  return errors
 }
 
 export default function SignupPage() {
   const dispatch = useDispatch()
-  const navigate = useNavigate()
   const { loading, error } = useSelector((state) => state.auth)
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const [form, setForm] = useState({ name: '', username: '', email: '', password: '', confirm: '' })
   const [showPassword, setShowPassword] = useState(false)
+  const [submitted, setSubmitted] = useState(false)
+  const [resent, setResent] = useState(false)
+  const [fieldErrors, setFieldErrors] = useState({})
+  const [oauthError, setOauthError] = useState('')
+
+  // Surface a failed/aborted OAuth sign-in that redirected back here, then strip
+  // the flag from the URL so it doesn't linger on refresh.
+  useEffect(() => {
+    const code = searchParams.get('oauth_error') || searchParams.get('error')
+    if (!code) return
+    setOauthError(
+      code === 'unavailable'
+        ? 'Could not reach the sign-in provider. Please try again in a moment.'
+        : 'That sign-in was cancelled or could not be completed. Try again, or sign up with your email below.'
+    )
+    const next = new URLSearchParams(searchParams)
+    next.delete('oauth_error')
+    next.delete('error')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
 
   const strength = getPasswordStrength(form.password)
   const passwordsMatch = !form.confirm || form.password === form.confirm
 
-  const updateField = (field) => (e) => setForm({ ...form, [field]: e.target.value })
+  const updateField = (field) => (e) => {
+    setForm({ ...form, [field]: e.target.value })
+    // Clear this field's error as soon as the user edits it.
+    if (fieldErrors[field]) setFieldErrors((prev) => ({ ...prev, [field]: undefined }))
+  }
+
+  const requestVerification = async () => {
+    // Stash the profile so the completion step (opened from the email link, often
+    // in a NEW TAB) can finish signup automatically with the token. Use
+    // localStorage — sessionStorage is per-tab and would be empty in the new tab.
+    localStorage.setItem(
+      'talos_signup_pending',
+      JSON.stringify({ name: form.name, username: form.username, password: form.password })
+    )
+    return dispatch(signup({ email: form.email }))
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     dispatch(clearError())
-    const result = await dispatch(signup({
-      name: form.name,
-      username: form.username,
-      primary_email: form.email,
-      password: form.password,
-    }))
-    if (signup.fulfilled.match(result)) {
-      navigate(R.LOGIN)
-    }
+    const errors = validateSignup(form)
+    setFieldErrors(errors)
+    if (Object.keys(errors).length > 0) return // show inline errors, don't submit
+    const result = await requestVerification()
+    if (signup.fulfilled.match(result)) setSubmitted(true)
   }
 
-  const canSubmit = form.name && form.username && form.email && form.password.length >= 8 && form.password === form.confirm
+  const handleResend = async () => {
+    dispatch(clearError())
+    setResent(false)
+    const result = await requestVerification()
+    if (signup.fulfilled.match(result)) setResent(true)
+  }
+
+  const BrandPanel = (
+    <div className="hidden lg:flex w-1/2 bg-amber-subtle flex-col items-center justify-center p-12">
+      <div className="flex items-center gap-3 mb-6">
+        <div className="w-12 h-12 bg-amber rounded-lg flex items-center justify-center text-white text-2xl font-bold tracking-tight">T</div>
+        <span className="text-4xl font-bold text-ink tracking-tight">Talos</span>
+      </div>
+      <p className="text-ink-secondary text-base mb-10">Your knowledge, connected.</p>
+      <div className="relative w-80 h-60">
+        <div className="absolute w-44 h-56 bg-white/70 rounded-lg border border-amber/15 top-2.5 left-10 -rotate-3" />
+        <div className="absolute w-44 h-56 bg-white/85 rounded-lg border border-amber/15 top-1 left-18 rotate-1" />
+        <div className="absolute w-44 h-56 bg-white/95 rounded-lg border border-amber/15 top-0 left-25 rotate-3 shadow-md" />
+      </div>
+    </div>
+  )
+
+  if (submitted) {
+    return (
+      <div className="flex min-h-screen">
+        {BrandPanel}
+        <div className="w-full lg:w-1/2 flex items-center justify-center p-12 bg-base">
+          <div className="w-full max-w-[400px] text-center">
+            <div className="w-14 h-14 rounded-full bg-amber-subtle flex items-center justify-center mx-auto mb-5 text-amber">
+              <MailCheck size={28} />
+            </div>
+            <h1 className="text-[22px] font-semibold text-ink tracking-tight mb-2">Check your email</h1>
+            <p className="text-sm text-ink-secondary mb-6">
+              We sent a verification link to <span className="font-medium text-ink">{form.email}</span>.
+              Open it to finish creating your account.
+            </p>
+            {resent && <Alert severity="success" sx={{ mb: 2 }}>Verification email resent.</Alert>}
+            {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+            <Button variant="outlined" fullWidth onClick={handleResend} disabled={loading} sx={{ mb: 2 }}>
+              {loading ? <CircularProgress size={20} color="inherit" /> : 'Resend verification email'}
+            </Button>
+            <p className="text-center text-sm text-ink-secondary">
+              <Link to={R.LOGIN} className="font-medium text-amber hover:underline">Back to sign in</Link>
+            </p>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex min-h-screen">
-      {/* Left Brand Panel */}
-      <div className="hidden lg:flex w-1/2 bg-amber-subtle flex-col items-center justify-center p-12">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-12 h-12 bg-amber rounded-lg flex items-center justify-center text-white text-2xl font-bold tracking-tight">T</div>
-          <span className="text-4xl font-bold text-ink tracking-tight">Talos</span>
-        </div>
-        <p className="text-ink-secondary text-base mb-10">Your knowledge, connected.</p>
-        <div className="relative w-80 h-60">
-          <div className="absolute w-44 h-56 bg-white/70 rounded-lg border border-amber/15 top-2.5 left-10 -rotate-3" />
-          <div className="absolute w-44 h-56 bg-white/85 rounded-lg border border-amber/15 top-1 left-18 rotate-1" />
-          <div className="absolute w-44 h-56 bg-white/95 rounded-lg border border-amber/15 top-0 left-25 rotate-3 shadow-md" />
-        </div>
-      </div>
+      {BrandPanel}
 
       {/* Right Form Panel */}
       <div className="w-full lg:w-1/2 flex items-center justify-center p-12 bg-base">
@@ -86,9 +175,21 @@ export default function SignupPage() {
           <h1 className="text-[22px] font-semibold text-ink tracking-tight mb-1">Create your account</h1>
           <p className="text-sm text-ink-secondary mb-8">Start building your knowledge base</p>
 
+          {oauthError && (
+            <Alert severity="error" onClose={() => setOauthError('')} sx={{ mb: 3 }}>
+              {oauthError}
+            </Alert>
+          )}
+
           {error && (
             <Alert severity="error" onClose={() => dispatch(clearError())} sx={{ mb: 3 }}>
               {error}
+              {/already exists/i.test(error) && (
+                <>
+                  {' '}
+                  <Link to={R.LOGIN} className="font-medium text-amber hover:underline">Go to sign in</Link>
+                </>
+              )}
             </Alert>
           )}
 
@@ -103,9 +204,18 @@ export default function SignupPage() {
 
           <Divider sx={{ my: 3, color: 'text.disabled', fontSize: '14px' }}>or</Divider>
 
-          <TextField fullWidth label="Full name" value={form.name} onChange={updateField('name')} sx={{ mb: 2 }} />
-          <TextField fullWidth label="Username" value={form.username} onChange={updateField('username')} sx={{ mb: 2 }} />
-          <TextField fullWidth label="Email" type="email" value={form.email} onChange={updateField('email')} autoComplete="email" sx={{ mb: 2 }} />
+          <TextField
+            fullWidth label="Full name" value={form.name} onChange={updateField('name')}
+            error={!!fieldErrors.name} helperText={fieldErrors.name || ''} sx={{ mb: 2 }}
+          />
+          <TextField
+            fullWidth label="Username" value={form.username} onChange={updateField('username')}
+            error={!!fieldErrors.username} helperText={fieldErrors.username || ''} sx={{ mb: 2 }}
+          />
+          <TextField
+            fullWidth label="Email" type="email" value={form.email} onChange={updateField('email')}
+            autoComplete="email" error={!!fieldErrors.email} helperText={fieldErrors.email || ''} sx={{ mb: 2 }}
+          />
 
           <TextField
             fullWidth
@@ -113,7 +223,9 @@ export default function SignupPage() {
             type={showPassword ? 'text' : 'password'}
             value={form.password}
             onChange={updateField('password')}
-            placeholder="Min. 8 characters"
+            placeholder={`Min. ${MIN_PASSWORD} characters`}
+            error={!!fieldErrors.password}
+            helperText={fieldErrors.password || ''}
             slotProps={{
               input: {
                 endAdornment: (
@@ -147,20 +259,14 @@ export default function SignupPage() {
             type="password"
             value={form.confirm}
             onChange={updateField('confirm')}
-            error={!passwordsMatch}
-            helperText={!passwordsMatch ? 'Passwords do not match' : ''}
+            error={!passwordsMatch || !!fieldErrors.confirm}
+            helperText={!passwordsMatch ? 'Passwords do not match' : (fieldErrors.confirm || '')}
             sx={{ mb: 3 }}
           />
 
-          <Button type="submit" variant="contained" fullWidth disabled={loading || !canSubmit} sx={{ mb: 2 }}>
+          <Button type="submit" variant="contained" fullWidth disabled={loading} sx={{ mb: 2 }}>
             {loading ? <CircularProgress size={20} color="inherit" /> : 'Create account'}
           </Button>
-
-          <p className="text-xs text-ink-tertiary text-center leading-[18px] mb-6">
-            By creating an account, you agree to our{' '}
-            <Link to="#" className="text-amber font-medium">Terms of Service</Link> and{' '}
-            <Link to="#" className="text-amber font-medium">Privacy Policy</Link>
-          </p>
 
           <p className="text-center text-sm text-ink-secondary">
             Already have an account?{' '}

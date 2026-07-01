@@ -28,16 +28,15 @@ export const AUTH_OAUTH_HANDOFF = '/api/auth/oauth/handoff'
 export const AUTH_GOOGLE_LOGIN = '/api/auth/oauth/google'
 export const AUTH_GITHUB_LOGIN = '/api/auth/oauth/github'
 
-// Workspaces / chat
+// Workspaces / channels / chat (main backend = team chat)
 export const WORKSPACES = '/api/workspaces'
 export const WORKSPACE_BY_ID = (id) => `/api/workspaces/${id}`
-export const CHATROOMS = (wsId) => `/api/workspaces/${wsId}/chatrooms`
-export const MESSAGES = (wsId, crId) =>
-  `/api/workspaces/${wsId}/chatrooms/${crId}/messages`
-export const MESSAGE_EVENTS_WS = (wsId, crId) => {
-  const p = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  return `${p}://${window.location.host}/api/workspaces/${wsId}/chatrooms/${crId}/events`
-}
+export const CHANNEL_MESSAGES = (channelId) => `/api/channels/${channelId}/messages`
+export const CHANNEL_MESSAGE_BY_ID = (channelId, messageId) =>
+  `/api/channels/${channelId}/messages/${messageId}`
+export const CHANNEL_ONLINE = (channelId) => `/api/channels/${channelId}/online`
+// Realtime is Socket.IO (see services/socket.js), not a raw WebSocket.
+export const SOCKET_IO_PATH = '/socket.io'
 
 // AI + authorization
 export const AI_CONFIG = '/api/ai/config'

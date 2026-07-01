@@ -16,6 +16,12 @@ export default defineConfig({
         changeOrigin: false,
         ws: true,
       },
+      // Socket.IO (team-chat realtime). The backend mounts it at /socket.io.
+      '/socket.io': {
+        target: 'http://localhost:8000',
+        changeOrigin: false,
+        ws: true,
+      },
     },
   },
 })

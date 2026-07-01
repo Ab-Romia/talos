@@ -33,7 +33,7 @@ class ExceptionMapper[Key, ExcT: BaseException]:
         if isinstance(mapped_exc, ExceptionMapper):
             raise mapped_exc.apply(exc)
 
-        raise exc
+        raise mapped_exc
 
 
 async def dbapi_error_handler(request: Request, err: sa_exc.DBAPIError):

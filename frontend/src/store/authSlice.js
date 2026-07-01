@@ -1,6 +1,7 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit'
 import { authService } from '../services/auth'
 import { webauthn } from '../services/webauthn'
+import { setSessionToken } from '../services/api'
 
 export const login = createAsyncThunk(
   'auth/login',
@@ -23,12 +24,31 @@ export const login = createAsyncThunk(
 
 export const signup = createAsyncThunk(
   'auth/signup',
-  async (userData, { rejectWithValue }) => {
+  async ({ email }, { rejectWithValue }) => {
     try {
-      await authService.signup(userData)
+      await authService.signup(email)
       return true
     } catch (err) {
       return rejectWithValue(err.detail || 'Signup failed')
+    }
+  }
+)
+
+export const completeSignup = createAsyncThunk(
+  'auth/completeSignup',
+  async ({ email_token, username, name, password }, { rejectWithValue, dispatch }) => {
+    try {
+      await authService.completeSignup({ email_token, username, name, password })
+      let me = null
+      try {
+        me = await authService.me()
+      } catch {}
+      if (me) {
+        dispatch({ type: 'auth/refresh/fulfilled', payload: me })
+      }
+      return { user: me }
+    } catch (err) {
+      return rejectWithValue(err.detail || 'Could not complete signup')
     }
   }
 )
@@ -38,8 +58,10 @@ export const logout = createAsyncThunk(
   async (_, { rejectWithValue }) => {
     try {
       await authService.logout()
+      setSessionToken(null)
       return true
     } catch (err) {
+      setSessionToken(null)
       return rejectWithValue(err.detail || 'Logout failed')
     }
   }
@@ -52,7 +74,7 @@ export const refreshToken = createAsyncThunk(
       const data = await authService.me()
       return data
     } catch (err) {
-      return rejectWithValue(err.detail || 'Session expired')
+      return rejectWithValue({ status: err?.status, detail: err?.detail || 'Session expired' })
     }
   }
 )
@@ -209,6 +231,17 @@ export const completeOAuthHandoff = createAsyncThunk(
   }
 )
 
+// If we were bounced back here by a failed/aborted OAuth sign-in, drop any stale
+// "logged in" hint up front so the route guards resolve to the auth screen
+// instead of optimistically showing the app (and then bouncing to /chat).
+try {
+  const q = new URLSearchParams(window.location.search)
+  if (q.get('oauth_error') || q.get('error')) {
+    localStorage.removeItem('talos_auth')
+    localStorage.removeItem('talos_token')
+  }
+} catch {}
+
 const savedAuth = localStorage.getItem('talos_auth') === 'true'
 
 const authSlice = createSlice({
@@ -277,6 +310,17 @@ const authSlice = createSlice({
         state.loading = false
         state.error = action.payload
       })
+      .addCase(completeSignup.pending, (state) => {
+        state.loading = true
+        state.error = null
+      })
+      .addCase(completeSignup.fulfilled, (state) => {
+        state.loading = false
+      })
+      .addCase(completeSignup.rejected, (state, action) => {
+        state.loading = false
+        state.error = action.payload
+      })
       .addCase(logout.fulfilled, (state) => {
         state.isAuthenticated = false
         state.user = null
@@ -300,9 +344,15 @@ const authSlice = createSlice({
         state.requiresOtp = false
         localStorage.setItem('talos_auth', 'true')
       })
-      .addCase(refreshToken.rejected, (state) => {
-        if (localStorage.getItem('talos_auth') !== 'true') {
+      .addCase(refreshToken.rejected, (state, action) => {
+        // A definitive 401 means the stored session is no longer valid — clear the
+        // optimistic flag so guards send the user to sign-in instead of a broken
+        // "authenticated" view (e.g. after an aborted OAuth sign-in).
+        if (action.payload?.status === 401 || localStorage.getItem('talos_auth') !== 'true') {
           state.isAuthenticated = false
+          state.user = null
+          setSessionToken(null)
+          localStorage.removeItem('talos_auth')
         }
         state.sessionChecked = true
       })

@@ -72,6 +72,22 @@ class File(Base):
     uploader = relationship("User", back_populates="uploaded_files")
     message = relationship("Message", secondary="message_files", back_populates="files", overlaps="message")
 
+    # --- Aliases so FileMetadata (which uses file_path / original_filename /
+    #     status) can be built from this model via `from_attributes`. Without
+    #     these, FileMetadata.model_validate(file) fails with missing-field
+    #     errors (the ORM columns are uri / filename / processing_status). ---
+    @property
+    def file_path(self) -> str:
+        return self.uri
+
+    @property
+    def original_filename(self) -> str:
+        return self.filename
+
+    @property
+    def status(self) -> "FileStatus":
+        return self.processing_status
+
     @staticmethod
     def set_workspace_id(_mapper, connection, target):
         if target.channel_id and not target.workspace_id:

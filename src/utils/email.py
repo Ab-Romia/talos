@@ -1,23 +1,76 @@
+import asyncio
+import os
+import smtplib
+from email.message import EmailMessage
+
 import jinja2
+
+
+def _smtp_settings():
+    """Read SMTP settings from env (supports both SMTP__X nested and flat SMTP_X)."""
+    def env(*names, default=None):
+        for n in names:
+            v = os.environ.get(n)
+            if v:
+                return v
+        return default
+
+    host = env("SMTP__HOST", "SMTP_HOST")
+    user = env("SMTP__USER", "SMTP_USER")
+    password = env("SMTP__PASSWORD", "SMTP_PASSWORD")
+    port = int(env("SMTP__PORT", "SMTP_PORT", default="587"))
+    sender = env("SMTP__FROM", "SMTP_FROM", default=user)
+    return host, port, user, password, sender
+
+
+def _send_sync(to: str, subject: str, body: str):
+    host, port, user, password, sender = _smtp_settings()
+
+    # Dev / not-configured fallback: log the message so the verification link is
+    # still reachable from the app logs. Keeps signup working without SMTP creds.
+    if not (host and user and password):
+        print(f"[email:dev] (no SMTP configured) To {to} | Subject: {subject}\n{body}")
+        return
+
+    msg = EmailMessage()
+    msg["From"] = sender
+    msg["To"] = to
+    msg["Subject"] = subject
+    msg.set_content(body)
+    if "<" in body and "</" in body:
+        msg.add_alternative(body, subtype="html")
+
+    try:
+        with smtplib.SMTP(host, port, timeout=20) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(user, password)
+            server.send_message(msg)
+        print(f"[email] sent to {to} | Subject: {subject}")
+    except Exception as e:  # noqa: BLE001 - don't let email failure break the request flow
+        print(f"[email:error] failed to send to {to}: {e!r}")
+        # keep the dev flow usable even if sending fails
+        print(f"[email:dev-fallback] To {to} | Subject: {subject}\n{body}")
 
 
 async def send_email(
         to: str,
         template: jinja2.Template | str,
+        subject: str = "Talos",
         **kwargs
 ):
     """
     Email the specified recipient with the given template and context.
-    """
-    # TODO:
-    #  - Use a proper email sending service (e.g. AWS SES, SendGrid, etc)
-    #  - Handle email sending errors (e.g. retry, log, etc)
 
+    Uses SMTP when SMTP__HOST/USER/PASSWORD are configured (Gmail-compatible),
+    otherwise falls back to logging the message so dev flows keep working.
+    """
     if isinstance(template, jinja2.Template):
-        html = template.render(**kwargs)
+        body = template.render(**kwargs)
     elif isinstance(template, str):
-        html = template
+        body = template
     else:
         raise ValueError("Invalid template type")
 
-    print(f"Sending email to {to} with content: {html}")
+    # smtplib is blocking; run it off the event loop.
+    await asyncio.to_thread(_send_sync, to, subject, body)

@@ -5,8 +5,20 @@ export const authService = {
     return api.postForm('/api/auth/password/', { username, password })
   },
 
-  signup({ username, primary_email, password, name }) {
-    return api.postForm('/api/auth/signup', { username, primary_email, password, name })
+  // Step 1: request email verification. The backend only needs the email here;
+  // it emails a link to /signup/complete?token=... (logged to app stdout in dev).
+  signup(email) {
+    return api.postForm('/api/auth/signup', { email })
+  },
+
+  // Step 2: finish signup using the token from the verification link.
+  completeSignup({ email_token, username, name, password }) {
+    return api.postAllowRedirect('/api/auth/signup/complete', {
+      email_token,
+      username,
+      name,
+      auth_info: [{ auth_type: 'password', password }],
+    })
   },
 
   logout() {

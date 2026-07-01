@@ -12,14 +12,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      milvus-standalone:
-        condition: service_healthy
       minio:
         condition: service_healthy
       redis:
         condition: service_healthy
 
   worker:
+    profiles: ["async"]   # async taskiq worker (notifications); not needed for FE<->BE integration
     build:
       context: .
       target: worker
@@ -61,6 +60,7 @@ services:
       retries: 5
 
   postgres-test:
+    profiles: ["test"]   # only for the test suite
     image: postgres:latest
     hostname: postgres-test
     restart: unless-stopped
@@ -74,6 +74,7 @@ services:
       - "5433:5432"
 
   etcd:
+    profiles: ["rag"]   # Milvus dependency (vector store) - RAG only
     container_name: milvus-etcd
     image: quay.io/coreos/etcd:v3.6.7
     environment:
@@ -119,8 +120,9 @@ services:
     environment:
       MINIO_ACCESS_KEY: ${MINIO__ACCESS_KEY}
       MINIO_SECRET_KEY: ${MINIO__SECRET_KEY}
+    entrypoint: [""]   # clear the image's default `mc` entrypoint so /bin/sh runs
     command: >
-      sh -c "
+      /bin/sh -c "
         mc alias set local http://minio:9000 ${MINIO__ACCESS_KEY} ${MINIO__SECRET_KEY};
         mc mb local/talos || true;
       "
@@ -143,6 +145,7 @@ services:
       retries: 3
 
   milvus-standalone:
+    profiles: ["rag"]   # vector store - RAG only, not needed for FE<->BE integration
     container_name: milvus-standalone
     image: milvusdb/milvus
     command: [ "milvus", "run", "standalone" ]

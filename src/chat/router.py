@@ -36,9 +36,13 @@ async def post_message(channel_id: UUID, req: SendRequest, session: SessionDep):
     from chat.realtime import sio
     message = await store_message(channel_id=channel_id, user_id=cast(UUID, session.sub), content=req.text)
 
-    sio.send(
-        {"message": message.model_dump_json()},
-        room=f"channel:{channel_id}"
+    # Broadcast to everyone in the channel room. NOTE: this MUST be awaited — sio.send on
+    # an AsyncServer returns a coroutine, and a bare (un-awaited) call silently no-ops.
+    # Payload shape is kept identical to the WebSocket `message` handler so clients have a
+    # single shape to parse: the serialized MessageSchema dict.
+    await sio.send(
+        message.model_dump(mode="json"),
+        room=f"channel:{channel_id}",
     )
     return {
         "id": message.id,

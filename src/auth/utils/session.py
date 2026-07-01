@@ -63,7 +63,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
                     key=cfg().auth.session_cookie_key,
                     value=token,
                     path="/",
-                    secure=True,
+                    secure=cfg().auth.session_cookie_secure,
                     httponly=True,
                     samesite="lax",
                     max_age=int(delta.total_seconds())
