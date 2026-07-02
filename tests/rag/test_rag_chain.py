@@ -50,15 +50,6 @@ def test_live_question_not_duplicated_into_chat_history():
     assert captured["messages"][-1].content == "LIVE_Q"
 
 
-def test_turn_recorded_after_generation():
-    """Memory holds the turn in order [user, assistant] after the answer."""
-    captured = {}
-    chain = _make_chain(captured)
-    list(chain.stream_query("myq", include_citations=False))
-    msgs = chain.memory.messages
-    assert [m.content for m in msgs] == ["myq", "the answer"]
-
-
 def test_trace_populated_after_query():
     captured = {}
     cfg = RagConfig(use_hyde=False, use_query_rewrite=False, use_reranking=False,

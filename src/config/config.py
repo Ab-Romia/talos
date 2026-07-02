@@ -1,5 +1,4 @@
 from enum import Enum
-from pathlib import Path
 from typing import Literal, ClassVar
 
 from pydantic import SecretStr
@@ -51,8 +50,6 @@ class RagConfig(BaseSettings):
     chunk_overlap: int = 200
     chunking_strategy: str = "recursive"
 
-    conversation_memory_k: int = 3
-
     # Chat-memory indexing: the cron embeds messages older than the grace window
     # (so live messages still in the un-indexed tail aren't indexed prematurely);
     # chat_context_cap bounds the un-indexed tail injected directly per ask.
@@ -72,7 +69,6 @@ class RagConfig(BaseSettings):
     model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
-    yaml_file: Path = Path("config/rag_config.yaml")
 
 
 class LoggingConfig(BaseSettings):

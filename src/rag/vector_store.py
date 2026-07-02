@@ -156,10 +156,11 @@ def get_workspace_vectorstore(
     embedding_provider: str | None = None,
     embeddings: Embeddings | None = None,
 ) -> VectorStore:
-    """Get vectorstore for workspace-scoped file chunks."""
-    # Establish the pymilvus ORM connection on the default alias first; otherwise
-    # accessing the collection raises "should create connection first" (this path
-    # had no live caller on main until the /ask endpoint + chat indexer).
+    """Get vectorstore for workspace-scoped file chunks.
+
+    Relies on the module-level MilvusClient ORM bridge (see
+    _install_milvus_client_orm_bridge) for the pymilvus ORM connection.
+    """
     if embeddings is None:
         embeddings = get_embeddings(embedding_provider)
 

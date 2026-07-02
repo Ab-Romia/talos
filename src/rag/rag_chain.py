@@ -43,7 +43,6 @@ class RAGChain:
             get_workspace_vectorstore,
             build_rag_pipeline,
             get_llm,
-            get_memory,
         )
 
         self.collection_name = collection_name
@@ -110,7 +109,6 @@ class RAGChain:
             )
 
         self.llm = llm if llm is not None else get_llm(config=config)
-        self.memory = get_memory(use_memory=config.conversation_memory_k > 0)
         self.chain = (
                 RunnableParallel(
                     {
@@ -118,7 +116,7 @@ class RAGChain:
                                    | RunnableLambda(self._format_docs),
                         "question": RunnablePassthrough(),
                         "chat_history": RunnableLambda(
-                            lambda _: self._injected_history + self.memory.messages
+                            lambda _: list(self._injected_history)
                         ),
                     }
                 )
@@ -217,7 +215,7 @@ class RAGChain:
         # B4: snapshot the history the prompt will actually see BEFORE this turn's
         # question is recorded, so the live question isn't double-injected (once
         # in chat_history, once in the question slot).
-        history_at_prompt = self._injected_history + list(self.memory.messages)
+        history_at_prompt = list(self._injected_history)
 
         full_response = ""
 
@@ -236,10 +234,6 @@ class RAGChain:
             for citation in format_citations(self.retrieved_docs):
                 yield f"\n{citation}"
                 full_response += f"\n{citation}"
-
-        # Record the turn AFTER generation (B4): user first, then assistant.
-        self.memory.add_user_message(question)
-        self.memory.add_ai_message(full_response)
 
     async def ingest_documents(self, file_paths: list[str]):
         from rag import load_documents
