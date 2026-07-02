@@ -80,6 +80,10 @@ class RagConfig(BaseSettings):
     langchain_api_key: SecretStr | None = None
     langchain_project: str = "gp-artifact-rag"
 
+    # Models a workspace admin may select via ai_settings (vetted allow-list;
+    # never free text). Extend deliberately.
+    ai_model_allow_list: list[str] = ["gpt-4o-mini", "gpt-4o", "qwen2.5:7b-instruct"]
+
     model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
