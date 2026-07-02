@@ -88,13 +88,30 @@ export const api = {
   postForm: (path, data) => {
     const formData = new URLSearchParams()
     for (const [key, value] of Object.entries(data)) {
-      formData.append(key, value)
+      if (value == null) continue
+      if (Array.isArray(value)) {
+        for (const item of value) formData.append(key, item)
+      } else {
+        formData.append(key, value)
+      }
     }
     return request(path, {
       method: 'POST',
       formData,
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     })
+  },
+  putForm: (path, data) => {
+    const formData = new URLSearchParams()
+    for (const [key, value] of Object.entries(data)) {
+      if (value == null) continue
+      if (Array.isArray(value)) {
+        for (const item of value) formData.append(key, item)
+      } else {
+        formData.append(key, value)
+      }
+    }
+    return request(path, { method: 'PUT', formData })
   },
   upload: (path, formData) => request(path, { method: 'POST', formData }),
   putQuery: (path, params) => {

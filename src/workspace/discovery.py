@@ -16,7 +16,8 @@ from workspace.model import Workspace, Channel, WorkspaceMember
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
 STANDARD_PERMS = [
-    ("workspace", "view"), ("workspace.role", "view"), ("channel", "view"),
+    ("workspace", "view"), ("workspace.role", "view"), ("workspace.role", "manage"),
+    ("channel", "view"),
     ("channel.message", "view_history"), ("channel.message", "send"),
     ("channel.member", "view_presence"),
     ("files", "read"), ("files", "write"), ("files", "create"),

@@ -89,15 +89,9 @@ class PermissionSet(int):
             bit_pos += 1
 
     def as_owner(self, is_owner: bool) -> "PermissionSet":
-        """Set OWN permissions as ANY permissions if the user is an owner."""
+        """Workspace owners have all permissions; bypass bitfield checks entirely."""
         if is_owner:
-            b = int(self)
-            b |= (
-                    (b & PermissionScope.OWN.mask)
-                    >> PermissionScope.OWN.offset
-                    << PermissionScope.ANY.offset
-            )
-            return PermissionSet(b)
+            return PermissionSet((1 << cfg().auth.permission_bitstring_length) - 1)
         return self
 
     @classmethod

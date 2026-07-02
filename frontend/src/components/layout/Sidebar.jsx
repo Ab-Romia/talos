@@ -15,7 +15,7 @@ import MuiButton from '@mui/material/Button'
 import Alert from '@mui/material/Alert'
 import CircularProgress from '@mui/material/CircularProgress'
 import {
-  Hash, Plus, Search, ChevronDown, Settings, MessageSquare, FileText,
+  Hash, Plus, Search, ChevronDown, Settings, MessageSquare, FileText, LogOut, Layers,
 } from 'lucide-react'
 import { logout } from '../../store/authSlice'
 import {
@@ -137,13 +137,15 @@ export default function Sidebar() {
             selected={ws.id === activeWorkspaceId}
             onClick={() => handleSelectWorkspace(ws.id)}
           >
-            {ws.name}
+            <Layers size={14} style={{ marginRight: 8 }} /> {ws.name}
           </MenuItem>
         ))}
         <MenuItem onClick={() => { handleWorkspaceClose(); setCreateWorkspaceOpen(true) }}>
           <Plus size={14} style={{ marginRight: 8 }} /> Create workspace
         </MenuItem>
-        <MenuItem onClick={handleSignOut}>Sign out</MenuItem>
+        <MenuItem onClick={handleSignOut}>
+          <LogOut size={14} style={{ marginRight: 8 }} /> Sign out
+        </MenuItem>
       </Menu>
 
       {error && (

@@ -14,7 +14,7 @@ import Dialog from '@mui/material/Dialog'
 import DialogTitle from '@mui/material/DialogTitle'
 import DialogContent from '@mui/material/DialogContent'
 import DialogActions from '@mui/material/DialogActions'
-import { KeyRound, Trash2, ShieldCheck } from 'lucide-react'
+import { KeyRound, Trash2 } from 'lucide-react'
 import {
   changePassword,
   revokeSession,
@@ -30,10 +30,11 @@ import {
 } from '../../store/authSlice'
 import { authService } from '../../services/auth'
 import { chatService } from '../../services/chat'
-import { authorizationService } from '../../services/authorization'
+import { permissionsService } from '../../services/permissions'
+import PermissionsManager from '../../components/settings/PermissionsManager'
 
-function TabPanel({ value, index, children }) {
-  if (value !== index) return null
+function TabPanel({ value, index: key, children }) {
+  if (value !== key) return null
   return <div>{children}</div>
 }
 
@@ -45,8 +46,6 @@ function initialsOf(name) {
     .slice(0, 2)
     .toUpperCase()
 }
-
-const SCOPE_LABEL = { 0: 'any', 1: 'own' }
 
 function describeSession(s) {
   const ua = s.user_agent || 'Unknown device'
@@ -100,10 +99,8 @@ export default function SettingsPage() {
   const [inviteSubmitting, setInviteSubmitting] = useState(false)
   const [inviteError, setInviteError] = useState('')
   const [removingId, setRemovingId] = useState(null)
-
-  const [perms, setPerms] = useState([])
-  const [permsLoading, setPermsLoading] = useState(false)
-  const [permsError, setPermsError] = useState('')
+  const [showAccessTab, setShowAccessTab] = useState(false)
+  const [memberRolesMap, setMemberRolesMap] = useState({})
 
   const [twoFaOn, setTwoFaOn] = useState(false)
   const [totpDialogOpen, setTotpDialogOpen] = useState(false)
@@ -136,27 +133,53 @@ export default function SettingsPage() {
     }
   }, [activeWorkspaceId])
 
-  const loadPermissions = useCallback(async () => {
-    if (!activeWorkspaceId) {
-      setPerms([])
-      return
-    }
-    setPermsLoading(true)
-    setPermsError('')
+  useEffect(() => {
+    if (isOwner) { setShowAccessTab(true); return }
+    if (!activeWorkspaceId) { setShowAccessTab(false); return }
+    permissionsService.myPermissions(activeWorkspaceId).then((perms) => {
+      const list = Array.isArray(perms) ? perms : []
+      setShowAccessTab(list.some((p) => p.resource === 'workspace.role' && p.action === 'view'))
+    }).catch(() => setShowAccessTab(false))
+  }, [activeWorkspaceId, isOwner])
+
+  const tabs = [
+    { label: 'Profile', key: 'profile' },
+    { label: 'Workspace', key: 'workspace' },
+    ...(showAccessTab ? [{ label: 'Access', key: 'access' }] : []),
+    { label: 'Security', key: 'security' },
+  ]
+  const safeTab = tab < tabs.length ? tab : 0
+  const activeKey = tabs[safeTab]?.key || 'profile'
+
+  const loadMemberRoles = useCallback(async () => {
+    if (!activeWorkspaceId) return
     try {
-      const list = await authorizationService.myPermissions(activeWorkspaceId)
-      setPerms(Array.isArray(list) ? list : [])
-    } catch (err) {
-      setPermsError(err?.detail || 'Could not load your permissions')
-    } finally {
-      setPermsLoading(false)
+      const roles = await permissionsService.getRoles(activeWorkspaceId)
+      const details = await Promise.all(
+        (Array.isArray(roles) ? roles : []).map((r) =>
+          permissionsService.getRole(activeWorkspaceId, r.id),
+        ),
+      )
+      const map = {}
+      for (const role of details) {
+        if (!role.users) continue
+        for (const userId of role.users) {
+          if (!map[userId]) map[userId] = []
+          map[userId].push(role.name)
+        }
+      }
+      setMemberRolesMap(map)
+    } catch {
+      // roles info is supplementary — ignore errors (e.g. no permission)
     }
   }, [activeWorkspaceId])
 
   useEffect(() => {
-    if (tab === 1) loadMembers()
-    if (tab === 2) loadPermissions()
-  }, [tab, loadMembers, loadPermissions])
+    if (tab === 1) {
+      loadMembers()
+      loadMemberRoles()
+    }
+  }, [tab, loadMembers, loadMemberRoles])
 
   const handleInviteSend = async () => {
     const identifier = inviteIdentifier.trim()
@@ -324,15 +347,12 @@ export default function SettingsPage() {
 
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-[680px] mx-auto px-6 py-8 w-full">
-          <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-            <Tab label="Profile" />
-            <Tab label="Workspace" />
-            <Tab label="Access" />
-            <Tab label="Security" />
+          <Tabs value={safeTab} onChange={(_, v) => setTab(v)} sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+            {tabs.map((t) => <Tab key={t.key} label={t.label} />)}
           </Tabs>
 
           {/* Profile Tab */}
-          <TabPanel value={tab} index={0}>
+          <TabPanel value={activeKey} index="profile">
             <div className="flex items-center gap-6 mb-8">
               <Avatar sx={{ width: 56, height: 56, bgcolor: 'primary.light', color: 'primary.main', fontSize: 22, fontWeight: 600 }}>
                 {getInitials()}
@@ -376,7 +396,7 @@ export default function SettingsPage() {
           </TabPanel>
 
           {/* Workspace Tab */}
-          <TabPanel value={tab} index={1}>
+          <TabPanel value={activeKey} index="workspace">
             {!activeWorkspaceId ? (
               <Alert severity="info">Create or select a workspace to manage its members.</Alert>
             ) : (
@@ -409,13 +429,13 @@ export default function SettingsPage() {
                               {m.id === user?.id ? <span className="text-ink-tertiary font-normal"> (you)</span> : null}
                             </p>
                             <p className="text-xs text-ink-tertiary truncate">{m.email || `@${m.username}`}</p>
+                            {(m.is_owner || memberRolesMap[m.id]?.length > 0) && (
+                              <p className="text-xs text-ink-tertiary truncate">
+                                {[m.is_owner && 'Owner', ...(memberRolesMap[m.id] || [])].filter(Boolean).join(', ')}
+                              </p>
+                            )}
                           </div>
                         </div>
-                        {m.is_owner ? (
-                          <Chip label="Owner" size="small" sx={{ color: 'var(--amber)', bgcolor: 'rgba(196,145,58,0.10)', fontWeight: 600 }} />
-                        ) : (
-                          <Chip label="Member" size="small" variant="outlined" />
-                        )}
                         {isOwner && !m.is_owner && (
                           <Button
                             size="small"
@@ -468,42 +488,14 @@ export default function SettingsPage() {
           </TabPanel>
 
           {/* Access & authorization */}
-          <TabPanel value={tab} index={2}>
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="text-[15px] font-semibold text-ink">Access &amp; roles</h3>
-              {isOwner && <Chip label="Owner" size="small" sx={{ color: 'var(--amber)', bgcolor: 'rgba(196,145,58,0.10)', fontWeight: 600 }} />}
-            </div>
-            <p className="text-[13px] text-ink-secondary mb-4">
-              Your effective permissions{activeWorkspace?.name ? ` in ${activeWorkspace.name}` : ''}. These are enforced server-side on every request.
-            </p>
-
-            {!activeWorkspaceId ? (
-              <Alert severity="info">Create or select a workspace to view your access.</Alert>
-            ) : permsLoading ? (
-              <div className="flex justify-center py-10"><CircularProgress size={22} /></div>
-            ) : permsError ? (
-              <Alert severity="error">{permsError}</Alert>
-            ) : perms.length === 0 ? (
-              <p className="text-[13px] text-ink-tertiary">No permissions granted in this workspace.</p>
-            ) : (
-              <div className="border border-[rgba(28,27,26,0.06)] rounded-lg overflow-hidden">
-                {perms.map((p, i) => (
-                  <div key={`${p.resource}:${p.action}:${p.scope}`} className={`flex items-center gap-3 p-3 px-4 ${i < perms.length - 1 ? 'border-b border-[rgba(28,27,26,0.06)]' : ''}`}>
-                    <div className="w-8 h-8 rounded-md bg-amber-subtle flex items-center justify-center text-amber shrink-0">
-                      <ShieldCheck size={16} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-ink font-mono">{p.resource}:{p.action}</p>
-                    </div>
-                    <Chip label={SCOPE_LABEL[p.scope] || String(p.scope)} size="small" variant="outlined" />
-                  </div>
-                ))}
-              </div>
-            )}
-          </TabPanel>
+          {showAccessTab && (
+            <TabPanel value={activeKey} index="access">
+              <PermissionsManager />
+            </TabPanel>
+          )}
 
           {/* Security Tab */}
-          <TabPanel value={tab} index={3}>
+          <TabPanel value={activeKey} index="security">
             {/* 2FA */}
             <div className="bg-surface-1 border border-[rgba(28,27,26,0.06)] rounded-lg p-4 flex items-center justify-between mb-6">
               <div className="flex items-center gap-3">

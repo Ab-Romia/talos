@@ -45,7 +45,6 @@ function messageMatchesQuery(msg, rawQuery) {
   const s = rawQuery.trim().toLowerCase()
   if (!s) return true
   if ((msg.body || '').toLowerCase().includes(s)) return true
-  if ((msg.name || '').toLowerCase().includes(s)) return true
   return false
 }
 
@@ -81,28 +80,32 @@ export default function ChatPage() {
   const firstSearchHitRef = useRef(null)
   const lastScrolledFirstMatchId = useRef(null)
 
+  const membersMap = useMemo(() => {
+    const map = new Map()
+    for (const m of members) map.set(String(m.id), m.name || m.username)
+    return map
+  }, [members])
+
   const displayName = useCallback(
-    (senderId) => (senderId && senderId === user?.id ? (user?.name || user?.username || 'You') : 'Member'),
-    [user],
+    (senderId) => {
+      if (senderId && senderId === user?.id) return user?.name || user?.username || 'You'
+      return membersMap.get(String(senderId)) || 'Member'
+    },
+    [user, membersMap],
   )
 
   // MessageSchema dict -> UI message.
   const toUiMessage = useCallback(
-    (m) => {
-      const name = displayName(m.sender_id)
-      return {
-        id: nextIdRef.current++,
-        serverId: m.id,
-        senderId: m.sender_id,
-        role: m.role,
-        mine: m.sender_id === user?.id,
-        name,
-        initials: initialsOf(name),
-        time: fmtTime(m.sent_at),
-        body: m.content,
-      }
-    },
-    [displayName, user],
+    (m) => ({
+      id: nextIdRef.current++,
+      serverId: m.id,
+      senderId: m.sender_id,
+      role: m.role,
+      mine: m.sender_id === user?.id,
+      time: fmtTime(m.sent_at),
+      body: m.content,
+    }),
+    [user],
   )
 
   const displayMessages = useMemo(() => {
@@ -220,8 +223,6 @@ export default function ChatPage() {
       senderId: user?.id,
       role: 'user',
       mine: true,
-      name: user?.name || user?.username || 'You',
-      initials: initialsOf(user?.name || user?.username || 'You'),
       time: nowTime(),
       body: text,
     }
@@ -281,6 +282,9 @@ export default function ChatPage() {
       }
     }
   }, [workspaceId, chatroomId, showSnackbar])
+
+  // Load members eagerly so display names are available for messages.
+  useEffect(() => { loadMembers() }, [loadMembers])
 
   const handleHeaderButton = useCallback(
     (Icon, event) => {
@@ -464,12 +468,12 @@ export default function ChatPage() {
                       flexShrink: 0,
                     }}
                   >
-                    {msg.initials}
+                    {initialsOf(displayName(msg.senderId))}
                   </Avatar>
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-[13px] font-semibold text-ink">{msg.name}</span>
+                    <span className="text-[13px] font-semibold text-ink">{displayName(msg.senderId)}</span>
                     <span className="text-[12px] text-ink-muted">{msg.time}</span>
                   </div>
                   <ChatMessageContent content={msg.body || ''} renderCursor={false} />
@@ -543,21 +547,21 @@ export default function ChatPage() {
             {members.map((m) => {
               const online = onlineIds.has(String(m.id))
               return (
-                <ListItem key={m.id} sx={{ py: 0.5 }}>
-                  <ListItemAvatar sx={{ minWidth: 36 }}>
-                    <div className="relative">
-                      <Avatar sx={{ width: 28, height: 28, fontSize: 12, bgcolor: '#EEEDEA', color: 'text.secondary' }}>
-                        {initialsOf(m.name)}
-                      </Avatar>
-                      {online && (
-                        <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-success rounded-full border-2 border-white" />
-                      )}
-                    </div>
+                <ListItem key={m.id} sx={{ py: 0.5, gap: 1 }}>
+                  <ListItemAvatar sx={{ minWidth: 40 }}>
+                    <Avatar sx={{ width: 28, height: 28, fontSize: 12, bgcolor: '#EEEDEA', color: 'text.secondary' }}>
+                      {initialsOf(m.name)}
+                    </Avatar>
                   </ListItemAvatar>
                   <ListItemText
-                    primary={m.name}
-                    secondary={m.is_owner ? 'Owner' : (online ? 'Online' : null)}
-                    primaryTypographyProps={{ fontSize: 13 }}
+                    primary={
+                      <span className="flex items-center gap-1.5">
+                        <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${online ? 'bg-success' : 'bg-gray-300'}`} />
+                        {m.name}
+                      </span>
+                    }
+                    secondary={m.is_owner ? 'Owner' : (online ? 'Online' : 'Offline')}
+                    primaryTypographyProps={{ fontSize: 13, component: 'div' }}
                     secondaryTypographyProps={{ fontSize: 11 }}
                   />
                 </ListItem>

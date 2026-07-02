@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import { Link, useSearchParams } from 'react-router-dom'
 import TextField from '@mui/material/TextField'
@@ -61,6 +61,21 @@ export default function SignupPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [resent, setResent] = useState(false)
+  const [cooldown, setCooldown] = useState(0)
+  const cooldownRef = useRef(null)
+
+  const startCooldown = useCallback(() => {
+    setCooldown(60)
+    clearInterval(cooldownRef.current)
+    cooldownRef.current = setInterval(() => {
+      setCooldown((prev) => {
+        if (prev <= 1) { clearInterval(cooldownRef.current); return 0 }
+        return prev - 1
+      })
+    }, 1000)
+  }, [])
+
+  useEffect(() => () => clearInterval(cooldownRef.current), [])
   const [fieldErrors, setFieldErrors] = useState({})
   const [oauthError, setOauthError] = useState('')
 
@@ -107,14 +122,14 @@ export default function SignupPage() {
     setFieldErrors(errors)
     if (Object.keys(errors).length > 0) return // show inline errors, don't submit
     const result = await requestVerification()
-    if (signup.fulfilled.match(result)) setSubmitted(true)
+    if (signup.fulfilled.match(result)) { setSubmitted(true); startCooldown() }
   }
 
   const handleResend = async () => {
     dispatch(clearError())
     setResent(false)
     const result = await requestVerification()
-    if (signup.fulfilled.match(result)) setResent(true)
+    if (signup.fulfilled.match(result)) { setResent(true); startCooldown() }
   }
 
   const BrandPanel = (
@@ -148,8 +163,8 @@ export default function SignupPage() {
             </p>
             {resent && <Alert severity="success" sx={{ mb: 2 }}>Verification email resent.</Alert>}
             {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-            <Button variant="outlined" fullWidth onClick={handleResend} disabled={loading} sx={{ mb: 2 }}>
-              {loading ? <CircularProgress size={20} color="inherit" /> : 'Resend verification email'}
+            <Button variant="outlined" fullWidth onClick={handleResend} disabled={loading || cooldown > 0} sx={{ mb: 2 }}>
+              {loading ? <CircularProgress size={20} color="inherit" /> : cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend verification email'}
             </Button>
             <p className="text-center text-sm text-ink-secondary">
               <Link to={R.LOGIN} className="font-medium text-amber hover:underline">Back to sign in</Link>
