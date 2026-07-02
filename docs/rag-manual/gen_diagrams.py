@@ -142,7 +142,7 @@ def write(name, w, h, body):
 # D1 — SYSTEM OVERVIEW / DATA FLOW
 # ===========================================================================
 def d1():
-    W, H = 1040, 640
+    W, H = 1040, 660
     b = [title(30, 40, "1 · System overview — one collection, writers on the left, readers on the right")]
     # writers
     b += [caption(30, 70, "WRITERS  (put vectors in)")]
@@ -152,8 +152,8 @@ def d1():
     b.append(_)
     _, f_idx = box(30, 200, 300, 96, "store",
                    "Chat indexer  (taskiq cron)",
-                   ["every chat_index_interval_minutes"],
-                   mono_lines=["index_pending_messages()", "→ source=\"chat\"  (purge→ingest→stamp)"])
+                   ["segments: gap 30 min / cap 12 msgs"],
+                   mono_lines=["index_pending_messages()  + pg lock", "→ source=\"chat\"  (purge→ingest→stamp)"])
     b.append(_)
     _, f_pg = box(30, 330, 300, 74, "data", "Postgres — messages",
                   ["role · content · sent_at · indexed_at"],
@@ -176,12 +176,17 @@ def d1():
     _, f_llm = box(720, 292, 300, 60, "llm", "LLM  (ChatOpenAI-compatible)",
                    ["streams the grounded answer"])
     b.append(_)
+    _, f_ws = box(720, 376, 300, 62, "api", "Socket.IO channel room",
+                  ["ai_message: final answer broadcast"],
+                  mono_lines=["room channel:{id}"])
+    b.append(_)
+    b.append(arrow((f_llm[0], 352), (f_ws[0], 376), "after persist"))
     # eval bottom
-    _, f_eval = box(430, 470, 400, 96, "eval", "Evaluation harness",
+    _, f_eval = box(400, 490, 400, 96, "eval", "Evaluation harness",
                     ["RagVariant over an in-memory store"],
                     mono_lines=["calls the SAME build_rag_pipeline()", "and the SAME RAG_PROMPT"])
     b.append(_)
-    b.append(caption(430, 452, "MEASURES THE SAME CORE"))
+    b.append(caption(400, 472, "MEASURES THE SAME CORE"))
     # arrows writers -> milvus
     b.append(arrow((330, f_ing[1]), (430, 195), "write", curve=-10))
     b.append(arrow((330, f_idx[1]), (430, 240), "write"))
@@ -192,10 +197,10 @@ def d1():
     b.append(arrow((f_api[0], 154), (f_chain[0], 176), "invoke"))
     b.append(arrow((f_chain[0], 268), (f_llm[0], 292), "context+question"))
     # eval -> core (dashed, same code)
-    b.append(arrow((f_eval[0], 470), (760, 268), "same code", dash=True,
-                   color="#7a8699", curve=-40, lx=650, ly=430))
+    b.append(arrow((f_eval[0], 490), (760, 268), "same code", dash=True,
+                   color="#7a8699", curve=-40, lx=630, ly=450))
     b.append(legend(30, 470, [("store", "vector store / ingest"), ("data", "Postgres"),
-                              ("api", "HTTP endpoint"), ("chain", "orchestrator"),
+                              ("api", "HTTP / Socket.IO"), ("chain", "orchestrator"),
                               ("llm", "LLM"), ("eval", "evaluation")]))
     write("d1_overview", W, H, "".join(b))
 
@@ -204,12 +209,13 @@ def d1():
 # D2 — /ask REQUEST SEQUENCE
 # ===========================================================================
 def d2():
-    W, H = 1040, 700
+    W, H = 1040, 760
     b = [title(30, 40, "2 · Lifecycle of one /ask request")]
-    actors = [("Client", 90, "api"), ("Router\n/ask", 250, "api"),
-              ("Postgres", 410, "data"), ("RAGChain", 560, "chain"),
-              ("Milvus", 730, "store"), ("LLM", 900, "llm")]
-    top, bot = 70, 660
+    actors = [("Client", 80, "api"), ("Router\n/ask", 225, "api"),
+              ("Postgres", 370, "data"), ("RAGChain", 510, "chain"),
+              ("Milvus", 650, "store"), ("LLM", 790, "llm"),
+              ("Socket.IO\nroom", 935, "api")]
+    top, bot = 70, 592
     xs = {}
     for name, x, kind in actors:
         f, s = C[kind]
@@ -237,28 +243,30 @@ def d2():
                    f'fill="#333c4d">{esc(label)}</text>')
         return "".join(seg)
 
-    y = 120
-    steps = [
-        ("Client", "Router", "POST question (+debug?)"),
-        ("Router", "Postgres", "load un-indexed tail (tier-1) + ids"),
-        ("Router", "Postgres", "persist user question"),
-        ("Router", "RAGChain", "construct(config, ws, channel, tail, exclude_ids)"),
-        ("RAGChain", "Milvus", "retrieve FILE chunks  (expr: workspace + source=file)"),
-        ("RAGChain", "Milvus", "retrieve CHAT chunks  (expr: channel + source=chat, minus tail)"),
-        ("RAGChain", "LLM", "RAG_PROMPT(context, question, tail)"),
-    ]
-    for a, bx, lbl in steps:
-        b.append(msg(a, bx, y, lbl))
-        y += 46
-    # stream back
-    b.append(msg("LLM", "RAGChain", y, "stream tokens", back=True))
-    y += 46
-    b.append(msg("RAGChain", "Client", y, "stream answer  (+ __ASK_DEBUG__ trace if debug)", back=True))
-    y += 40
-    b.append(msg("RAGChain", "Postgres", y, "persist assistant answer  ·  fill RagTrace"))
-    y += 20
-    b.append(caption(90, y + 20, "Tier-1 = recent un-indexed messages injected verbatim.  Tier-2 = older indexed messages recalled from Milvus.  The two never overlap (exclude_ids)."))
-    write("d2_sequence", W, H, "".join(b))
+    def band(y0, y1, label):
+        return (f'<rect x="150" y="{y0}" width="860" height="{y1-y0}" rx="6" '
+                f'fill="#f3f6fb" opacity="0.75"/>'
+                f'<text x="1002" y="{y0+15}" font-size="10.5" font-weight="bold" '
+                f'text-anchor="end" fill="#8a93a3">{esc(label)}</text>')
+
+    y = 130
+    b.append(msg("Client", "Router", y, "POST question (+debug?)")); y += 44
+    b.append(msg("Router", "Postgres", y, "load un-indexed tail (tier-1) + ids  (SYSTEM rows skipped)")); y += 52
+    # worker-thread band: build + prepare
+    b.append(band(y - 30, y + 116, "worker thread (asyncio.to_thread)"))
+    b.append(msg("Router", "RAGChain", y + 8, "build + prepare(question)   → 502 if retrieval fails")); y += 50
+    b.append(msg("RAGChain", "Milvus", y, "FILE chunks  (workspace + source=file)")); y += 40
+    b.append(msg("RAGChain", "Milvus", y, "CHAT segments (channel + source=chat) → dedupe → decay+select")); y += 58
+    # generation band
+    b.append(band(y - 30, y + 88, "threadpool iteration (iterate_in_threadpool)"))
+    b.append(msg("RAGChain", "LLM", y + 6, "RAG_PROMPT(context, question, tail)")); y += 48
+    b.append(msg("LLM", "Client", y, "stream tokens   ([ask:error] marker if generation dies)", back=True)); y += 56
+    # after the stream: persist + broadcast
+    b.append(msg("Router", "Postgres", y, "persist question + answer TOGETHER (only on success)")); y += 44
+    b.append(msg("Router", "Socket.IO", y, "emit ai_message to channel room  (best-effort)")); y += 44
+    b.append(msg("Router", "Client", y, "__ASK_DEBUG__ + RagTrace JSON (if debug)", back=True)); y += 24
+    b.append(caption(80, y + 20, "Disconnect mid-stream → nothing persisted (no orphaned questions).  Retrieval failure → real 502 before any bytes.  Loop stays ~1 ms throughout."))
+    write("d2_sequence", W, y + 44, "".join(b))
 
 
 # ===========================================================================
@@ -289,15 +297,16 @@ def d3():
         b.append(f'<text x="{mx}" y="{ty+5}" text-anchor="middle" font-size="12" '
                  f'fill="{INK}">m{i+1}</text>')
     # tier boxes
-    sv, _ = box(60, 110, 500, 66, "store", "TIER 2 · indexed body (semantic recall)",
-                ["chat_retriever over Milvus · source=\"chat\" · k=chat_recall_k"])
+    sv, _ = box(60, 110, 500, 66, "store", "TIER 2 · indexed SEGMENTS (semantic recall)",
+                ["conversation segments in Milvus · source=\"chat\"",
+                 "fetch 10 → decay + redundancy re-rank → k=3"])
     b.append(sv)
     sv, _ = box(640, 110, 340, 66, "api", "TIER 1 · un-indexed tail (verbatim)",
                 ["indexed_at IS NULL · capped at chat_context_cap", "injected as chat_history"])
     b.append(sv)
     b.append(arrow((344, 176), (344, ty - 22), "recalled by similarity", color="#2fa559"))
     b.append(arrow((734, 176), (734, ty - 22), "injected as-is", color="#7b3fe4"))
-    b.append(caption(60, 452, "The indexer moves messages left across the boundary (stamps indexed_at). exclude_message_ids drops any that are momentarily on both sides."))
+    b.append(caption(60, 452, "The indexer moves messages left across the boundary (stamps indexed_at). A recalled segment is dropped if ANY of its message_ids overlaps the tail."))
     write("d3_memory", W, H, "".join(b))
 
 
@@ -306,7 +315,7 @@ def d3():
 # ===========================================================================
 def d4():
     W, H = 1120, 340
-    b = [title(30, 40, "4 · build_rag_pipeline() — the one shared retrieval composition")]
+    b = [title(30, 40, "5 · build_rag_pipeline() — the one shared retrieval composition")]
     y = 120
     _, q = box(30, y, 120, 66, "plain", "query", ["(rewritten?)"])
     b.append(_)
@@ -336,7 +345,7 @@ def d4():
 # ===========================================================================
 def d5():
     W, H = 1040, 560
-    b = [title(30, 40, "5 · The three chokepoints you must hold in your head")]
+    b = [title(30, 40, "6 · The three chokepoints you must hold in your head")]
     # RagConfig -> one consumers box (no crossing arrows)
     b.append(caption(30, 78, "A · RagConfig  →  reaches every component through a real  config=  seam"))
     _, cfg = box(30, 100, 200, 96, "config", "RagConfig",
@@ -362,7 +371,7 @@ def d5():
     b.append(caption(30, 306, "B · RagTrace  ←  filled once per run  →  read by every debug surface (one schema)"))
     _, ch = box(30, 322, 200, 80, "chain", "RAGChain",
                 ["fills self.trace"],
-                mono_lines=["every stream_query"])
+                mono_lines=["prepare + stream_answer"])
     b.append(_)
     _, tr = box(300, 322, 220, 96, "trace", "RagTrace",
                 ["model · effective_config", "rewritten_query · candidates", "final_context · exact prompt"])
@@ -388,7 +397,7 @@ def d5():
 # ===========================================================================
 def d6():
     W, H = 1040, 500
-    b = [title(30, 40, "6 · Eval == ship — evaluation drives the production code")]
+    b = [title(30, 40, "7 · Eval == ship — evaluation drives the production code")]
     # prod lane
     _, pstore = box(60, 100, 220, 70, "store", "Milvus (talos_documents)",
                     ["approximate ANN search"])
@@ -424,5 +433,53 @@ def d6():
     write("d6_eval", W, H, "".join(b))
 
 
-d1(); d2(); d3(); d4(); d5(); d6()
+# ===========================================================================
+# D7 — CHAT MEMORY PIPELINE: segmentation (index-time) + selection (query-time)
+# ===========================================================================
+def d7():
+    W, H = 1120, 430
+    b = [title(30, 40, "4 · Chat memory — segments at index time, smart selection at query time")]
+    # index-time lane
+    b.append(caption(30, 82, "INDEX TIME  (taskiq cron, every chat_index_interval_minutes, advisory-locked)"))
+    y = 100
+    _, m = box(30, y, 170, 76, "data", "settled messages",
+               ["indexed_at IS NULL", "sent_at < now − grace"])
+    b.append(_)
+    _, seg = box(250, y, 210, 76, "pipe", "segmentation",
+                 ["per channel, chronologic", "split: gap > 30 min · > 12 msgs"])
+    b.append(_)
+    _, emb = box(510, y, 190, 76, "pipe", "embed + purge",
+                 ["one vector per segment", "purge covers crashed ticks"])
+    b.append(_)
+    _, mil = box(750, y, 200, 76, "store", "Milvus",
+                 ["source=\"chat\"", "message_ids=[…]"])
+    b.append(_)
+    b.append(arrow((200, y + 38), (248, y + 38)))
+    b.append(arrow((460, y + 38), (508, y + 38)))
+    b.append(arrow((700, y + 38), (748, y + 38)))
+    b.append(caption(30, y + 104, "indexed_at is stamped only after ingest succeeds — a crashed tick re-selects the same batch and the purge removes its partial segments (idempotent)."))
+    b.append(caption(30, y + 126, "Why segments: a lone \"yes, let's do that\" embeds meaninglessly; topic-coherent multi-turn segments outperform per-message units (SeCom, ICLR 2025)."))
+    # query-time lane
+    b.append(caption(30, 262, "QUERY TIME  (inside RAGChain.prepare, per /ask)"))
+    y2 = 280
+    _, fetch = box(30, y2, 200, 76, "pipe", "fetch candidates",
+                   ["similarity search", "k = chat_recall_fetch_k (10)"])
+    b.append(_)
+    _, ded = box(280, y2, 200, 76, "pipe", "tail dedupe",
+                 ["drop segment if ANY", "message_id is in tier-1"])
+    b.append(_)
+    _, sel = box(530, y2, 250, 76, "pipe", "decay + redundancy",
+                 ["rank·(0.25+0.75·½^(age/168h))", "skip Jaccard-overlap > 0.6"])
+    b.append(_)
+    _, out = box(830, y2, 160, 76, "chain", "context",
+                 ["k = chat_recall_k (3)", "→ RAG_PROMPT"])
+    b.append(_)
+    b.append(arrow((230, y2 + 38), (278, y2 + 38)))
+    b.append(arrow((480, y2 + 38), (528, y2 + 38)))
+    b.append(arrow((780, y2 + 38), (828, y2 + 38)))
+    b.append(caption(30, y2 + 116, "Selection is a pure function (select_chat_context) — and the whole recall path degrades to file-only context on ANY failure; it can never kill the answer."))
+    write("d7_memory_pipeline", W, H, "".join(b))
+
+
+d1(); d2(); d3(); d4(); d5(); d6(); d7()
 print("done")
