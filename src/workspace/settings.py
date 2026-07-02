@@ -4,19 +4,16 @@ Handles all workspace and channel configuration, member management, etc.
 """
 import uuid
 from typing import Annotated, Optional
-from enum import Enum
 
-from fastapi import APIRouter, HTTPException, Depends, Form, Body, Path, Query
-from pydantic import BaseModel, Field
-from starlette.status import HTTP_200_OK, HTTP_201_CREATED, HTTP_204_NO_CONTENT
+from fastapi import APIRouter, HTTPException, Form, Path
+from pydantic import BaseModel
+from starlette.status import HTTP_201_CREATED, HTTP_204_NO_CONTENT
 
 from auth.dependencies import UserIdDep
 from database import DatabaseDep
-from workspace import require_perms, is_owner, WorkspaceID
-from workspace.model import Workspace, Channel
+from workspace import require_perms, WorkspaceID
 from workspace.service import WorkspaceService, ChannelService
 
-# ==================== Response Models ====================
 
 class WorkspaceSettingsResponse(BaseModel):
     """Response model for workspace settings."""
@@ -65,9 +62,7 @@ class ChannelListResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-# ==================== Workspace Settings Router ====================
-
-workspace_settings = APIRouter(prefix="/workspaces/{workspace_id}/settings", tags=["workspace-settings"])
+workspace_settings = APIRouter(prefix="/settings", tags=["workspace-settings"])
 
 
 @workspace_settings.get(
@@ -89,9 +84,9 @@ def get_workspace_settings(workspace_id: WorkspaceID, db: DatabaseDep):
     dependencies=[require_perms("workspace:edit")]
 )
 def update_workspace_name(
-    workspace_id: WorkspaceID,
-    name: Annotated[str, Form()],
-    db: DatabaseDep
+        workspace_id: WorkspaceID,
+        name: Annotated[str, Form()],
+        db: DatabaseDep
 ):
     """Edit workspace name."""
     try:
@@ -107,9 +102,9 @@ def update_workspace_name(
     dependencies=[require_perms("workspace:edit")]
 )
 def update_workspace_description(
-    workspace_id: WorkspaceID,
-    description: Annotated[Optional[str], Form()] = None,
-    db: DatabaseDep = None
+        workspace_id: WorkspaceID,
+        description: Annotated[Optional[str], Form()] = None,
+        db: DatabaseDep = None
 ):
     """Edit workspace description."""
     try:
@@ -125,9 +120,9 @@ def update_workspace_description(
     dependencies=[require_perms("workspace:edit")]
 )
 def update_workspace_icon(
-    workspace_id: WorkspaceID,
-    icon_id: Annotated[Optional[uuid.UUID], Form()] = None,
-    db: DatabaseDep = None
+        workspace_id: WorkspaceID,
+        icon_id: Annotated[Optional[uuid.UUID], Form()] = None,
+        db: DatabaseDep = None
 ):
     """Edit workspace icon."""
     try:
@@ -158,9 +153,9 @@ def get_workspace_members(workspace_id: WorkspaceID, db: DatabaseDep):
     status_code=HTTP_201_CREATED
 )
 def add_workspace_member(
-    workspace_id: WorkspaceID,
-    user_id: Annotated[uuid.UUID, Path()],
-    db: DatabaseDep
+        workspace_id: WorkspaceID,
+        user_id: Annotated[uuid.UUID, Path()],
+        db: DatabaseDep
 ):
     """Add a member to the workspace."""
     try:
@@ -180,9 +175,9 @@ def add_workspace_member(
     status_code=HTTP_204_NO_CONTENT
 )
 def remove_workspace_member(
-    workspace_id: WorkspaceID,
-    user_id: Annotated[uuid.UUID, Path()],
-    db: DatabaseDep
+        workspace_id: WorkspaceID,
+        user_id: Annotated[uuid.UUID, Path()],
+        db: DatabaseDep
 ):
     """Remove a member from the workspace."""
     try:
@@ -196,9 +191,9 @@ def remove_workspace_member(
     status_code=HTTP_204_NO_CONTENT
 )
 def leave_workspace(
-    workspace_id: WorkspaceID,
-    user_id: UserIdDep,
-    db: DatabaseDep
+        workspace_id: WorkspaceID,
+        user_id: UserIdDep,
+        db: DatabaseDep
 ):
     """Leave the workspace."""
     try:
@@ -213,8 +208,8 @@ def leave_workspace(
     status_code=HTTP_204_NO_CONTENT
 )
 def delete_workspace(
-    workspace_id: WorkspaceID,
-    db: DatabaseDep
+        workspace_id: WorkspaceID,
+        db: DatabaseDep
 ):
     """Delete workspace (Owner only)."""
     try:
@@ -225,7 +220,7 @@ def delete_workspace(
 
 # ==================== Channel Management Router ====================
 
-channel_settings = APIRouter(prefix="/channels/{channel_id}/settings", tags=["channel-settings"])
+channel_settings = APIRouter(prefix="/settings", tags=["channel-settings"])
 
 
 @channel_settings.get(
@@ -247,9 +242,9 @@ def get_channel_settings(channel_id: uuid.UUID, db: DatabaseDep):
     dependencies=[require_perms("channel:edit")]
 )
 def rename_channel(
-    channel_id: uuid.UUID,
-    name: Annotated[str, Form()],
-    db: DatabaseDep
+        channel_id: uuid.UUID,
+        name: Annotated[str, Form()],
+        db: DatabaseDep
 ):
     """Rename channel."""
     try:
@@ -265,9 +260,9 @@ def rename_channel(
     dependencies=[require_perms("channel:edit")]
 )
 def update_channel_description(
-    channel_id: uuid.UUID,
-    description: Annotated[Optional[str], Form()] = None,
-    db: DatabaseDep = None
+        channel_id: uuid.UUID,
+        description: Annotated[Optional[str], Form()] = None,
+        db: DatabaseDep = None
 ):
     """Edit channel description."""
     try:
@@ -283,9 +278,9 @@ def update_channel_description(
     dependencies=[require_perms("channel:edit")]
 )
 def toggle_channel_visibility(
-    channel_id: uuid.UUID,
-    is_public: Annotated[bool, Form()],
-    db: DatabaseDep
+        channel_id: uuid.UUID,
+        is_public: Annotated[bool, Form()],
+        db: DatabaseDep
 ):
     """Toggle channel between public/private."""
     try:
@@ -301,8 +296,8 @@ def toggle_channel_visibility(
     dependencies=[require_perms("channel:manage")]
 )
 def mute_channel(
-    channel_id: uuid.UUID,
-    db: DatabaseDep
+        channel_id: uuid.UUID,
+        db: DatabaseDep
 ):
     """Mute channel."""
     try:
@@ -318,8 +313,8 @@ def mute_channel(
     dependencies=[require_perms("channel:manage")]
 )
 def unmute_channel(
-    channel_id: uuid.UUID,
-    db: DatabaseDep
+        channel_id: uuid.UUID,
+        db: DatabaseDep
 ):
     """Unmute channel."""
     try:
@@ -335,8 +330,8 @@ def unmute_channel(
     dependencies=[require_perms("channel:manage")]
 )
 def archive_channel(
-    channel_id: uuid.UUID,
-    db: DatabaseDep
+        channel_id: uuid.UUID,
+        db: DatabaseDep
 ):
     """Archive channel."""
     try:
@@ -352,8 +347,8 @@ def archive_channel(
     dependencies=[require_perms("channel:manage")]
 )
 def unarchive_channel(
-    channel_id: uuid.UUID,
-    db: DatabaseDep
+        channel_id: uuid.UUID,
+        db: DatabaseDep
 ):
     """Unarchive channel."""
     try:
@@ -369,15 +364,11 @@ def unarchive_channel(
     status_code=HTTP_204_NO_CONTENT
 )
 def delete_channel(
-    channel_id: uuid.UUID,
-    db: DatabaseDep
+        channel_id: uuid.UUID,
+        db: DatabaseDep
 ):
     """Delete channel."""
     try:
         ChannelService.delete_channel(db, channel_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-
-
-
-

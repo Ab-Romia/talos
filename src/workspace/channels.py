@@ -12,9 +12,7 @@ from starlette.status import HTTP_201_CREATED, HTTP_204_NO_CONTENT
 from database import DatabaseDep
 from workspace import require_perms, WorkspaceID
 from workspace.service import WorkspaceService, ChannelService
-from workspace.model import Channel
 
-# ==================== Response Models ====================
 
 class ChannelListResponse(BaseModel):
     """Response model for channel list."""
@@ -41,10 +39,8 @@ class ChannelCreateResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-# ==================== Channels Router ====================
-
 channels = APIRouter(
-    prefix="/workspaces/{workspace_id}/channels",
+    prefix="/channels",
     tags=["workspace-channels"]
 )
 
@@ -55,10 +51,10 @@ channels = APIRouter(
     dependencies=[require_perms("channel:view")]
 )
 def list_workspace_channels(
-    workspace_id: WorkspaceID,
-    skip: int = 0,
-    limit: int = 50,
-    db: DatabaseDep = None
+        workspace_id: WorkspaceID,
+        skip: int = 0,
+        limit: int = 50,
+        db: DatabaseDep = None
 ):
     """
     List all channels in a workspace.
@@ -86,11 +82,11 @@ def list_workspace_channels(
     status_code=HTTP_201_CREATED
 )
 def create_workspace_channel(
-    workspace_id: WorkspaceID,
-    name: Annotated[str, Form()],
-    description: Annotated[Optional[str], Form()] = None,
-    is_public: Annotated[bool, Form()] = True,
-    db: DatabaseDep = None
+        workspace_id: WorkspaceID,
+        name: Annotated[str, Form()],
+        description: Annotated[Optional[str], Form()] = None,
+        is_public: Annotated[bool, Form()] = True,
+        db: DatabaseDep = None
 ):
     """
     Create a new channel in the workspace.
@@ -119,9 +115,9 @@ def create_workspace_channel(
     status_code=HTTP_204_NO_CONTENT
 )
 def delete_workspace_channel(
-    workspace_id: WorkspaceID,
-    channel_id: Annotated[uuid.UUID, Path()],
-    db: DatabaseDep
+        workspace_id: WorkspaceID,
+        channel_id: Annotated[uuid.UUID, Path()],
+        db: DatabaseDep
 ):
     """
     Delete a channel from the workspace.
@@ -140,4 +136,3 @@ def delete_workspace_channel(
         ChannelService.delete_channel(db, channel_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-

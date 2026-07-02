@@ -7,14 +7,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Path
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 from starlette.status import HTTP_201_CREATED, HTTP_204_NO_CONTENT
 
 from auth.model import User
 from database import DatabaseDep
 from workspace import require_perms
 from workspace.model import Channel
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+
 
 # ==================== Response Models ====================
 
@@ -27,10 +27,8 @@ class ChannelMemberResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-# ==================== Channel Members Router ====================
-
 channel_members = APIRouter(
-    prefix="/channels/{channel_id}/members",
+    prefix="/members",
     tags=["channel-members"],
     dependencies=[require_perms("channel:view")]
 )
@@ -87,8 +85,8 @@ def remove_channel_member(db: Session, channel_id: uuid.UUID, user_id: uuid.UUID
     response_model=list[ChannelMemberResponse]
 )
 def list_channel_members(
-    channel_id: uuid.UUID,
-    db: DatabaseDep
+        channel_id: uuid.UUID,
+        db: DatabaseDep
 ):
     """
     List all members of a channel.
@@ -108,9 +106,9 @@ def list_channel_members(
     status_code=HTTP_201_CREATED
 )
 def add_member_to_channel(
-    channel_id: uuid.UUID,
-    user_id: Annotated[uuid.UUID, Path()],
-    db: DatabaseDep
+        channel_id: uuid.UUID,
+        user_id: Annotated[uuid.UUID, Path()],
+        db: DatabaseDep
 ):
     """
     Add a member to a channel.
@@ -129,9 +127,9 @@ def add_member_to_channel(
     status_code=HTTP_204_NO_CONTENT
 )
 def remove_member_from_channel(
-    channel_id: uuid.UUID,
-    user_id: Annotated[uuid.UUID, Path()],
-    db: DatabaseDep
+        channel_id: uuid.UUID,
+        user_id: Annotated[uuid.UUID, Path()],
+        db: DatabaseDep
 ):
     """
     Remove a member from a channel.
@@ -147,4 +145,3 @@ def remove_member_from_channel(
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-
