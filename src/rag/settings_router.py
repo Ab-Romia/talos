@@ -21,6 +21,7 @@ channel_ai = APIRouter(tags=["rag"])
 
 def _view(workspace_id: UUID, channel_id: UUID | None):
     """Resolved view for a scope — runs sync DB reads via a short session."""
+    # local import by design: tests monkeypatch database.SessionLocal (race test seam)
     from database import SessionLocal
     with SessionLocal() as db:
         cfg, prov = resolve_ai_config(workspace_id, channel_id, db)

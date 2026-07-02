@@ -152,3 +152,31 @@ def test_ask_uses_workspace_ai_overrides(client, test_channel, auth_token, path,
     client.patch(f"/api/workspaces/{test_channel.workspace_id}/ai/config",
                  json={"use_reranking": None, "retrieval_top_k": None},
                  headers={"Authorization": f"Bearer {auth_token}"})
+
+
+def test_ask_uses_channel_ai_overrides(client, test_channel, auth_token, path, fake_chain):
+    r = client.patch(f"/api/workspaces/{test_channel.workspace_id}/ai/config",
+                     json={"retrieval_top_k": 9},
+                     headers={"Authorization": f"Bearer {auth_token}"})
+    assert r.status_code == 200
+
+    r = client.patch(f"/api/channels/{test_channel.id}/ai/config",
+                     json={"retrieval_top_k": 2},
+                     headers={"Authorization": f"Bearer {auth_token}"})
+    assert r.status_code == 200
+
+    try:
+        _ask(client, path, test_channel, auth_token, include_citations=False)
+        cfg = fake_chain.last.kwargs.get("config")
+        assert cfg is not None
+        assert cfg.retrieval_top_k == 2
+        prov = fake_chain.last.kwargs.get("config_provenance")
+        assert prov["retrieval_top_k"] == "channel"
+    finally:
+        # cleanup
+        client.patch(f"/api/channels/{test_channel.id}/ai/config",
+                     json={"retrieval_top_k": None},
+                     headers={"Authorization": f"Bearer {auth_token}"})
+        client.patch(f"/api/workspaces/{test_channel.workspace_id}/ai/config",
+                     json={"retrieval_top_k": None},
+                     headers={"Authorization": f"Bearer {auth_token}"})
