@@ -113,3 +113,22 @@ def test_ask_citation_footer_stripped_from_persisted_answer(client, test_channel
     assert "Sources:" in r.text
     assistant = [(c, s) for role, c, s in _messages(test_channel.id) if role == MessageRole.ASSISTANT]
     assert assistant == [("hello world", None)]
+
+
+def test_ask_broadcasts_ai_message_to_channel_room(client, test_channel, auth_token, path, monkeypatch):
+    from unittest.mock import AsyncMock
+    emit = AsyncMock()
+    import chat.realtime
+    monkeypatch.setattr(chat.realtime.sio, "emit", emit)
+
+    r = _ask(client, path, test_channel, auth_token, include_citations=False)
+    assert r.status_code == 200
+
+    emit.assert_awaited_once()
+    event, payload = emit.await_args.args[0], emit.await_args.args[1]
+    assert event == "ai_message"
+    assert emit.await_args.kwargs["room"] == f"channel:{test_channel.id}"
+    assert payload["content"] == "hello world"
+    assert payload["question"] == "q?"
+    assert payload["role"] == "assistant"
+    assert payload["channel_id"] == str(test_channel.id)

@@ -111,6 +111,31 @@ async def _persist_exchange(channel_id: UUID, user_id: UUID, question: str,
         return q.id, a.id
 
 
+async def _broadcast_ai_message(channel_id: UUID, question_id: UUID, answer_id: UUID,
+                                question: str, answer: str) -> None:
+    """Fan the finished answer out to everyone in the channel room. The chat
+    UI otherwise only shows /ask exchanges to the asker (plain HTTP stream).
+    Best-effort: a broadcast failure must never fail the request. NOTE: this
+    payload is a custom event, NOT the chat 'message' event — MessageSchema
+    requires a non-null sender_id, which assistant rows don't have."""
+    try:
+        from chat.realtime import sio  # teammate module: import-only, never modified
+        await sio.emit(
+            "ai_message",
+            {
+                "channel_id": str(channel_id),
+                "question_message_id": str(question_id),
+                "message_id": str(answer_id),
+                "question": question,
+                "content": answer,
+                "role": "assistant",
+            },
+            room=f"channel:{channel_id}",
+        )
+    except Exception:
+        logger.warning("ai_message broadcast failed", channel_id=str(channel_id), exc_info=True)
+
+
 @ask.post("/ask", dependencies=[require("channel.message:send")])
 async def ask_question(channel_id: UUID, body: AskRequest, session: SessionDep):
     """Stream a multi-turn RAG answer over the workspace's indexed documents,
@@ -161,7 +186,8 @@ async def ask_question(channel_id: UUID, body: AskRequest, session: SessionDep):
         # Persist only the model answer (strip the citation footer).
         answer = "".join(parts).split(_CITATION_MARKER, 1)[0].strip()
         if answer:
-            await _persist_exchange(channel_id, user_id, body.question, asked_at, answer)
+            q_id, a_id = await _persist_exchange(channel_id, user_id, body.question, asked_at, answer)
+            await _broadcast_ai_message(channel_id, q_id, a_id, body.question, answer)
         if body.debug:
             import json
             payload = chain.trace.as_dict()
