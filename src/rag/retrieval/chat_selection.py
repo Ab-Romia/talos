@@ -37,6 +37,7 @@ def select_chat_context(
     now: datetime,
     half_life_hours: float,
     overlap_threshold: float,
+    stats: dict | None = None,
 ) -> list[Document]:
     scored = []
     for rank, doc in enumerate(candidates):
@@ -48,12 +49,23 @@ def select_chat_context(
 
     picked: list[Document] = []
     picked_tokens: list[set[str]] = []
+    dropped_redundant = 0
     for _score, _rank, doc in scored:
         if len(picked) >= k:
             break
         tokens = set(doc.page_content.lower().split())
         if any(_jaccard(tokens, seen) > overlap_threshold for seen in picked_tokens):
+            dropped_redundant += 1
             continue
         picked.append(doc)
         picked_tokens.append(tokens)
+
+    if stats is not None:
+        stats["considered"] = len(candidates)
+        stats["dropped_redundant"] = dropped_redundant
+        stats["kept"] = len(picked)
+        # Candidates never visited after the k-cap break: neither redundant
+        # nor kept. considered == dropped_redundant + kept + truncated.
+        stats["truncated"] = len(candidates) - dropped_redundant - len(picked)
+
     return picked

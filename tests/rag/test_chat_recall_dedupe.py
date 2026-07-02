@@ -79,3 +79,21 @@ def test_selection_failure_degrades_to_file_only(monkeypatch):
     monkeypatch.setattr("rag.rag_chain.select_chat_context", _boom)
     chain = _chain(set(), CHAT_DOCS)
     assert chain._retrieve_chat("q") == []
+
+
+def test_trace_records_chat_selection_stats():
+    # fake retriever returns 3 docs, 1 excluded via tail overlap
+    docs = [
+        Document(page_content="user: a", metadata={"message_id": "m1", "source": "chat"}),
+        Document(page_content="user: b", metadata={"message_id": "m2", "source": "chat"}),
+        Document(page_content="user: c", metadata={"message_id": "m3", "source": "chat"}),
+    ]
+    chain = _chain({"m1"}, docs)
+    chain.prepare("q")
+    sel = chain.last_chat_selection
+    assert sel["fetched"] == 3
+    assert sel["dropped_tail"] == 1
+    assert sel["kept"] == sel["fetched"] - sel["dropped_tail"] - sel["dropped_redundant"] - sel["truncated"]
+    assert sel["fetched"] == (
+        sel["dropped_tail"] + sel["dropped_redundant"] + sel["truncated"] + sel["kept"]
+    )

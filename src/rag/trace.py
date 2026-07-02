@@ -26,6 +26,7 @@ class RagTrace:
     hyde_used: bool = False
     file_candidates: list[dict] = field(default_factory=list)
     chat_candidates: list[dict] = field(default_factory=list)
+    chat_selection: dict = field(default_factory=dict)
     injected_tail_size: int = 0
     final_context: str = ""
     prompt: str = ""

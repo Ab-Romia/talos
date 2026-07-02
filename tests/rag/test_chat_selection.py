@@ -44,3 +44,18 @@ def test_k_caps_output_and_missing_timestamp_is_tolerated():
     docs = [Document(page_content=f"unique text {i}", metadata={}) for i in range(5)]
     out = select_chat_context(docs, k=3, now=NOW, half_life_hours=168, overlap_threshold=0.6)
     assert len(out) == 3
+
+
+def test_stats_reports_drops_and_keeps():
+    docs = [
+        _doc("staging database runs on port 5544", hours_old=1),
+        _doc("staging database runs on port 5544 !", hours_old=1),   # near-dupe
+        _doc("prod key lives in the vault", hours_old=1),
+        _doc("unrelated fourth candidate", hours_old=1),
+    ]
+    stats = {}
+    out = select_chat_context(docs, k=2, now=NOW, half_life_hours=168,
+                              overlap_threshold=0.6, stats=stats)
+    assert stats == {"considered": 4, "dropped_redundant": 1, "kept": 2, "truncated": 1}
+    assert stats["considered"] == stats["dropped_redundant"] + stats["kept"] + stats["truncated"]
+    assert len(out) == 2

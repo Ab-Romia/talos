@@ -66,6 +66,7 @@ class RAGChain:
         # Captured for debug/observability (the /ask debug flag reads these).
         self.last_context = ""
         self.last_chat_docs: list[Document] = []
+        self.last_chat_selection: dict = {}
         # One structured record of what the last run used; filled by stream_query.
         self.trace = RagTrace()
         # Prior conversation turns supplied by the caller (the /ask endpoint loads
@@ -146,6 +147,7 @@ class RAGChain:
             return []
         try:
             docs = self.chat_retriever.invoke(query)
+            fetched = len(docs)
             if self._exclude_message_ids:
                 def _overlaps_tail(d):
                     ids = d.metadata.get("message_ids")
@@ -154,16 +156,27 @@ class RAGChain:
                         ids = [mid] if mid else []
                     return any(i in self._exclude_message_ids for i in ids)
                 docs = [d for d in docs if not _overlaps_tail(d)]
+            dropped_tail = fetched - len(docs)
+            sel_stats: dict = {}
             docs = select_chat_context(
                 docs,
                 k=self.config.chat_recall_k,
                 now=datetime.now(timezone.utc),
                 half_life_hours=self.config.chat_decay_half_life_hours,
                 overlap_threshold=self.config.chat_recall_overlap_threshold,
+                stats=sel_stats,
             )
+            self.last_chat_selection = {
+                "fetched": fetched,
+                "dropped_tail": dropped_tail,
+                "dropped_redundant": sel_stats.get("dropped_redundant", 0),
+                "truncated": sel_stats.get("truncated", 0),
+                "kept": len(docs),
+            }
         except Exception:
             logger.warning("chat recall failed; degrading to file-only",
                            chatroom_id=self.chatroom_id, exc_info=True)
+            self.last_chat_selection = {}
             return []
         return docs
 
@@ -201,6 +214,7 @@ class RAGChain:
             hyde_used=self.hyde is not None,
             file_candidates=[RagTrace.doc_summary(d) for d in self.retrieved_docs],
             chat_candidates=[RagTrace.doc_summary(d) for d in self.last_chat_docs],
+            chat_selection=dict(self.last_chat_selection),
             injected_tail_size=len(self._injected_history),
             final_context=self.last_context,
             prompt=prompt,
