@@ -61,6 +61,11 @@ class RagConfig(BaseSettings):
     chat_index_max_batches: int = 10
     chat_recall_k: int = 3
     chat_context_cap: int = 50
+    # Conversation segmentation for chat-memory indexing: a segment closes on
+    # an inactivity gap or a size cap; segments (not single messages) are the
+    # embedded retrieval unit.
+    chat_segment_gap_minutes: int = 30
+    chat_segment_max_messages: int = 12
 
     llm_temperature: float = 0.0
     llm_streaming: bool = True

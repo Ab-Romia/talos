@@ -11,6 +11,8 @@ vectors are scoped by ``chatroom_id`` (= ``channel_id``, globally unique), so no
 ``workspace_id`` join is needed.
 """
 
+import uuid
+from collections import defaultdict
 from datetime import timedelta
 
 from langchain_core.documents import Document
@@ -19,7 +21,7 @@ from sqlalchemy import select, text
 
 from rag.ingestion import ingest_chat_messages
 from rag.message_text import message_text
-from rag.vector_store import delete_message_chunks
+from rag.vector_store import delete_chat_segments_for_messages
 from utils.datetime import utcnow
 from utils.logger import get_logger
 
@@ -38,26 +40,53 @@ def _role_str(role) -> str:
     return role.value if hasattr(role, "value") else str(role)
 
 
-def build_chat_documents(messages, chunk_size: int, chunk_overlap: int) -> list[Document]:
-    """Build Milvus-ready Documents from Message-like objects.
+def build_chat_segments(messages, *, gap_seconds: int, max_messages: int) -> list[list]:
+    """Group settled messages into per-channel conversation segments.
 
-    One Document per short message; messages longer than ``chunk_size`` are
-    split, with a contiguous ``chunk_index`` per message. Metadata:
-    ``chatroom_id`` (= channel_id), ``message_id``, ``source="chat"``, ``sent_at``.
+    Boundary = channel change, inactivity gap > gap_seconds, or max_messages.
+    Segments are the retrieval unit (SeCom: topic-coherent multi-turn segments
+    outperform per-message embeddings); an inactivity gap is the cheapest
+    online-safe topic-boundary proxy — no extra LLM/embedding calls.
     """
+    by_channel: dict = defaultdict(list)
+    for m in messages:
+        by_channel[m.channel_id].append(m)
+
+    segments: list[list] = []
+    for channel_msgs in by_channel.values():
+        channel_msgs.sort(key=lambda m: m.sent_at)
+        current: list = []
+        for m in channel_msgs:
+            gap_exceeded = current and (m.sent_at - current[-1].sent_at).total_seconds() > gap_seconds
+            if current and (gap_exceeded or len(current) >= max_messages):
+                segments.append(current)
+                current = []
+            current.append(m)
+        if current:
+            segments.append(current)
+    return segments
+
+
+def build_chat_documents(messages, chunk_size: int, chunk_overlap: int,
+                         *, gap_seconds: int, max_messages: int) -> list[Document]:
+    """Build Milvus-ready Documents: one Document per conversation SEGMENT
+    (split further only if a segment exceeds chunk_size). Metadata carries the
+    full message_ids list so purge and tail-dedupe can match any member."""
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         separators=["\n\n", "\n", ". ", " ", ""],
     )
     docs: list[Document] = []
-    for m in messages:
-        text = f"{_role_str(m.role)}: {message_text(m)}"
+    for segment in build_chat_segments(messages, gap_seconds=gap_seconds, max_messages=max_messages):
+        text = "\n".join(f"{_role_str(m.role)}: {message_text(m)}" for m in segment)
         meta = {
-            "chatroom_id": str(m.channel_id),
-            "message_id": str(m.id),
+            "chatroom_id": str(segment[0].channel_id),
             "source": "chat",
-            "sent_at": m.sent_at.isoformat() if m.sent_at else "",
+            "segment_id": str(uuid.uuid4()),
+            "message_ids": [str(m.id) for m in segment],
+            "sent_at_start": segment[0].sent_at.isoformat() if segment[0].sent_at else "",
+            "sent_at_end": segment[-1].sent_at.isoformat() if segment[-1].sent_at else "",
         }
         pieces = splitter.split_text(text) or [text]
         for i, piece in enumerate(pieces):
@@ -73,7 +102,9 @@ def index_pending_messages(
     chunk_size: int,
     chunk_overlap: int,
     ingest=ingest_chat_messages,
-    purge=delete_message_chunks,
+    purge=delete_chat_segments_for_messages,
+    segment_gap_seconds: int = 1800,
+    segment_max_messages: int = 12,
 ) -> int:
     """Index one batch of settled, un-indexed messages.
 
@@ -122,11 +153,13 @@ def index_pending_messages(
             if not messages:
                 return 0
 
-            docs = build_chat_documents(messages, chunk_size, chunk_overlap)
-            # Idempotency: drop any vectors a prior crashed tick may have inserted
-            # for these messages before re-inserting. No-op on the normal first pass.
-            for m in messages:
-                purge(str(m.id))
+            docs = build_chat_documents(
+                messages, chunk_size, chunk_overlap,
+                gap_seconds=segment_gap_seconds, max_messages=segment_max_messages,
+            )
+            # Idempotency: drop any segment vectors a prior crashed tick may have
+            # inserted covering ANY of these messages, before re-inserting.
+            purge([str(m.id) for m in messages])
             ingest(docs)  # raises on failure -> no stamping, retried next tick
 
             stamped = utcnow()

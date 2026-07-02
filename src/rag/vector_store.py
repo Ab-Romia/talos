@@ -58,6 +58,7 @@ __all__ = [
     "get_workspace_vectorstore",
     "delete_file_chunks",
     "delete_message_chunks",
+    "delete_chat_segments_for_messages",
     "clear_collection",
     "get_collection_info",
 ]
@@ -229,4 +230,30 @@ def delete_message_chunks(
     client.delete(
         collection_name=collection_name,
         filter=f'message_id == "{message_id}"',
+    )
+
+
+def delete_chat_segments_for_messages(
+    message_ids: list[str],
+    collection_name: str = WORKSPACE_COLLECTION,
+):
+    """Delete every chat-memory segment vector that covers ANY of the given
+    message_ids. The indexer calls this before re-ingesting a batch so a
+    crashed previous tick can't leave duplicate segment vectors."""
+    if not message_ids:
+        return
+    _ensure_milvus_connection()
+    if not utility.has_collection(collection_name):
+        return
+
+    from pymilvus import MilvusClient
+    import json
+
+    client = MilvusClient(
+        uri=f"http://{global_rag_config.milvus_host}:{global_rag_config.milvus_port}"
+    )
+    ids_json = json.dumps([str(i) for i in message_ids])
+    client.delete(
+        collection_name=collection_name,
+        filter=f'source == "chat" && json_contains_any(message_ids, {ids_json})',
     )

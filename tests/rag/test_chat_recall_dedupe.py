@@ -47,3 +47,23 @@ def test_no_exclusion_keeps_all():
     chain = _chain(set(), CHAT_DOCS)
     kept = chain._retrieve_chat("q")
     assert [d.metadata["message_id"] for d in kept] == ["m1", "m3"]
+
+
+SEGMENT_DOCS = [
+    Document(page_content="user: a\nuser: b", metadata={
+        "segment_id": "s1", "message_ids": ["m1", "m2"], "source": "chat",
+    }),
+    Document(page_content="user: c\nuser: d", metadata={
+        "segment_id": "s2", "message_ids": ["m4", "m5"], "source": "chat",
+    }),
+    Document(page_content="user: e", metadata={"message_id": "m6", "source": "chat"}),
+]
+
+
+def test_chat_recall_drops_segment_overlapping_tail():
+    """A segment doc is dropped if ANY of its message_ids overlaps the tail,
+    a disjoint segment doc is kept, and a legacy single-message_id doc is
+    still dropped when it overlaps the tail."""
+    chain = _chain({"m1", "m6"}, SEGMENT_DOCS)
+    kept = chain._retrieve_chat("q")
+    assert [d.metadata.get("segment_id") for d in kept] == ["s2"]

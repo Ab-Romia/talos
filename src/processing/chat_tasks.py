@@ -34,6 +34,8 @@ async def index_chat_messages() -> int:
             batch_size=global_rag_config.chat_index_batch_size,
             chunk_size=global_rag_config.chunk_size,
             chunk_overlap=global_rag_config.chunk_overlap,
+            segment_gap_seconds=global_rag_config.chat_segment_gap_minutes * 60,
+            segment_max_messages=global_rag_config.chat_segment_max_messages,
         )
         total += n
         if n < global_rag_config.chat_index_batch_size:

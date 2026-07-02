@@ -144,8 +144,13 @@ class RAGChain:
                            chatroom_id=self.chatroom_id, exc_info=True)
             return []
         if self._exclude_message_ids:
-            docs = [d for d in docs
-                    if d.metadata.get("message_id") not in self._exclude_message_ids]
+            def _overlaps_tail(d):
+                ids = d.metadata.get("message_ids")
+                if ids is None:  # legacy per-message docs
+                    mid = d.metadata.get("message_id")
+                    ids = [mid] if mid else []
+                return any(i in self._exclude_message_ids for i in ids)
+            docs = [d for d in docs if not _overlaps_tail(d)]
         return docs
 
     # TODO: use prompt template
