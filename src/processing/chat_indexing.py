@@ -18,6 +18,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sqlalchemy import select
 
 from rag.ingestion import ingest_chat_messages
+from rag.message_text import message_text
 from rag.vector_store import delete_message_chunks
 from utils.datetime import utcnow
 from utils.logger import get_logger
@@ -43,7 +44,7 @@ def build_chat_documents(messages, chunk_size: int, chunk_overlap: int) -> list[
     )
     docs: list[Document] = []
     for m in messages:
-        text = f"{_role_str(m.role)}: {m.content}"
+        text = f"{_role_str(m.role)}: {message_text(m)}"
         meta = {
             "chatroom_id": str(m.channel_id),
             "message_id": str(m.id),

@@ -29,6 +29,7 @@ from utils.logger import get_logger
 from workspace import require_perms as require
 from workspace.model import Channel
 
+from .message_text import message_text
 from .rag_chain import RAGChain
 from .vector_store import WORKSPACE_COLLECTION
 
@@ -76,8 +77,8 @@ async def _load_unindexed_tail(channel_id: UUID, cap: int) -> tuple[list[BaseMes
     history: list[BaseMessage] = []
     for m in reversed(rows):  # oldest -> newest
         history.append(
-            AIMessage(content=m.content) if m.role == MessageRole.ASSISTANT
-            else HumanMessage(content=m.content)
+            AIMessage(content=message_text(m)) if m.role == MessageRole.ASSISTANT
+            else HumanMessage(content=message_text(m))
         )
     tail_ids = {str(m.id) for m in rows}
     return history, tail_ids
