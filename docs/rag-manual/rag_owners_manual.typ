@@ -5,7 +5,7 @@
   numbering: "1",
   footer: context [
     #set text(size: 8pt, fill: rgb("#8a93a3"))
-    Talos RAG — Owner's Manual · v2
+    Talos RAG — Owner's Manual · v2.1
     #h(1fr)
     #counter(page).display("1")
   ],
@@ -58,14 +58,16 @@
     #set text(size: 10.5pt)
     #align(left)[
       *The whole system in one sentence.* One pipeline, driven by one config
-      object (`RagConfig`), exposed through one endpoint (`/ask`) that streams
-      to the asker and broadcasts to the channel, and measured by an eval
-      harness that calls the *same* pipeline code. Files and chat conversation
-      live as vectors in one Milvus collection (`talos_documents`), told apart
-      by a `source` field — chat memory is embedded as *conversation segments*,
-      not single messages. Master three chokepoints — *RagConfig* (all knobs),
-      *build_rag_pipeline* (all retrieval), *RagTrace* (all observability) —
-      and you can scale, debug, and fix any part of it.
+      object (`RagConfig`) that admins can layer per workspace and channel,
+      exposed through one endpoint (`/ask`) that streams to the asker and
+      broadcasts to the channel, and measured by an eval harness that calls
+      the *same* pipeline code. Files and chat conversation live as vectors in
+      one Milvus collection (`talos_documents`), told apart by a `source`
+      field — chat memory is embedded as *conversation segments*, not single
+      messages. Master three chokepoints — *RagConfig* (all knobs, all
+      layering), *build_rag_pipeline* (all retrieval), *RagTrace* (all
+      observability, per-answer provenance) — and you can scale, debug, and
+      fix any part of it.
     ]
   ]
   #v(1fr)
@@ -203,16 +205,23 @@ Each file has one job.
   [`rag/retrieval/chat_selection.py`], [`select_chat_context` — pure decay + redundancy re-ranking of recalled segments],
   [`rag/generation.py`], [`get_llm`],
   [`rag/rag_chain.py`], [*`RAGChain`* — orchestrator; `prepare()` (eager retrieval) + `stream_answer()` (generation); fills the trace],
-  [`rag/trace.py`], [`RagTrace` — the observability record],
-  [`rag/router.py`], [`POST /ask`: tail loading, threading, persistence, `ai_message` broadcast],
+  [`rag/trace.py`], [`RagTrace` — the observability record (request id, timing, provenance, selection stats)],
+  [`rag/ai_settings.py`], [`ai_settings` table + `AiConfigPatch` whitelist + `resolve_ai_config` — the workspace/channel config layer (§2)],
+  [`rag/settings_router.py`], [`GET/PATCH .../ai/config` endpoints (workspace + channel scope)],
+  [`rag/router.py`], [`POST /ask`: tail loading, per-request config resolution, threading, persistence, `ai_message` broadcast, `ask.trace` digest],
   [`processing/chat_indexing.py`], [`build_chat_segments` + `index_pending_messages` — the locked cron indexer],
   [`processing/chat_tasks.py`], [The taskiq task: cron schedule, retry label, multi-batch drain],
+  [`processing/tasks.py` + `documents.py`], [`process_file` — file download (workspace-scoped MinIO) → extract → chunk → ingest (`source="file"`)],
 )
 
 #pagebreak()
 = 4 · Lifecycle of one `/ask` request
 
 `RAGChain` is split in two, and the split is the async-correctness story.
+Before anything else, the router resolves the request's *effective config*
+(global → workspace → channel, §2 Layering) inside the worker thread — one
+indexed read — so the chain is constructed from, and traced against, exactly
+the configuration this workspace chose.
 *`prepare(question)`* does everything retrieval: rewrite, HyDE, file search,
 chat-segment recall, context formatting — synchronously, but the router runs it
 (together with chain construction) in a worker thread via `asyncio.to_thread`.
@@ -311,7 +320,8 @@ your head at once. Learn these and nothing is a mystery.
 - *A — `RagConfig`* is the only place knobs live, and it reaches every component
   through a real `config=` seam.
 - *B — `RagTrace`* is filled once per run and read identically by the `/ask`
-  debug flag, `scripts/debug_ask.py`, and the chat UI. One schema, no drift.
+  debug flag, `scripts/debug_ask.py`, and the always-on `ask.trace` log
+  digest. One schema, no drift.
 - *C — `build_rag_pipeline`* is the only place file-retrieval logic lives. Edit
   it once; production and evaluation both change.
 
@@ -423,6 +433,11 @@ grep the app log by `request_id` to correlate a user report with the trace.
   batch cut becomes two segments (rare; quality nit, not correctness).
 - The question's `sent_at` uses the app clock; the answer's uses the DB clock.
   Ordering relies on generation time exceeding clock skew (same-host: fine).
+- *File uploads do not yet trigger processing on this branch*: `process_file`
+  is executable and tested (download → chunk → ingest), but the upload
+  endpoint's enqueue hook belongs to the filesystem owner (reported in the
+  handoff doc). Until it lands, files are indexed only when the task is
+  kicked explicitly.
 
 = 11 · Recipes — how to change it
 

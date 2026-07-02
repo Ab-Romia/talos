@@ -349,7 +349,7 @@ def d5():
     # RagConfig -> one consumers box (no crossing arrows)
     b.append(caption(30, 78, "A · RagConfig  →  reaches every component through a real  config=  seam"))
     _, cfg = box(30, 100, 200, 96, "config", "RagConfig",
-                 ["one env-driven object", "global_rag_config", "(the only place knobs live)"])
+                 ["env defaults, layered per", "workspace/channel (ai_settings)", "resolved fresh per /ask"])
     b.append(_)
     _, cons = box(360, 92, 380, 150, "pipe", "Every factory takes  config= :", [])
     b.append(_)
@@ -373,12 +373,12 @@ def d5():
                 ["fills self.trace"],
                 mono_lines=["prepare + stream_answer"])
     b.append(_)
-    _, tr = box(300, 322, 220, 96, "trace", "RagTrace",
-                ["model · effective_config", "rewritten_query · candidates", "final_context · exact prompt"])
+    _, tr = box(300, 322, 220, 112, "trace", "RagTrace",
+                ["request_id · timing (ms)", "effective_config · provenance", "candidates · chat_selection", "final_context · exact prompt"])
     b.append(_)
     b.append(arrow((230, 362), (300, 366), "produce"))
     outs = [("/ask  {debug:true}", 620, 316), ("scripts/debug_ask.py", 620, 360),
-            ("chat-ui  🔍 toggle", 620, 404)]
+            ("ask.trace log (every ask)", 620, 404)]
     for name, x, y in outs:
         _, o = box(x, y, 240, 34, "api", None)
         b.append(_)
