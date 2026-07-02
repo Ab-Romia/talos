@@ -56,6 +56,9 @@ class RagConfig(BaseSettings):
     chat_index_interval_minutes: int = 5
     chat_index_grace_seconds: int = 300
     chat_index_batch_size: int = 500
+    # Max batches drained per cron tick (backlog burst recovery); each batch is
+    # chat_index_batch_size messages.
+    chat_index_max_batches: int = 10
     chat_recall_k: int = 3
     chat_context_cap: int = 50
 

@@ -76,3 +76,83 @@ class TestIndexPendingMessages:
             grace_seconds=300, batch_size=100, chunk_size=1000, chunk_overlap=0,
             ingest=lambda docs: None, purge=lambda _mid: None,
         ) == 0
+
+
+def test_indexer_skips_tick_when_lock_held(db_session):
+    """Two concurrent indexer runs must not double-process a batch: the
+    second run sees the advisory lock and returns 0 without touching Milvus."""
+    from sqlalchemy import text
+    from database import SessionLocal
+    from processing.chat_indexing import INDEXER_LOCK_KEY, index_pending_messages
+
+    calls = {"ingest": 0}
+
+    def fake_ingest(docs):
+        calls["ingest"] += 1
+
+    # Hold the lock from a separate session, as a concurrent run would.
+    with SessionLocal() as other:
+        held = other.execute(
+            text("SELECT pg_try_advisory_lock(:k)"), {"k": INDEXER_LOCK_KEY}
+        ).scalar()
+        assert held is True
+        try:
+            n = index_pending_messages(
+                grace_seconds=0, batch_size=10, chunk_size=1000, chunk_overlap=0,
+                ingest=fake_ingest, purge=lambda _mid: None,
+            )
+            assert n == 0
+            assert calls["ingest"] == 0
+        finally:
+            other.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": INDEXER_LOCK_KEY})
+            other.commit()
+
+
+def test_indexer_releases_lock_after_successful_run(db_session, test_channel, test_user):
+    """After a run completes (messages indexed and committed), the lock must be
+    immediately acquirable by another session — guards the connection-affinity
+    leak (unlock must hit the same connection the lock was taken on)."""
+    from sqlalchemy import text
+    from processing.chat_indexing import INDEXER_LOCK_KEY
+
+    ch_id, user_id = test_channel.id, test_user.id
+    with SessionLocal() as s:
+        s.add(Message(channel_id=ch_id, sender_id=user_id, content="settled message",
+                      role=MessageRole.USER, sent_at=utcnow() - timedelta(seconds=600)))
+        s.commit()
+
+    n = index_pending_messages(
+        grace_seconds=300, batch_size=100, chunk_size=1000, chunk_overlap=0,
+        ingest=lambda docs: None, purge=lambda _mid: None,
+    )
+    assert n == 1  # a real successful run, with the body's own db.commit()
+
+    # Core invariant: the lock is free again from a fresh session/connection.
+    with SessionLocal() as fresh:
+        held = fresh.execute(
+            text("SELECT pg_try_advisory_lock(:k)"), {"k": INDEXER_LOCK_KEY}
+        ).scalar()
+        try:
+            assert held is True
+        finally:
+            fresh.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": INDEXER_LOCK_KEY})
+            fresh.commit()
+
+
+def test_tick_drains_multiple_batches(monkeypatch):
+    """A backlog larger than one batch is drained within a single cron tick."""
+    import asyncio
+    import processing.chat_tasks as chat_tasks
+
+    batches = [500, 500, 3]  # simulated per-call results
+
+    def fake_index(**kwargs):
+        return batches.pop(0)
+
+    monkeypatch.setattr(chat_tasks, "index_pending_messages", fake_index)
+    monkeypatch.setattr(chat_tasks.global_rag_config, "chat_index_batch_size", 500)
+    monkeypatch.setattr(chat_tasks.global_rag_config, "chat_index_max_batches", 10)
+
+    total = asyncio.run(chat_tasks.index_chat_messages.original_func())
+    assert total == 1003
+    assert batches == []  # stopped after the short batch

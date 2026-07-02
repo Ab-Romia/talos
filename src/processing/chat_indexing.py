@@ -15,7 +15,7 @@ from datetime import timedelta
 
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from rag.ingestion import ingest_chat_messages
 from rag.message_text import message_text
@@ -24,6 +24,14 @@ from utils.datetime import utcnow
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Session-level Postgres advisory lock key for the chat indexer. Guards against
+# concurrent double-runs (overlapping cron ticks across the 2 default taskiq
+# worker processes, or Redis-stream redelivery after the 10-min idle timeout):
+# purge->ingest->stamp is only idempotent for SEQUENTIAL runs.
+# Arbitrary constant, unique within the app; comfortably fits in pg's signed
+# 64-bit (bigint) advisory-lock key space.
+INDEXER_LOCK_KEY = 0x7A105C47
 
 
 def _role_str(role) -> str:
@@ -86,27 +94,48 @@ def index_pending_messages(
         session_factory = SessionLocal
 
     cutoff = utcnow() - timedelta(seconds=grace_seconds)
-    with session_factory() as db:
-        messages = db.scalars(
-            select(Message)
-            .where(Message.indexed_at.is_(None))
-            .where(Message.sent_at < cutoff)
-            .order_by(Message.sent_at.asc())
-            .limit(batch_size)
-        ).all()
-        if not messages:
+
+    # Session-level advisory lock on a DEDICATED connection, held for the whole
+    # run. Pg session locks bind to the CONNECTION, and the ORM session below
+    # commits freely — a commit can return the Session's pooled connection, so
+    # the lock must not live there (unlocking on a different pooled connection
+    # would silently no-op and leak the lock forever). Crash-safe: if the
+    # process dies, pg releases session locks when the connection drops.
+    from database import engine
+
+    lock_conn = engine.connect()
+    try:
+        got = lock_conn.execute(
+            text("SELECT pg_try_advisory_lock(:k)"), {"k": INDEXER_LOCK_KEY}
+        ).scalar()
+        if not got:
+            logger.info("chat indexer lock held elsewhere; skipping this run")
             return 0
+        with session_factory() as db:
+            messages = db.scalars(
+                select(Message)
+                .where(Message.indexed_at.is_(None))
+                .where(Message.sent_at < cutoff)
+                .order_by(Message.sent_at.asc())
+                .limit(batch_size)
+            ).all()
+            if not messages:
+                return 0
 
-        docs = build_chat_documents(messages, chunk_size, chunk_overlap)
-        # Idempotency: drop any vectors a prior crashed tick may have inserted
-        # for these messages before re-inserting. No-op on the normal first pass.
-        for m in messages:
-            purge(str(m.id))
-        ingest(docs)  # raises on failure -> no stamping, retried next tick
+            docs = build_chat_documents(messages, chunk_size, chunk_overlap)
+            # Idempotency: drop any vectors a prior crashed tick may have inserted
+            # for these messages before re-inserting. No-op on the normal first pass.
+            for m in messages:
+                purge(str(m.id))
+            ingest(docs)  # raises on failure -> no stamping, retried next tick
 
-        stamped = utcnow()
-        for m in messages:
-            m.indexed_at = stamped
-        db.commit()
-        logger.info("indexed chat messages", count=len(messages))
-        return len(messages)
+            stamped = utcnow()
+            for m in messages:
+                m.indexed_at = stamped
+            db.commit()
+            logger.info("indexed chat messages", count=len(messages))
+            return len(messages)
+    finally:
+        # On the not-acquired path this unlock is a harmless no-op (returns false).
+        lock_conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": INDEXER_LOCK_KEY})
+        lock_conn.close()
