@@ -66,6 +66,12 @@ class RagConfig(BaseSettings):
     # embedded retrieval unit.
     chat_segment_gap_minutes: int = 30
     chat_segment_max_messages: int = 12
+    # Chat recall re-ranking: fetch a wider candidate pool, then re-rank by
+    # rank-relevance x time-decay with lexical redundancy suppression down to
+    # chat_recall_k.
+    chat_recall_fetch_k: int = 10
+    chat_decay_half_life_hours: float = 168.0  # one week
+    chat_recall_overlap_threshold: float = 0.6
 
     llm_temperature: float = 0.0
     llm_streaming: bool = True

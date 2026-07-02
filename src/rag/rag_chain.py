@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import final
 
 from langchain_core.documents import Document
@@ -8,6 +9,7 @@ from config import RAG_PROMPT
 from config import global_rag_config as global_rag_config, RagConfig
 from utils.logger import get_logger
 
+from .retrieval.chat_selection import select_chat_context
 from .trace import RagTrace
 
 __all__ = ["RAGChain", "PreparedAsk"]
@@ -102,7 +104,7 @@ class RAGChain:
                     chat_vs = get_workspace_vectorstore(embeddings=get_embeddings(config=config))
                     chat_expr = f'chatroom_id == "{chatroom_id}" && source == "chat"'
                     self.chat_retriever = chat_vs.as_retriever(
-                        search_kwargs={"k": config.chat_recall_k, "expr": chat_expr}
+                        search_kwargs={"k": config.chat_recall_fetch_k, "expr": chat_expr}
                     )
             else:
                 self.vectorstore = get_vectorstore(collection_name, embeddings=self.hyde)
@@ -139,18 +141,25 @@ class RAGChain:
             return []
         try:
             docs = self.chat_retriever.invoke(query)
+            if self._exclude_message_ids:
+                def _overlaps_tail(d):
+                    ids = d.metadata.get("message_ids")
+                    if ids is None:  # legacy per-message docs
+                        mid = d.metadata.get("message_id")
+                        ids = [mid] if mid else []
+                    return any(i in self._exclude_message_ids for i in ids)
+                docs = [d for d in docs if not _overlaps_tail(d)]
+            docs = select_chat_context(
+                docs,
+                k=self.config.chat_recall_k,
+                now=datetime.now(timezone.utc),
+                half_life_hours=self.config.chat_decay_half_life_hours,
+                overlap_threshold=self.config.chat_recall_overlap_threshold,
+            )
         except Exception:
             logger.warning("chat recall failed; degrading to file-only",
                            chatroom_id=self.chatroom_id, exc_info=True)
             return []
-        if self._exclude_message_ids:
-            def _overlaps_tail(d):
-                ids = d.metadata.get("message_ids")
-                if ids is None:  # legacy per-message docs
-                    mid = d.metadata.get("message_id")
-                    ids = [mid] if mid else []
-                return any(i in self._exclude_message_ids for i in ids)
-            docs = [d for d in docs if not _overlaps_tail(d)]
         return docs
 
     # TODO: use prompt template

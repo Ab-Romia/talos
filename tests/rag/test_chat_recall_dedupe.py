@@ -67,3 +67,15 @@ def test_chat_recall_drops_segment_overlapping_tail():
     chain = _chain({"m1", "m6"}, SEGMENT_DOCS)
     kept = chain._retrieve_chat("q")
     assert [d.metadata.get("segment_id") for d in kept] == ["s2"]
+
+
+def test_selection_failure_degrades_to_file_only(monkeypatch):
+    """_retrieve_chat promises 'never errors the answer' -- a failure in the
+    post-retrieval selection step (e.g. misconfigured half-life) must degrade
+    to file-only context, not raise."""
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("selection blew up")
+
+    monkeypatch.setattr("rag.rag_chain.select_chat_context", _boom)
+    chain = _chain(set(), CHAT_DOCS)
+    assert chain._retrieve_chat("q") == []
