@@ -101,6 +101,10 @@ async def _persist_exchange(channel_id: UUID, user_id: UUID, question: str,
     because MessageSchema requires a non-null sender_id (assistant rows
     have sender_id NULL)."""
     async with AsyncSessionLocal() as db:
+        # Clock-source mix: asked_at is the app server's clock (captured at
+        # request start), while the answer's sent_at below defaults to the DB
+        # server's now(); ordering relies on generation time exceeding any
+        # clock skew between the two (same-host deployment).
         q = Message(channel_id=channel_id, sender_id=user_id,
                     content=question, role=MessageRole.USER, sent_at=asked_at)
         a = Message(channel_id=channel_id, sender_id=None,

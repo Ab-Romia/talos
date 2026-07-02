@@ -135,6 +135,7 @@ def index_pending_messages(
     from database import engine
 
     lock_conn = engine.connect()
+    got = False
     try:
         got = lock_conn.execute(
             text("SELECT pg_try_advisory_lock(:k)"), {"k": INDEXER_LOCK_KEY}
@@ -169,6 +170,11 @@ def index_pending_messages(
             logger.info("indexed chat messages", count=len(messages))
             return len(messages)
     finally:
-        # On the not-acquired path this unlock is a harmless no-op (returns false).
-        lock_conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": INDEXER_LOCK_KEY})
-        lock_conn.close()
+        # Only unlock if we actually acquired the lock, else pg logs a
+        # "you don't own a lock..." WARNING on every skipped tick. Nest in an
+        # inner try/finally so close() still runs even if unlock raises.
+        try:
+            if got:
+                lock_conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": INDEXER_LOCK_KEY})
+        finally:
+            lock_conn.close()

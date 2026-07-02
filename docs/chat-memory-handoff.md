@@ -97,6 +97,9 @@ Chat recall re-ranks before returning: fetch `chat_recall_fetch_k` (10) candidat
 recency decay with `chat_decay_half_life_hours` = 168h (one week) floored at 0.25, drop
 near-duplicates above `chat_recall_overlap_threshold` (0.6 lexical overlap), then narrow to the
 top `chat_recall_k` (3).
+Segments never span indexer batches (`batch_size` = 500 >> the 12-message segment cap), so a
+conversation straddling a batch cut becomes two segments — a rare retrieval-quality nit, not a
+correctness issue.
 
 ### Migrating existing per-message vectors to segments
 Legacy per-message chat vectors (from an earlier version of this feature) still work for
