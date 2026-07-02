@@ -161,17 +161,23 @@ async def ask_question(channel_id: UUID, body: AskRequest, session: SessionDep):
     file_ids = [str(fid) for fid in body.file_ids] if body.file_ids else None
     # TODO: Checking the file ids permissions prior
 
-    chain = RAGChain(
-        collection_name=WORKSPACE_COLLECTION,
-        workspace_id=str(workspace_id),
-        file_ids=file_ids,
-        chatroom_id=str(channel_id),
-        chat_history=history,
-        exclude_message_ids=tail_ids,
-    )
+    def _build_and_prepare():
+        # Construction is kept off the event loop together with prepare():
+        # on the first request per process it loads the embedding model and
+        # cross-encoder (cached afterwards), which would otherwise block the
+        # loop for seconds.
+        chain = RAGChain(
+            collection_name=WORKSPACE_COLLECTION,
+            workspace_id=str(workspace_id),
+            file_ids=file_ids,
+            chatroom_id=str(channel_id),
+            chat_history=history,
+            exclude_message_ids=tail_ids,
+        )
+        return chain, chain.prepare(body.question)
 
     try:
-        prepared = await asyncio.to_thread(chain.prepare, body.question)
+        chain, prepared = await asyncio.to_thread(_build_and_prepare)
     except Exception:
         logger.exception("ask retrieval failed", channel_id=str(channel_id))
         raise HTTPException(status_code=502, detail="retrieval failed")
