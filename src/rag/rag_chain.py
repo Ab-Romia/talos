@@ -1,12 +1,8 @@
+from dataclasses import dataclass, field
 from typing import final
 
 from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import (
-    RunnablePassthrough,
-    RunnableParallel,
-    RunnableLambda,
-)
 
 from config import RAG_PROMPT
 from config import global_rag_config as global_rag_config, RagConfig
@@ -14,9 +10,17 @@ from utils.logger import get_logger
 
 from .trace import RagTrace
 
-__all__ = ["RAGChain"]
+__all__ = ["RAGChain", "PreparedAsk"]
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class PreparedAsk:
+    """Everything retrieval produced, ready for generation."""
+    question: str
+    context: str
+    history: list = field(default_factory=list)
 
 
 @final
@@ -109,21 +113,6 @@ class RAGChain:
             )
 
         self.llm = llm if llm is not None else get_llm(config=config)
-        self.chain = (
-                RunnableParallel(
-                    {
-                        "context": RunnableLambda(self._rewrite_and_retrieve)
-                                   | RunnableLambda(self._format_docs),
-                        "question": RunnablePassthrough(),
-                        "chat_history": RunnableLambda(
-                            lambda _: list(self._injected_history)
-                        ),
-                    }
-                )
-                | RAG_PROMPT
-                | self.llm
-                | StrOutputParser()
-        )
 
     def _rewrite_and_retrieve(self, question: str):
         if self.query_rewriter is not None:
@@ -201,9 +190,11 @@ class RAGChain:
             full_response += chunk
         return full_response
 
-    def stream_query(self, question: str, include_citations: bool = True):
-        from rag import format_citations
-
+    def prepare(self, question: str) -> PreparedAsk:
+        """Run the retrieval half eagerly: rewrite -> retrieve (files + chat)
+        -> format context. Raises on failure, which lets the HTTP layer turn
+        Milvus/LLM-rewrite errors into a real error response BEFORE any
+        response headers are sent."""
         self.last_query_info = {
             "original_query": question,
             "rewritten_query": None,
@@ -211,29 +202,41 @@ class RAGChain:
             "retrieved_docs": [],
             "num_docs_retrieved": 0,
         }
-
-        # B4: snapshot the history the prompt will actually see BEFORE this turn's
-        # question is recorded, so the live question isn't double-injected (once
-        # in chat_history, once in the question slot).
-        history_at_prompt = list(self._injected_history)
-
-        full_response = ""
-
-        for chunk in self.chain.stream(question):
-            full_response += chunk
-            yield chunk
-
+        docs = self._rewrite_and_retrieve(question)
+        context = self._format_docs(docs)
         self.last_query_info["retrieved_docs"] = self.retrieved_docs
         self.last_query_info["num_docs_retrieved"] = len(self.retrieved_docs)
+        return PreparedAsk(
+            question=question,
+            context=context,
+            history=list(self._injected_history),
+        )
 
-        self._fill_trace(question, history_at_prompt)
+    def stream_answer(self, prepared: PreparedAsk, include_citations: bool = True):
+        """Generation half: stream LLM tokens for an already-prepared ask.
+        Fills self.trace after the answer completes."""
+        from rag import format_citations
+
+        prompt_value = RAG_PROMPT.invoke({
+            "context": prepared.context,
+            "question": prepared.question,
+            "chat_history": prepared.history,
+        })
+        for chunk in (self.llm | StrOutputParser()).stream(prompt_value):
+            yield chunk
+
+        self._fill_trace(prepared.question, prepared.history)
 
         if include_citations:
-            full_response += "\n\nSources:"
             yield "\n\nSources:"
             for citation in format_citations(self.retrieved_docs):
                 yield f"\n{citation}"
-                full_response += f"\n{citation}"
+
+    def stream_query(self, question: str, include_citations: bool = True):
+        """Back-compat wrapper: prepare + stream in one sync generator (used by
+        query(), the eval harness, and scripts/debug_ask.py)."""
+        prepared = self.prepare(question)
+        yield from self.stream_answer(prepared, include_citations)
 
     async def ingest_documents(self, file_paths: list[str]):
         from rag import load_documents

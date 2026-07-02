@@ -64,3 +64,36 @@ def test_trace_populated_after_query():
     assert "myq" in t.prompt
     assert t.hyde_used is False
     assert t.effective_config["use_reranking"] is False
+
+
+def test_prepare_then_stream_answer_matches_stream_query():
+    """prepare() does retrieval eagerly; stream_answer() only generates."""
+    captured = {}
+    chain = _make_chain(captured, chat_history=[HumanMessage("earlier")])
+    prepared = chain.prepare("LIVE_Q")
+    assert prepared.question == "LIVE_Q"
+    assert "context chunk" in prepared.context      # retrieval already happened
+    assert [m.content for m in prepared.history] == ["earlier"]
+    out = "".join(chain.stream_answer(prepared, include_citations=False))
+    assert out == "the answer"
+    assert chain.trace.original_query == "LIVE_Q"   # trace filled by stream_answer
+
+
+def test_prepare_raises_on_retriever_failure():
+    """Retrieval errors surface from prepare(), NOT mid-stream."""
+    class _Boom:
+        def invoke(self, _q):
+            raise RuntimeError("milvus down")
+    captured = {}
+    chain = _make_chain(captured)
+    chain.retriever = _Boom()
+    import pytest
+    with pytest.raises(RuntimeError, match="milvus down"):
+        chain.prepare("q")
+
+
+def test_stream_query_still_works_as_wrapper():
+    captured = {}
+    chain = _make_chain(captured)
+    out = "".join(chain.stream_query("q", include_citations=False))
+    assert out == "the answer"
