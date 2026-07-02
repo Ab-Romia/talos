@@ -24,7 +24,9 @@ class Workspace(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid7)
     name: Mapped[str] = mapped_column(unique=True, index=True)
+    description: Mapped[str | None] = mapped_column()
     owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    icon_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("files.id", ondelete="SET NULL"), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column()
@@ -33,6 +35,7 @@ class Workspace(Base):
     channels: Mapped[list[Channel]] = relationship("Channel", back_populates="workspace", cascade="all, delete-orphan")
     members = relationship("User", secondary="workspace_members", back_populates="workspaces")
     files: Mapped[list[File]] = relationship("File", back_populates="workspace")
+    icon = relationship("File", foreign_keys=[icon_id])
 
     roles: Mapped[list[Role]] = relationship(  # type: ignore[forward-reference]
         "Role",
@@ -48,7 +51,11 @@ class Channel(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid7)
     name: Mapped[str] = mapped_column(index=True)
+    description: Mapped[str | None] = mapped_column()
     workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
+    is_public: Mapped[bool] = mapped_column(default=True)
+    is_muted: Mapped[bool] = mapped_column(default=False)
+    is_archived: Mapped[bool] = mapped_column(default=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column()
