@@ -10,6 +10,7 @@ from config import RAG_PROMPT
 from config import global_rag_config as global_rag_config, RagConfig
 from utils.logger import get_logger
 
+from .ai_settings import OVERRIDABLE
 from .retrieval.chat_selection import select_chat_context
 from .trace import RagTrace
 
@@ -42,6 +43,7 @@ class RAGChain:
         chat_retriever=None,
         llm=None,
         request_id: str | None = None,
+        config_provenance: dict | None = None,
     ):
         from rag import (
             get_query_rewriter,
@@ -55,6 +57,7 @@ class RAGChain:
 
         self.collection_name = collection_name
         self.config = config
+        self.config_provenance = dict(config_provenance or {})
         self.workspace_id = workspace_id
         self.request_id = request_id or ""
         self._retrieval_ms = 0.0
@@ -194,21 +197,17 @@ class RAGChain:
                 context=self.last_context, question=question,
                 chat_history=history_at_prompt)
         )
+        effective = {k: getattr(self.config, k) for k in OVERRIDABLE}
+        effective["use_hybrid_retrieval"] = self.config.use_hybrid_retrieval
+        effective["compression_type"] = self.config.compression_type.value
         self.trace = RagTrace(
             model=self.config.openai_model,
             embedding_provider=self.config.embedding_provider,
             request_id=self.request_id,
             retrieval_ms=round(self._retrieval_ms, 1),
             generation_ms=round(self._generation_ms, 1),
-            effective_config={
-                "use_hyde": self.config.use_hyde,
-                "use_query_rewrite": self.config.use_query_rewrite,
-                "use_reranking": self.config.use_reranking,
-                "use_hybrid_retrieval": self.config.use_hybrid_retrieval,
-                "compression_type": self.config.compression_type.value,
-                "retrieval_top_k": self.config.retrieval_top_k,
-                "rerank_fetch_k": self.config.rerank_fetch_k,
-            },
+            effective_config=effective,
+            config_provenance=dict(self.config_provenance),
             original_query=question,
             rewritten_query=self.last_query_info.get("rewritten_query"),
             hyde_used=self.hyde is not None,

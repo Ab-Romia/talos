@@ -21,6 +21,7 @@ class RagTrace:
     retrieval_ms: float = 0.0
     generation_ms: float = 0.0
     effective_config: dict = field(default_factory=dict)
+    config_provenance: dict = field(default_factory=dict)
     original_query: str = ""
     rewritten_query: str | None = None
     hyde_used: bool = False

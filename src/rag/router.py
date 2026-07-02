@@ -170,8 +170,14 @@ async def ask_question(channel_id: UUID, body: AskRequest, session: SessionDep):
         # on the first request per process it loads the embedding model and
         # cross-encoder (cached afterwards), which would otherwise block the
         # loop for seconds.
+        from database import SessionLocal
+        from rag.ai_settings import resolve_ai_config
+        with SessionLocal() as db:
+            resolved, provenance = resolve_ai_config(workspace_id, channel_id, db)
         chain = RAGChain(
             collection_name=WORKSPACE_COLLECTION,
+            config=resolved,
+            config_provenance=provenance,
             workspace_id=str(workspace_id),
             file_ids=file_ids,
             chatroom_id=str(channel_id),
