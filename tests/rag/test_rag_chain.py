@@ -18,7 +18,7 @@ class _FakeRetriever:
         return list(self._docs)
 
 
-def _make_chain(captured, *, config=None, chat_history=None, docs=None):
+def _make_chain(captured, *, config=None, chat_history=None, docs=None, request_id=None):
     config = config or RagConfig(use_hyde=False, use_query_rewrite=False, use_reranking=False)
     docs = docs if docs is not None else [Document(page_content="context chunk", metadata={"file_id": "f1"})]
 
@@ -35,6 +35,7 @@ def _make_chain(captured, *, config=None, chat_history=None, docs=None):
         retriever=_FakeRetriever(docs),
         chat_retriever=None,
         llm=RunnableLambda(fake_llm_fn),
+        request_id=request_id,
     )
 
 
@@ -97,3 +98,19 @@ def test_stream_query_still_works_as_wrapper():
     chain = _make_chain(captured)
     out = "".join(chain.stream_query("q", include_citations=False))
     assert out == "the answer"
+
+
+def test_trace_records_timing_and_request_id():
+    captured = {}
+    chain = _make_chain(captured, request_id="req-123")
+    prepared = chain.prepare("q")
+    "".join(chain.stream_answer(prepared, include_citations=False))
+    assert chain.trace.request_id == "req-123"
+    assert chain.trace.retrieval_ms >= 0.0
+    assert chain.trace.generation_ms >= 0.0
+
+
+def test_request_id_constructor_arg():
+    captured = {}
+    chain = _make_chain(captured)
+    assert hasattr(chain, "request_id")

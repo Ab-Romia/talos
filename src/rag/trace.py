@@ -17,6 +17,9 @@ class RagTrace:
 
     model: str = ""
     embedding_provider: str = ""
+    request_id: str = ""
+    retrieval_ms: float = 0.0
+    generation_ms: float = 0.0
     effective_config: dict = field(default_factory=dict)
     original_query: str = ""
     rewritten_query: str | None = None

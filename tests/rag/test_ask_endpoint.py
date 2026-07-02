@@ -132,3 +132,4 @@ def test_ask_broadcasts_ai_message_to_channel_room(client, test_channel, auth_to
     assert payload["question"] == "q?"
     assert payload["role"] == "assistant"
     assert payload["channel_id"] == str(test_channel.id)
+    assert payload["request_id"]

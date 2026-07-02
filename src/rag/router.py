@@ -12,6 +12,7 @@ Every message is in exactly one tier, so nothing is lost and nothing double-coun
 """
 
 import asyncio
+import uuid
 from datetime import datetime, timezone
 from typing import cast
 from uuid import UUID
@@ -116,7 +117,7 @@ async def _persist_exchange(channel_id: UUID, user_id: UUID, question: str,
 
 
 async def _broadcast_ai_message(channel_id: UUID, question_id: UUID, answer_id: UUID,
-                                question: str, answer: str) -> None:
+                                question: str, answer: str, request_id: str) -> None:
     """Fan the finished answer out to everyone in the channel room. The chat
     UI otherwise only shows /ask exchanges to the asker (plain HTTP stream).
     Best-effort: a broadcast failure must never fail the request. NOTE: this
@@ -133,6 +134,7 @@ async def _broadcast_ai_message(channel_id: UUID, question_id: UUID, answer_id: 
                 "question": question,
                 "content": answer,
                 "role": "assistant",
+                "request_id": request_id,
             },
             room=f"channel:{channel_id}",
         )
@@ -154,6 +156,8 @@ async def ask_question(channel_id: UUID, body: AskRequest, session: SessionDep):
     if workspace_id is None:
         raise HTTPException(status_code=404, detail="channel not found")
 
+    request_id = str(uuid.uuid7())
+
     history, tail_ids = await _load_unindexed_tail(channel_id, global_rag_config.chat_context_cap)
     asked_at = datetime.now(timezone.utc)
     user_id = cast(UUID, session.sub)
@@ -173,13 +177,14 @@ async def ask_question(channel_id: UUID, body: AskRequest, session: SessionDep):
             chatroom_id=str(channel_id),
             chat_history=history,
             exclude_message_ids=tail_ids,
+            request_id=request_id,
         )
         return chain, chain.prepare(body.question)
 
     try:
         chain, prepared = await asyncio.to_thread(_build_and_prepare)
     except Exception:
-        logger.exception("ask retrieval failed", channel_id=str(channel_id))
+        logger.exception("ask retrieval failed", channel_id=str(channel_id), request_id=request_id)
         raise HTTPException(status_code=502, detail="retrieval failed")
 
     async def stream():
@@ -190,14 +195,26 @@ async def ask_question(channel_id: UUID, body: AskRequest, session: SessionDep):
                 parts.append(chunk)
                 yield chunk
         except Exception:
-            logger.exception("ask generation failed", channel_id=str(channel_id))
+            logger.exception("ask generation failed", channel_id=str(channel_id), request_id=request_id)
             yield _ERROR_MARKER
             return
         # Persist only the model answer (strip the citation footer).
         answer = "".join(parts).split(_CITATION_MARKER, 1)[0].strip()
         if answer:
             q_id, a_id = await _persist_exchange(channel_id, user_id, body.question, asked_at, answer)
-            await _broadcast_ai_message(channel_id, q_id, a_id, body.question, answer)
+            await _broadcast_ai_message(channel_id, q_id, a_id, body.question, answer, request_id)
+            t = chain.trace
+            logger.info(
+                "ask.trace",
+                request_id=request_id,
+                channel_id=str(channel_id),
+                model=t.model,
+                n_file=len(t.file_candidates),
+                n_chat=len(t.chat_candidates),
+                retrieval_ms=t.retrieval_ms,
+                generation_ms=t.generation_ms,
+                answer_chars=len(answer),
+            )
         if body.debug:
             import json
             payload = chain.trace.as_dict()

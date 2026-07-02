@@ -1,3 +1,4 @@
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import final
@@ -40,6 +41,7 @@ class RAGChain:
         retriever=None,
         chat_retriever=None,
         llm=None,
+        request_id: str | None = None,
     ):
         from rag import (
             get_query_rewriter,
@@ -54,6 +56,9 @@ class RAGChain:
         self.collection_name = collection_name
         self.config = config
         self.workspace_id = workspace_id
+        self.request_id = request_id or ""
+        self._retrieval_ms = 0.0
+        self._generation_ms = 0.0
         self.file_ids = file_ids
         self.chatroom_id = chatroom_id
         self.retrieved_docs: list[Document] = []
@@ -179,6 +184,9 @@ class RAGChain:
         self.trace = RagTrace(
             model=self.config.openai_model,
             embedding_provider=self.config.embedding_provider,
+            request_id=self.request_id,
+            retrieval_ms=round(self._retrieval_ms, 1),
+            generation_ms=round(self._generation_ms, 1),
             effective_config={
                 "use_hyde": self.config.use_hyde,
                 "use_query_rewrite": self.config.use_query_rewrite,
@@ -216,8 +224,10 @@ class RAGChain:
             "retrieved_docs": [],
             "num_docs_retrieved": 0,
         }
+        t0 = time.perf_counter()
         docs = self._rewrite_and_retrieve(question)
         context = self._format_docs(docs)
+        self._retrieval_ms = (time.perf_counter() - t0) * 1000.0
         self.last_query_info["retrieved_docs"] = self.retrieved_docs
         self.last_query_info["num_docs_retrieved"] = len(self.retrieved_docs)
         return PreparedAsk(
@@ -236,8 +246,10 @@ class RAGChain:
             "question": prepared.question,
             "chat_history": prepared.history,
         })
+        t0 = time.perf_counter()
         for chunk in (self.llm | StrOutputParser()).stream(prompt_value):
             yield chunk
+        self._generation_ms = (time.perf_counter() - t0) * 1000.0
 
         self._fill_trace(prepared.question, prepared.history)
 
