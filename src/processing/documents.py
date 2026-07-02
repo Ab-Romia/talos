@@ -24,8 +24,11 @@ async def process_document(file_record: File, db: Session, storage: AsyncFileSys
         tmp_path = tmp.name
 
     try:
-        # Download from MinIO
-        await storage.download_file_to_path(file_record.id.hex, tmp_path)
+        # Download from MinIO. File.uri is "minio://<relative-path>"; strip the
+        # protocol only — the workspace-scoped MinIOFileSystem.split_path adds
+        # bucket/workspace/channel. (download_file_to_path was a dead API.)
+        rel_path = str(file_record.uri).removeprefix("minio://")
+        await storage._get_file(rel_path, tmp_path)
         logger.info("Downloaded file for processing", file_id=str(file_record.id), path=tmp_path)
 
         # Extract text elements
@@ -48,7 +51,7 @@ async def process_document(file_record: File, db: Session, storage: AsyncFileSys
 
         if not docs:
             logger.warning("No text extracted from document", file_id=str(file_record.id))
-            file_record.chunk_count = 0
+            file_record.chunk_count = 0  # not a mapped column yet — silently dropped (reported to filesystem owner)
             db.commit()
             return
 
@@ -76,7 +79,7 @@ async def process_document(file_record: File, db: Session, storage: AsyncFileSys
         from rag.ingestion import ingest_file_chunks
         ingest_file_chunks(chunks, str(file_record.workspace_id), str(file_record.id))
 
-        file_record.chunk_count = len(chunks)
+        file_record.chunk_count = len(chunks)  # not a mapped column yet — silently dropped (reported to filesystem owner)
         db.commit()
 
         logger.info(
