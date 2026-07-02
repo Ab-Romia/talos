@@ -323,3 +323,123 @@ def soft_delete(
 
     logger.info("File soft-deleted", file_id=str(file_id))
     return file
+
+
+def search_files(
+        db: orm.Session,
+        workspace_id: uuid.UUID,
+        text_query: str | None = None,
+        uploader_id: uuid.UUID | None = None,
+        channel_id: uuid.UUID | None = None,
+        filename: str | None = None,
+        content_type: str | None = None,
+        limit: int = 20,
+) -> tuple[list[dict], int]:
+    """Search files by metadata and/or document content.
+
+    Returns (hits, total) where hits is a list of dicts with keys:
+      - file: File
+      - snippet: optional matching text snippet
+      - score: optional relevance score (may be None)
+    """
+    # Metadata-only search (no vector search requested)
+    if not text_query:
+        q = (
+            select(File)
+            .where(File.workspace_id == workspace_id)
+            .where(File.deleted_at.is_(None))
+            .order_by(File.created_at.desc())
+            .limit(limit)
+        )
+
+        if uploader_id is not None:
+            q = q.where(File.uploader_id == uploader_id)
+        if channel_id is not None:
+            q = q.where(File.channel_id == channel_id)
+        if content_type is not None:
+            if content_type.endswith("/"):
+                q = q.where(File.content_type.like(f"{content_type}%"))
+            else:
+                q = q.where(File.content_type == content_type)
+        if filename is not None:
+            q = q.where(File.filename.ilike(f"%{filename}%"))
+
+        rows = db.execute(q).scalars().all()
+        hits = [{"file": r, "snippet": None, "score": None} for r in rows]
+        return hits, len(hits)
+
+    # Text (content) search: use the vectorstore retriever to find matching chunks,
+    # then resolve the parent file metadata and apply any additional filters.
+    try:
+        from rag.vector_store import get_workspace_vectorstore
+        from rag.retrieval.retrievers import get_retriever
+    except Exception:
+        # If RAG components are not available, return empty result set.
+        return [], 0
+
+    vectorstore = get_workspace_vectorstore()
+    parts = [f'workspace_id == "{workspace_id}"']
+    search_kwargs = {"expr": " && ".join(parts), "k": limit}
+    retriever = get_retriever(vectorstore=vectorstore, documents=[], search_kwargs=search_kwargs)
+
+    # retriever.invoke returns a list of Document objects with metadata including file_id
+    try:
+        docs = retriever.invoke(text_query)
+    except Exception:
+        docs = []
+
+    # Map documents to their parent file ids preserving order
+    doc_map: dict[str, list] = {}
+    file_order: list[str] = []
+
+    for d in docs:
+        fid = d.metadata.get("file_id")
+        if fid is None:
+            continue
+        if fid not in doc_map:
+            file_order.append(fid)
+            doc_map[fid] = []
+        doc_map[fid].append(d)
+
+    # Resolve File rows for the candidate file ids
+    uuids: list[uuid.UUID] = []
+    for fid in file_order:
+        try:
+            uuids.append(uuid.UUID(fid))
+        except Exception:
+            continue
+
+    if not uuids:
+        return [], 0
+
+    q = (
+        select(File)
+        .where(
+            File.id.in_(uuids),
+            File.workspace_id == workspace_id,
+            File.deleted_at.is_(None),
+        )
+    )
+    if uploader_id is not None:
+        q = q.where(File.uploader_id == uploader_id)
+    if channel_id is not None:
+        q = q.where(File.channel_id == channel_id)
+    if content_type is not None:
+        if content_type.endswith("/"):
+            q = q.where(File.content_type.like(f"{content_type}%"))
+        else:
+            q = q.where(File.content_type == content_type)
+
+    rows = db.execute(q).scalars().all()
+    rows_by_id = {str(r.id): r for r in rows}
+
+    hits: list[dict] = []
+    for fid in file_order:
+        file_row = rows_by_id.get(fid)
+        if file_row is None:
+            continue
+        docs_for_file = doc_map.get(fid, [])
+        snippet = docs_for_file[0].page_content[:500] if docs_for_file else None
+        hits.append({"file": file_row, "snippet": snippet, "score": None})
+
+    return hits, len(hits)
