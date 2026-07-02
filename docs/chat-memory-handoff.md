@@ -34,6 +34,11 @@ nothing is double-counted. A full tail (== cap) logs a lag warning.
   Nullable, `default=None`; `MessageSchema` unchanged, so `storage.put` is unaffected.
 - **`src/workspace/router.py`** (routing) — one include: `channel.include_router(channel_rag_router)`
   so `/ask` mounts under the channel (inherits `workspace:view` + `channel:view`).
+  Later (Task 5, AI-config endpoints): one import —
+  `from rag.settings_router import workspace_ai as workspace_ai_router, channel_ai as channel_ai_router`
+  — and two more includes, `workspace.include_router(workspace_ai_router)` and
+  `channel.include_router(channel_ai_router)`, mounting
+  `GET`/`PATCH /api/workspaces/{id}/ai/config` and `/api/channels/{id}/ai/config`.
 - **`docker-compose.yaml`** (infra) — added `processing.chat_tasks` to the worker command and a
   new `scheduler` service (`taskiq scheduler scheduler:scheduler processing.chat_tasks`).
 
@@ -142,3 +147,29 @@ model. To migrate on a dev DB:
     awaited, so the ordinary chat "message" broadcast never actually fires. Unrelated to this
     feature but discovered while investigating why room broadcasts weren't showing up; needs
     the chat owner's attention.
+
+## Integration findings to owners
+
+- **Filesystem owner:** upload→RAG was never wired: no `process_file` enqueue on any branch;
+  `FileStatus` lacks an in-flight `PROCESSING` member (the claim-update needs it — until then
+  double-processing is possible, output stays idempotent via the pre-ingest purge); `File`
+  lacks `chunk_count`/`processing_error` columns so those writes are silently dropped. Working
+  reference exists in the local integration worktree.
+- **Chat owner:** `/ask` persists assistant rows with `sender_id NULL`; `MessageSchema.sender_id`
+  non-optional makes `GET /messages` return `[]` for any channel containing one (via
+  `handle_exceptions(default_return=[])`). Also `chat/router.py:39` `sio.send` is unawaited
+  (broadcast never fires). At rich-msg merge: `_persist_exchange` (`src/rag/router.py`) must
+  switch to `wrap_plain_text(...)`/`set_content()` — plain-str content will violate
+  `content_size_bytes NOT NULL`.
+- **Frontend owner:** working `@ai` reference exists (ChatPage/askAi/onAiMessage demo patches);
+  two must-fixes before shipping: handle the `\n\n[ask:error]` stream marker (bubble currently
+  sticks on pending), and the orphaned-pending-bubble race; the AI-config client should target
+  the nested endpoints `GET/PATCH /api/workspaces/{id}/ai/config` and
+  `/api/channels/{id}/ai/config` (replacing the flat `/api/ai/config` scaffold).
+- **Search owner (nourhane):** `filesystem/service.py:375` imports `get_retriever` which no
+  longer exists (silently returns empty results via the broad except) — use `build_rag_pipeline`;
+  and the Milvus expr needs `&& source == "file"` or chat vectors leak into file search.
+- **MCP owner (MohabG2):** rebase onto origin/main (branch reverts the model→database rename);
+  `RAGChain(collection_name=, workspace_id=, file_ids=)` + `.query()` is unchanged and compatible.
+
+Suggested merge order: mcp-server rebase → chat-message-memory → rich-msg → search → frontend.

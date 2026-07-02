@@ -145,6 +145,43 @@ that is the only place.
   once, which is exactly how evaluation works (Diagram 5A).
 ]
 
+== Layering: global → workspace → channel
+
+`global_rag_config` is no longer the whole story. A workspace (or a single
+channel inside it) can override a *whitelisted* subset of fields, stored in
+the `ai_settings` table (`src/rag/ai_settings.py`): one row per scope — a
+workspace-default row (`channel_id IS NULL`) and, optionally, per-channel
+rows. `resolve_ai_config()` reads both rows for the request's workspace and
+channel and layers them with `model_copy(update=...)`, in order
+*global (env) → workspace override → channel override* — a channel override
+wins over a workspace override, which wins over the env default. The result
+is a real `RagConfig`, so every existing `config=` seam stays honest, and the
+per-field origin (`global` / `workspace` / `channel`) is recorded as
+`config_provenance` in the trace (§10).
+
+Only these 11 fields are overridable (`OVERRIDABLE` in `ai_settings.py`):
+`use_hyde`, `use_query_rewrite`, `use_reranking`, `retrieval_top_k`,
+`rerank_fetch_k`, `chat_recall_k`, `chat_recall_fetch_k`,
+`chat_decay_half_life_hours`, `chat_recall_overlap_threshold`,
+`llm_temperature`, `openai_model`. `openai_model` is further vetted against
+`global_rag_config.ai_model_allow_list` (default
+`["gpt-4o-mini", "gpt-4o", "qwen2.5:7b-instruct"]`) — a value not on the
+allow-list is rejected on write, and a row that later falls off the
+allow-list is neutralized (dropped, falling back to global) on read rather
+than trusted blindly. Everything else — indexer cadence/batching, segmenting,
+embedding provider/model, the Milvus collection — is *global-only by design*:
+those are process-wide infra knobs, not per-tenant behaviour, and exposing
+them per workspace would be an illusion (one indexer, one collection, for
+everybody).
+
+Endpoints: `GET`/`PATCH /api/workspaces/{id}/ai/config`
+(`workspace:view` / `workspace.role:manage`) and
+`GET`/`PATCH /api/channels/{id}/ai/config`
+(`channel:view` / `workspace.role:manage`). `PATCH` with a field set to
+`null` clears that override (falls back to the next layer down); the patch
+body is validated by `AiConfigPatch` (`extra="forbid"` — anything not in the
+whitelist is a 422, not a silent no-op).
+
 = 3 · Component map
 
 Everything lives under `src/rag/` (plus the indexer in `src/processing/`).
@@ -335,13 +372,26 @@ quantitative eval coverage yet — they are covered by unit tests and live
 verification, not the ablation grid. Both are known, documented, and the next
 evaluation milestone.
 
+Eval measures the _global default_ configuration; a workspace with overrides
+diverges from the headline number — the per-answer truth is the trace's
+`config_provenance`.
+
 = 10 · Debugging playbook
 
-Every query fills `chain.trace` (a `RagTrace`): model, effective config,
-rewritten query, file/chat candidates, injected-tail size, final context, and
-the *exact prompt*. Read it three ways: send `{"debug": true}` to `/ask` (it
-appends `__ASK_DEBUG__` + JSON to the stream), run
-`scripts/debug_ask.py <channel> "<question>"`, or use the chat UI's 🔍 toggle.
+Every query fills `chain.trace` (a `RagTrace`): `request_id`, model, effective
+config, `config_provenance` (per-field origin: global/workspace/channel),
+rewritten query, file/chat candidates, injected-tail size, `chat_selection`
+(`fetched`/`dropped_tail`/`dropped_redundant`/`truncated`/`kept` — the
+arithmetic closes: `fetched` = the sum of the rest), stage timing
+(`retrieval_ms`/`generation_ms`), final context, and the *exact prompt*. Read
+it three ways: send `{"debug": true}` to `/ask` (it appends `__ASK_DEBUG__` +
+JSON to the stream), run `scripts/debug_ask.py <channel> "<question>"`, or use
+the chat UI's 🔍 toggle. `debug: true` and `scripts/debug_ask.py` are the
+durable surfaces — the chat-ui toggle is a dev scaffold, not a supported
+integration point. Separately, every *successful* `/ask` logs an `ask.trace`
+digest line (`request_id`, model, `n_file`, `n_chat`, `retrieval_ms`,
+`generation_ms`, `answer_chars`) regardless of whether debug mode was on —
+grep the app log by `request_id` to correlate a user report with the trace.
 
 #table(
   columns: (auto, 1fr),
@@ -358,6 +408,8 @@ appends `__ASK_DEBUG__` + JSON to the stream), run
   [Milvus dimension error], [Embedding provider/model changed against a populated collection → drop + re-ingest.],
   [Hybrid "does nothing" in prod], [Expected — no BM25 corpus in prod; use evaluation to measure hybrid.],
   [Slow answers], [HyDE + rewrite = two extra LLM calls per query → turn off via `USE_HYDE` / `USE_QUERY_REWRITE`.],
+  [Answer differs between workspaces], [Check the trace's `config_provenance` for fields resolved to `workspace` or `channel` instead of `global` — an override is active for that scope.],
+  [Chat memory ignored something it fetched], [`chat_selection` shows where it went: `fetched` is the recalled pool; `dropped_tail`, `dropped_redundant`, and `truncated` account for what didn't make it into `kept`.],
 )
 
 == Known limits (own them before anyone asks)
