@@ -11,6 +11,8 @@ Context is delivered in two tiers (the indexed_at partition):
 Every message is in exactly one tier, so nothing is lost and nothing double-counts.
 """
 
+import asyncio
+from datetime import datetime, timezone
 from typing import cast
 from uuid import UUID
 
@@ -19,10 +21,10 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from starlette.concurrency import iterate_in_threadpool
 
 from auth.utils.session import SessionDep
 from chat.model import Message, MessageRole
-from chat.service import store_message
 from config import global_rag_config
 from database import AsyncSessionLocal
 from utils.logger import get_logger
@@ -43,6 +45,9 @@ _CITATION_MARKER = "\n\nSources:"
 # When debug is requested, the JSON debug payload is streamed after the answer,
 # preceded by this marker so a client can split it off.
 _DEBUG_MARKER = "\n\n__ASK_DEBUG__\n"
+# Appended to the (already-200) stream when generation fails mid-way, so a
+# client can distinguish "model finished" from "backend died".
+_ERROR_MARKER = "\n\n[ask:error]"
 
 
 class AskRequest(BaseModel):
@@ -59,7 +64,8 @@ async def _load_unindexed_tail(channel_id: UUID, cap: int) -> tuple[list[BaseMes
     message_ids. The ids let RAGChain drop these from tier-2 recall, so a message
     briefly present in both tiers (its vector is in Milvus before its indexed_at
     commit lands) is still counted exactly once. A full tail (len == cap) means
-    the indexer is lagging, so warn.
+    the indexer is lagging, so warn. SYSTEM rows (join/leave notices) are
+    skipped — they are not conversation.
     """
     if cap <= 0:
         return [], set()
@@ -68,6 +74,7 @@ async def _load_unindexed_tail(channel_id: UUID, cap: int) -> tuple[list[BaseMes
             select(Message)
             .where(Message.channel_id == channel_id)
             .where(Message.indexed_at.is_(None))
+            .where(Message.role != MessageRole.SYSTEM)
             .order_by(Message.sent_at.desc())
             .limit(cap)
         ))
@@ -84,15 +91,24 @@ async def _load_unindexed_tail(channel_id: UUID, cap: int) -> tuple[list[BaseMes
     return history, tail_ids
 
 
-async def _persist_assistant_turn(channel_id: UUID, answer: str) -> None:
-    """Persist the assistant answer (sender_id NULL, role ASSISTANT). Uses the
-    ORM directly because MessageSchema requires a non-null sender_id."""
-    if not answer:
-        return
+async def _persist_exchange(channel_id: UUID, user_id: UUID, question: str,
+                            asked_at, answer: str) -> tuple[UUID, UUID]:
+    """Persist the question + answer together, AFTER a successful stream.
+    An exchange is only recorded when the answer was actually delivered:
+    a mid-stream failure or client disconnect persists nothing, so the tail
+    never grows dangling human turns. asked_at (captured at request start)
+    keeps the question ordered before the answer. Uses the ORM directly
+    because MessageSchema requires a non-null sender_id (assistant rows
+    have sender_id NULL)."""
     async with AsyncSessionLocal() as db:
-        db.add(Message(channel_id=channel_id, sender_id=None,
-                       content=answer, role=MessageRole.ASSISTANT))
+        q = Message(channel_id=channel_id, sender_id=user_id,
+                    content=question, role=MessageRole.USER, sent_at=asked_at)
+        a = Message(channel_id=channel_id, sender_id=None,
+                    content=answer, role=MessageRole.ASSISTANT)
+        db.add(q)
+        db.add(a)
         await db.commit()
+        return q.id, a.id
 
 
 @ask.post("/ask", dependencies=[require("channel.message:send")])
@@ -100,20 +116,22 @@ async def ask_question(channel_id: UUID, body: AskRequest, session: SessionDep):
     """Stream a multi-turn RAG answer over the workspace's indexed documents,
     with the channel's own indexed conversation recalled as memory.
 
-    The channel router carries no workspace_id in its path, so the workspace is
-    resolved from the channel for file-retrieval scoping.
+    Retrieval runs eagerly (in a worker thread) so Milvus/rewrite failures
+    become a real 502 before any bytes stream; generation is iterated via a
+    threadpool so LLM work never blocks the event loop.
     """
     async with AsyncSessionLocal() as db:
         workspace_id = await db.scalar(select(Channel.workspace_id).where(Channel.id == channel_id))
     if workspace_id is None:
         raise HTTPException(status_code=404, detail="channel not found")
 
-    # Load the tail BEFORE persisting the current question, so this turn's
-    # question isn't duplicated into its own chat_history.
     history, tail_ids = await _load_unindexed_tail(channel_id, global_rag_config.chat_context_cap)
-    await store_message(channel_id=channel_id, user_id=cast(UUID, session.sub), content=body.question)
+    asked_at = datetime.now(timezone.utc)
+    user_id = cast(UUID, session.sub)
 
     file_ids = [str(fid) for fid in body.file_ids] if body.file_ids else None
+    # TODO: Checking the file ids permissions prior
+
     chain = RAGChain(
         collection_name=WORKSPACE_COLLECTION,
         workspace_id=str(workspace_id),
@@ -123,14 +141,27 @@ async def ask_question(channel_id: UUID, body: AskRequest, session: SessionDep):
         exclude_message_ids=tail_ids,
     )
 
+    try:
+        prepared = await asyncio.to_thread(chain.prepare, body.question)
+    except Exception:
+        logger.exception("ask retrieval failed", channel_id=str(channel_id))
+        raise HTTPException(status_code=502, detail="retrieval failed")
+
     async def stream():
         parts: list[str] = []
-        for chunk in chain.stream_query(body.question, include_citations=body.include_citations):
-            parts.append(chunk)
-            yield chunk
+        gen = chain.stream_answer(prepared, include_citations=body.include_citations)
+        try:
+            async for chunk in iterate_in_threadpool(gen):
+                parts.append(chunk)
+                yield chunk
+        except Exception:
+            logger.exception("ask generation failed", channel_id=str(channel_id))
+            yield _ERROR_MARKER
+            return
         # Persist only the model answer (strip the citation footer).
         answer = "".join(parts).split(_CITATION_MARKER, 1)[0].strip()
-        await _persist_assistant_turn(channel_id, answer)
+        if answer:
+            await _persist_exchange(channel_id, user_id, body.question, asked_at, answer)
         if body.debug:
             import json
             payload = chain.trace.as_dict()
