@@ -32,6 +32,7 @@ import { authService } from '../../services/auth'
 import { chatService } from '../../services/chat'
 import { permissionsService } from '../../services/permissions'
 import PermissionsManager from '../../components/settings/PermissionsManager'
+import NotificationsSettingsTab from './NotificationsSettingsTab'
 
 function TabPanel({ value, index: key, children }) {
   if (value !== key) return null
@@ -147,6 +148,7 @@ export default function SettingsPage() {
     { label: 'Workspace', key: 'workspace' },
     ...(showAccessTab ? [{ label: 'Access', key: 'access' }] : []),
     { label: 'Security', key: 'security' },
+    { label: 'Notifications', key: 'notifications' },
   ]
   const safeTab = tab < tabs.length ? tab : 0
   const activeKey = tabs[safeTab]?.key || 'profile'
@@ -791,6 +793,10 @@ export default function SettingsPage() {
                 </Button>
               </div>
             </div>
+          </TabPanel>
+
+          <TabPanel value={activeKey} index="notifications">
+            <NotificationsSettingsTab />
           </TabPanel>
 
         </div>
