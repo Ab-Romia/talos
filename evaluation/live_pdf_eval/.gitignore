@@ -2,3 +2,4 @@ results/cache/
 data/
 results/judged_arms.json
 results/*.log
+results/live_smoke.txt

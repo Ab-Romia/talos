@@ -25,12 +25,18 @@ class RagConfig(BaseSettings):
     milvus_port: int = 19530
     milvus_collection_name: str = "talos_documents"
 
-    retrieval_top_k: int = 5
+    # Eval-tuned default (was 5): top_k=10 beat top_k=5 consistently
+    # (+0.03-0.05 page-recall) in the live-PDF ablation.
+    # See evaluation/live_pdf_eval/REPORT.md.
+    retrieval_top_k: int = 10
     # Candidate pool the dense stage fetches BEFORE the cross-encoder reranks
     # down to retrieval_top_k. Widening here is what lets reranking improve
     # recall rather than merely reorder the same top_k. Ignored when
     # use_reranking is False.
-    rerank_fetch_k: int = 20
+    # Eval-tuned default (was 20): 50 chosen in the live-PDF ablation
+    # (minilm 0.892@50 vs 0.861@20; bge tied 0.892 across 20/50/100).
+    # See evaluation/live_pdf_eval/REPORT.md.
+    rerank_fetch_k: int = 50
     use_hybrid_retrieval: bool = False
     use_reranking: bool = True
     # HyDE and query rewriting each add an LLM call per query (latency + cost).
@@ -48,10 +54,16 @@ class RagConfig(BaseSettings):
 
     chunk_size: int = 1000
     chunk_overlap: int = 200
-    chunking_strategy: str = "recursive"
+    # Eval-tuned default (was "recursive"): "recursive" fragments elements
+    # into short chunks (median 67 chars) with 9-13% boilerplate in top-k;
+    # "by_title" merges into section-sized chunks (median 440 chars) with
+    # 0.000 boilerplate and +18.6pt judged correctness in the live-PDF
+    # ablation. See evaluation/live_pdf_eval/REPORT.md.
+    chunking_strategy: str = "by_title"
     # "by_title" only: prepend the active section heading to each chunk's text
     # before embedding ("[Section]\ntext"). Cheap contextual anchor; ablated in
-    # evaluation/live_pdf_eval before any default flip.
+    # evaluation/live_pdf_eval and failed its pre-set bar (>0.02 page-recall
+    # over plain by_title) — stays False. See evaluation/live_pdf_eval/REPORT.md.
     chunk_prepend_section_title: bool = False
 
     # Chat-memory indexing: the cron embeds messages older than the grace window

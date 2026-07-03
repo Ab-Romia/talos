@@ -466,3 +466,24 @@ grep the app log by `request_id` to correlate a user report with the trace.
   Three chokepoints: *RagConfig* · *build_rag_pipeline* · *RagTrace*. \
   One boundary: the indexer. One guarantee: chat memory can never kill an answer.
 ]]
+
+#pagebreak()
+= Addendum — 2026-07 retrieval remediation (eval-tuned defaults)
+
+A live-substrate ablation (`evaluation/live_pdf_eval/REPORT.md`, 83 judged
+questions through the production pipeline) changed the shipped retrieval
+defaults. Answer correctness on the live corpus rose from *0.657* to *0.855*
+(paired Wilcoxon, Holm-corrected p ≈ 2e-5).
+
+- *Chunking:* `chunking_strategy = "by_title"` — unstructured elements are
+  filtered (Header/Footer/PageBreak/Image dropped) and packed into
+  section-scoped chunks (`combine_text_under_n_chars = 200`). The legacy
+  `"recursive"` path never merged small elements, producing fragment corpora
+  (median 67 chars) — the root cause of weak answers. Re-ingest required.
+- *Embeddings (local profile):* `EMBEDDING_MODEL=BAAI/bge-small-en-v1.5`
+  (same 384-dim; query-side instruction applied automatically for `bge-*`
+  models). The huggingface provider now honors `embedding_model`, and
+  `get_workspace_vectorstore` asserts the collection dimension at first use.
+- *Pool sizing:* `retrieval_top_k = 10`, `rerank_fetch_k = 50` (was 5/20).
+- Re-ingest tooling: `scripts/reingest_workspace_files.py` (also resets
+  chat-memory vectors so the indexer re-embeds them with the new model).

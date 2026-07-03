@@ -96,7 +96,15 @@ def build_chunk_documents(elements: list, *, base_metadata: dict, config=None) -
 
 # TODO: update storage interface
 async def process_document(file_record: File, db: Session, storage: AsyncFileSystem):
-    """Download the file from MinIO, extract text, chunk, and ingest into Milvus."""
+    """Download the file from MinIO, extract text, chunk, and ingest into Milvus.
+
+    NOTE: `storage` is currently UNUSED on this path — the workspace-scoped
+    MinIOFileSystem cannot address real uploaded object keys (its split_path
+    inserts a channel segment the keys don't contain), so the download below
+    builds an unscoped client from app config. The parameter is kept because
+    tasks.py constructs it for the image path and signature parity matters
+    until the storage interface TODO above is resolved.
+    """
     ext = os.path.splitext(file_record.filename)[1].lower()
 
     with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
@@ -106,8 +114,27 @@ async def process_document(file_record: File, db: Session, storage: AsyncFileSys
         # Download from MinIO. File.uri is "minio://<relative-path>"; strip the
         # protocol only — the workspace-scoped MinIOFileSystem.split_path adds
         # bucket/workspace/channel. (download_file_to_path was a dead API.)
-        rel_path = str(file_record.uri).removeprefix("minio://")
-        await storage._get_file(rel_path, tmp_path)
+        # The stored uri is the EXACT object key (bucket/ws/files/<id>/<name>).
+        # The workspace-scoped MinIOFileSystem cannot address it: its split_path
+        # always inserts a channel segment (ws/{ch or '.'}) that real uploaded
+        # keys don't contain, so scoped downloads 404/XMinioInvalidResourceName.
+        # Download by exact key with an unscoped client built from app config.
+        object_key = str(file_record.uri).removeprefix("minio://")
+        from s3fs import S3FileSystem
+        from config import cfg
+        _m = cfg().minio
+        raw_fs = S3FileSystem(
+            key=_m.access_key,
+            secret=_m.secret_key.get_secret_value(),
+            endpoint_url=_m.internal_endpoint,
+            use_ssl=_m.secure,
+            asynchronous=True,
+            # fsspec caches instances by params; a cached client is bound to a
+            # previous (possibly closed) event loop when callers use asyncio.run
+            # per file (the re-ingest script does). Always build loop-fresh.
+            skip_instance_cache=True,
+        )
+        await raw_fs._get_file(object_key, tmp_path)
         logger.info("Downloaded file for processing", file_id=str(file_record.id), path=tmp_path)
 
         base_metadata = {
