@@ -259,8 +259,10 @@ is.
 **Q33. What are the indexer's operational invariants?**
 Run exactly **one** scheduler instance (taskiq requirement — two schedulers double
 every tick); index lag is *masked*, not fatal (un-indexed messages ride verbatim
-in tier 1); and the advisory lock guards concurrency across the two default worker
-processes. Retries are `retry_on_error=True, max_retries=3` immediate attempts,
+in tier 1 — doubly bounded: at most `chat_context_cap` messages AND
+`chat_context_char_budget` characters, newest first, so even an insane backlog of
+huge messages cannot blow the prompt); and the advisory lock guards concurrency
+across the two default worker processes. Retries are `retry_on_error=True, max_retries=3` immediate attempts,
 with the next cron tick as the durable fallback (`chat_tasks.py:21`, manual §8).
 
 **Q34. A user says "@ai gave a wrong answer." Walk me through debugging it,

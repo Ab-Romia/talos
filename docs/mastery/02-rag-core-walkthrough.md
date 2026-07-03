@@ -675,27 +675,37 @@ Three marker constants matter because a client parses the raw text stream on the
 `question` (1–8000 chars), optional `file_ids`, `include_citations` (default True),
 `debug` (default False).
 
-### `_load_unindexed_tail(channel_id, cap)` — lines 61–92
-Loads tier 1 — the channel's un-indexed tail.
-- `cap <= 0` → empty (lines 71–72).
-- Query (lines 73–81): messages where `channel_id` matches, `indexed_at IS NULL`,
+### `_load_unindexed_tail(channel_id, cap, char_budget)` — lines 61–117
+Loads tier 1 — the channel's un-indexed tail, **doubly bounded**: `cap` limits
+the COUNT of messages (SQL `LIMIT`), `char_budget` limits their total LENGTH
+(`chat_context_char_budget`, default 16,000 chars ≈ 4k tokens) so a burst of
+huge un-indexed messages can't blow the model's context window.
+- `cap <= 0` → empty.
+- Query: messages where `channel_id` matches, `indexed_at IS NULL`,
   and `role != SYSTEM`, ordered `sent_at DESC`, limited to `cap`. **SYSTEM rows
-  (join/leave notices) are skipped — they are not conversation** (docstring, lines
-  69–70; the `.where(Message.role != MessageRole.SYSTEM)` clause, line 78).
-- If the result *fills* the cap, warn that the indexer may be lagging (lines
-  82–84) — a full tail means messages are aging out of tier 1 faster than tier 2
-  can absorb them.
-- Reverse to chronological order and map each row to an `AIMessage` (assistant) or
-  `HumanMessage` (everyone else), using `message_text` (lines 85–90).
-- Returns `(history, tail_ids)` where `tail_ids` is the set of stringified message
-  ids (line 91). Those ids feed `RAGChain.exclude_message_ids` for the exactly-
-  once dedupe.
+  (join/leave notices) are skipped — they are not conversation.**
+- If the result *fills* the cap, warn that the indexer may be lagging — a full
+  tail means messages are aging out of tier 1 faster than tier 2 absorbs them.
+- **Budget walk** (lines ~96–108): rows are newest-first; accumulate
+  `len(message_text(m))` and stop before the message that would exceed the
+  budget. Two deliberate rules: the **newest message is always kept whole**
+  (the budget stops accumulation, it never truncates content — never-empty
+  guarantee), and a truncation logs a structured warning with kept/dropped
+  counts.
+- Reverse the *included* rows to chronological order and map each to an
+  `AIMessage` (assistant) or `HumanMessage` (everyone else) via `message_text`.
+- Returns `(history, tail_ids)` where `tail_ids` contains **only the injected
+  messages** — budget-dropped messages are deliberately NOT excluded from
+  tier-2 recall, so if their vectors already exist in Milvus they remain
+  recallable: dropped context degrades to "recallable", never to "gone".
 
-**Gotcha:** the query orders `DESC` then reverses; if you drop the reverse the
+**Gotchas:** the query orders `DESC` then reverses; if you drop the reverse the
 prompt gets the conversation backwards. The `role != SYSTEM` filter must stay or
-system notices pollute the model's view of the conversation.
+system notices pollute the model's view. And if you ever add ids of *dropped*
+messages to `tail_ids`, you re-open the hole: they'd be excluded from recall
+while also absent from the tail — in neither tier.
 
-### `_persist_exchange(channel_id, user_id, question, asked_at, answer)` — lines 95–116
+### `_persist_exchange(channel_id, user_id, question, asked_at, answer)` — lines 120–141
 Persists the question + answer together, **only after** a successful stream.
 - Creates a `USER` message with `sent_at=asked_at` and an `ASSISTANT` message with
   `sender_id=None` (assistant rows have no sender), adds both, commits, returns
@@ -724,14 +734,15 @@ this, a plain HTTP `/ask` stream is visible only to the asker.
 - Wrapped in a bare `try/except` that only warns (lines 126, 141–142):
   **best-effort — a broadcast failure must never fail the request.**
 
-### `ask_question(channel_id, body, session)` — lines 145–232
-The orchestrator. Its flow, in order (docstring lines 147–153 summarize the intent):
+### `ask_question(channel_id, body, session)` — lines ~170–257
+The orchestrator. Its flow, in order (the docstring summarizes the intent):
 
-1. **404 resolve** (lines 154–157): look up the channel's `workspace_id`; if the
+1. **404 resolve**: look up the channel's `workspace_id`; if the
    channel doesn't exist, `404`.
-2. **Request id + tier-1 load** (lines 159–163): mint a `uuid7` `request_id`; load
-   the un-indexed tail (`history`, `tail_ids`) bounded by
-   `global_rag_config.chat_context_cap`; capture `asked_at` at request start;
+2. **Request id + tier-1 load**: mint a `uuid7` `request_id`; load
+   the un-indexed tail (`history`, `tail_ids`) doubly bounded by
+   `global_rag_config.chat_context_cap` (count) and
+   `chat_context_char_budget` (length); capture `asked_at` at request start;
    resolve `user_id` from the session.
 3. **`_build_and_prepare` on a worker thread** (lines 168–191). Inside a
    `def` run via `asyncio.to_thread`:

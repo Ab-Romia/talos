@@ -146,8 +146,11 @@ run) — since `init()` needs a real reachable Postgres.
   of the exchange, a 502 (not 500) on prepare-failure with nothing persisted,
   mid-stream failure marks the stream and persists nothing, debug mode
   appends a trace payload, citation footers are stripped before persisting,
-  AI messages broadcast to the channel's realtime room, and workspace/channel
-  AI-settings overrides actually reach the chain.
+  AI messages broadcast to the channel's realtime room, workspace/channel
+  AI-settings overrides actually reach the chain, and the tier-1 tail's char
+  budget (`chat_context_char_budget`): a burst of huge un-indexed messages
+  injects only what fits newest-first, while a single over-budget message is
+  still injected whole (never-empty, never-truncate).
 - **`test_build_pipeline.py`** — `build_rag_pipeline` is the single shared
   retrieval composition used everywhere; specifically proves two historical
   "toggle lies" are fixed: reranking widens the candidate pool (fetches

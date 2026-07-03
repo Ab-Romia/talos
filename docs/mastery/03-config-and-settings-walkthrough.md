@@ -149,8 +149,11 @@ default; pydantic-settings overrides any of them from the environment.
   cron only embeds messages older than the grace window so live messages still in
   the un-indexed tail aren't indexed prematurely (comment 70–71).
 - `chat_recall_k` = 3 (line 78) — final segments kept after re-ranking.
-- `chat_context_cap` = 50 (line 79) — the tier-1 tail bound (used by
+- `chat_context_cap` = 50 (line 79) — the tier-1 tail COUNT bound (used by
   `_load_unindexed_tail`).
+- `chat_context_char_budget` = 16000 (line 83) — the tier-1 tail LENGTH bound
+  (≈4k tokens, tokenizer-free): a burst of huge un-indexed messages can't blow
+  the context window; the newest message is always kept whole.
 - `chat_segment_gap_minutes` = 30, `chat_segment_max_messages` = 12 (lines 81–84)
   — a conversation segment (the embedded unit) closes on an inactivity gap or a
   size cap.

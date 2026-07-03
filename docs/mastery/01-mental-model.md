@@ -48,7 +48,8 @@ file-only inside one guard).
 
 A channel's conversation is split at the **indexer boundary**
 (`messages.indexed_at`): recent un-indexed messages ride into the prompt
-verbatim (tier 1, capped); older conversation lives in Milvus as
+verbatim (tier 1 — doubly bounded: message cap AND char budget, newest first);
+older conversation lives in Milvus as
 **segments** (tier 2) and is recalled semantically, then re-ranked by
 recency-decay and redundancy. A message is in exactly one tier —
 `exclude_message_ids` drops any segment that overlaps the tail. Index lag is

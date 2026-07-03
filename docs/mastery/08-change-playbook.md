@@ -483,9 +483,14 @@ A message is either in the un-indexed tail (tier 1, `indexed_at IS NULL`,
 `router.py:77`) or recalled as a segment (tier 2). The router passes tail ids as
 `exclude_message_ids` and recall drops any segment overlapping the tail
 (`rag_chain.py:154-162`), so a message briefly in both (vector lands before the
-`indexed_at` commit) is counted once.
-**Guard:** `tests/rag/test_chat_recall_dedupe.py`. Never inject the tail without
-also excluding its ids from recall.
+`indexed_at` commit) is counted once. The tail is doubly bounded
+(`chat_context_cap` messages AND `chat_context_char_budget` chars, newest
+first) — and `exclude_message_ids` must contain ONLY the injected messages:
+budget-dropped ones stay recallable rather than vanishing from both tiers.
+**Guard:** `tests/rag/test_chat_recall_dedupe.py` +
+`test_ask_endpoint.py::test_tail_respects_char_budget`. Never inject the tail
+without also excluding its ids from recall — and never exclude what you didn't
+inject.
 
 ### I3 · eval == ship
 Production and evaluation both call `build_rag_pipeline` and `RAG_PROMPT`; the
