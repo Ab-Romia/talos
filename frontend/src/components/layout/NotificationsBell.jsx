@@ -25,6 +25,14 @@ export default function NotificationsBell() {
             max={99}
             color="warning"
             overlap="circular"
+            sx={{
+              '& .MuiBadge-badge': {
+                fontSize: 8,
+                height: 14,
+                minWidth: 14,
+                padding: '0 3px',
+              },
+            }}
           >
             <Bell size={18} />
           </Badge>

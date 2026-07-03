@@ -7,7 +7,6 @@ import { permissionsService } from '../../services/permissions'
 
 const CHANNEL_PERMISSIONS = [
   { resource: 'channel', action: 'view', label: 'View channel' },
-  { resource: 'channel.message', action: 'view_history', label: 'View history' },
   { resource: 'channel.message', action: 'send', label: 'Send messages' },
   { resource: 'channel.member', action: 'view_presence', label: 'View presence' },
 ]

@@ -44,6 +44,15 @@ async def post_message(channel_id: UUID, req: SendRequest, session: SessionDep):
         message.model_dump(mode="json"),
         room=f"channel:{channel_id}",
     )
+
+    import asyncio
+    from chat.realtime import _notify_channel_members
+    asyncio.create_task(_notify_channel_members(
+        channel_id=channel_id,
+        sender_id=cast(UUID, session.sub),
+        content=req.text,
+    ))
+
     return {
         "id": message.id,
         "sent_at": message.sent_at,
@@ -53,7 +62,7 @@ async def post_message(channel_id: UUID, req: SendRequest, session: SessionDep):
 @channel.get(
     "/messages",
     summary="Get paginated message history",
-    dependencies=[require("channel:view", "channel.message:view_history")]
+    dependencies=[require("channel:view")]
 )
 async def get_channel_messages(
         channel_id: UUID,
@@ -70,7 +79,7 @@ async def get_channel_messages(
 @channel.get(
     "/messages/{message_id}",
     summary="Get a single message by ID",
-    dependencies=[require("channel:view", "channel.message:view_history")]
+    dependencies=[require("channel:view")]
 )
 async def get_single_message(channel_id: UUID, message_id: UUID):
     msg = await get_message_by_id(message_id)

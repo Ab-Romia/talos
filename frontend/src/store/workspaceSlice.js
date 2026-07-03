@@ -98,15 +98,22 @@ const workspaceSlice = createSlice({
     chatrooms: [],
     activeWorkspaceId: null,
     activeChatroomId: null,
+    unreadChannels: [],
     loading: false,
     error: null,
   },
   reducers: {
     setActiveChatroom(state, action) {
       state.activeChatroomId = action.payload
+      state.unreadChannels = state.unreadChannels.filter((id) => id !== action.payload)
       try {
         localStorage.setItem(ACTIVE_CR_KEY, action.payload)
       } catch {}
+    },
+    markChannelUnread(state, action) {
+      if (!state.unreadChannels.includes(action.payload)) {
+        state.unreadChannels.push(action.payload)
+      }
     },
     clearWorkspaceError(state) {
       state.error = null
@@ -175,5 +182,5 @@ const workspaceSlice = createSlice({
   },
 })
 
-export const { setActiveChatroom, clearWorkspaceError } = workspaceSlice.actions
+export const { setActiveChatroom, markChannelUnread, clearWorkspaceError } = workspaceSlice.actions
 export default workspaceSlice.reducer

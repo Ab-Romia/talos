@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import Avatar from '@mui/material/Avatar'
 import IconButton from '@mui/material/IconButton'
 import Tooltip from '@mui/material/Tooltip'
@@ -15,7 +15,9 @@ import {
   Search, Users, Bold, Code, ArrowUp, X,
 } from 'lucide-react'
 
-import { useSelector } from 'react-redux'
+import { useSelector, useDispatch as useReduxDispatch } from 'react-redux'
+import { markChannelUnread } from '../../store/workspaceSlice'
+import { usePermissions } from '../../contexts/PermissionsContext'
 import { chatService } from '../../services/chat'
 import { onChatMessage, getSocket } from '../../services/socket'
 import { ChatMessageContent } from '../../components/chat/ChatMessageContent'
@@ -49,6 +51,7 @@ function messageMatchesQuery(msg, rawQuery) {
 }
 
 export default function ChatPage() {
+  const reduxDispatch = useReduxDispatch()
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState([])
   const [snackbar, setSnackbar] = useState({ open: false, message: '' })
@@ -69,6 +72,10 @@ export default function ChatPage() {
     activeChatroomId: chatroomId,
   } = useSelector((s) => s.workspace)
 
+  const { hasChannelPerm, channelPermsLoaded } = usePermissions()
+  const canSend = hasChannelPerm('channel.message', 'send')
+  const canViewPresence = hasChannelPerm('channel.member', 'view_presence')
+
   const workspaceName = useMemo(
     () => workspaces.find((w) => w.id === workspaceId)?.name || '',
     [workspaces, workspaceId],
@@ -77,12 +84,12 @@ export default function ChatPage() {
   const threadRef = useRef(null)
   const textareaRef = useRef(null)
   const nextIdRef = useRef(1)
-  const firstSearchHitRef = useRef(null)
-  const lastScrolledFirstMatchId = useRef(null)
+  const membersMapRef = useRef(new Map())
 
   const membersMap = useMemo(() => {
     const map = new Map()
     for (const m of members) map.set(String(m.id), m.name || m.username)
+    membersMapRef.current = map
     return map
   }, [members])
 
@@ -108,49 +115,43 @@ export default function ChatPage() {
     [user],
   )
 
-  const displayMessages = useMemo(() => {
-    if (!searchOpen) return messages
+  const searchResults = useMemo(() => {
+    if (!searchOpen) return []
     const q = searchQuery.trim()
-    if (!q) return messages
+    if (!q) return []
     return messages.filter((m) => messageMatchesQuery(m, q))
   }, [messages, searchQuery, searchOpen])
 
-  useLayoutEffect(() => {
-    if (!searchOpen || !searchQuery.trim()) {
-      lastScrolledFirstMatchId.current = null
-      return
+  const highlightedMessageId = useRef(null)
+
+  const scrollToMessage = useCallback((msgId) => {
+    highlightedMessageId.current = msgId
+    const el = document.querySelector(`[data-msg-id="${msgId}"]`)
+    if (el) {
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      el.classList.add('search-highlight')
+      setTimeout(() => el.classList.remove('search-highlight'), 2000)
     }
-    const first = displayMessages[0]
-    if (!first) {
-      lastScrolledFirstMatchId.current = null
-      return
-    }
-    if (lastScrolledFirstMatchId.current === first.id) return
-    lastScrolledFirstMatchId.current = first.id
-    requestAnimationFrame(() => {
-      firstSearchHitRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-    })
-  }, [displayMessages, searchQuery, searchOpen])
+  }, [])
 
   useEffect(() => {
     const cr = chatrooms.find((c) => c.id === chatroomId)
     setChatroomName(cr?.name || '')
   }, [chatrooms, chatroomId])
 
-  // Load message history when the active channel changes.
+  // Clear messages when switching channels.
   useEffect(() => {
-    if (!chatroomId) {
-      setMessages([])
-      return
-    }
-    let cancelled = false
     setMessages([])
+  }, [chatroomId])
+
+  useEffect(() => {
+    if (!chatroomId) return
+    let cancelled = false
     ;(async () => {
       try {
         const history = await chatService.getMessages(chatroomId)
         if (cancelled) return
         const list = Array.isArray(history) ? history : (history?.messages ?? [])
-        // Backend returns newest-first; show chronologically.
         const mapped = [...list].reverse().map(toUiMessage)
         setMessages(mapped)
       } catch (err) {
@@ -165,10 +166,7 @@ export default function ChatPage() {
   // Realtime: subscribe to broadcast `message` events for the active channel.
   useEffect(() => {
     if (!chatroomId) return
-    getSocket() // ensure the shared socket is connected
     const off = onChatMessage((payload) => {
-      // Backend broadcasts the serialized MessageSchema dict. (A legacy path may
-      // wrap it as {message: "<json>"} — tolerate both.)
       let m = payload
       if (m && typeof m.message === 'string') {
         try {
@@ -177,11 +175,28 @@ export default function ChatPage() {
           return
         }
       }
-      if (!m || m.channel_id !== chatroomId) return
+      if (!m) return
+
+      // Track unread + OS notification for messages from others in different channels
+      if (m.sender_id && m.sender_id !== user?.id && m.channel_id !== chatroomId) {
+        reduxDispatch(markChannelUnread(m.channel_id))
+        if ('Notification' in window && Notification.permission === 'granted') {
+          try {
+            const senderName = membersMapRef.current.get(String(m.sender_id)) || 'Someone'
+            const chName = chatrooms.find((c) => c.id === m.channel_id)?.name
+            new Notification(chName ? `${senderName} in #${chName}` : senderName, {
+              body: (m.content || '').slice(0, 200),
+              icon: '/favicon.svg',
+              tag: m.id || `msg-${Date.now()}`,
+            })
+          } catch { /* ignore */ }
+        }
+      }
+
+      if (m.channel_id !== chatroomId) return
 
       setMessages((prev) => {
         if (prev.some((x) => x.serverId === m.id)) return prev
-        // Adopt our own optimistic message (echoed back to the sender).
         if (m.sender_id === user?.id) {
           for (let i = prev.length - 1; i >= 0; i--) {
             const x = prev[i]
@@ -195,7 +210,7 @@ export default function ChatPage() {
         return [...prev, toUiMessage(m)]
       })
     })
-    return off
+    return () => off()
   }, [chatroomId, user, toUiMessage])
 
   useEffect(() => {
@@ -341,7 +356,7 @@ export default function ChatPage() {
     [input],
   )
 
-  const headerIcons = [Search, Users]
+  const headerIcons = canViewPresence ? [Search, Users] : [Search]
   const toolbarIcons = [Bold, Code]
 
   return (
@@ -371,9 +386,9 @@ export default function ChatPage() {
         </div>
       </header>
 
-      {/* Search bar */}
+      {/* Search bar with overlay dropdown */}
       {searchOpen && (
-        <div className="bg-surface-1 border-b border-[rgba(28,27,26,0.08)] px-5 py-2 flex items-center gap-2 shrink-0">
+        <div className="relative bg-surface-1 border-b border-[rgba(28,27,26,0.08)] px-5 py-2 flex items-center gap-2 shrink-0">
           <TextField
             size="small"
             placeholder="Search this conversation…"
@@ -391,9 +406,9 @@ export default function ChatPage() {
           />
           {searchQuery.trim() ? (
             <span className="text-xs text-ink-tertiary tabular-nums shrink-0 w-[4.5rem] text-right">
-              {displayMessages.length}
+              {searchResults.length}
               {' '}
-              {displayMessages.length === 1 ? 'match' : 'matches'}
+              {searchResults.length === 1 ? 'match' : 'matches'}
             </span>
           ) : null}
           <IconButton
@@ -407,6 +422,70 @@ export default function ChatPage() {
           >
             <X size={16} />
           </IconButton>
+
+          {/* Search results overlay */}
+          {searchQuery.trim() && (
+            <div className="absolute top-full left-0 right-0 z-50 mx-5 mt-1 bg-base border border-[rgba(28,27,26,0.10)] rounded-xl shadow-lg max-h-[360px] overflow-y-auto">
+              {searchResults.length === 0 ? (
+                <p className="text-sm text-ink-tertiary text-center py-6 px-4">
+                  No messages match your search.
+                </p>
+              ) : (
+                searchResults.map((msg) => {
+                  const q = searchQuery.trim().toLowerCase()
+                  const body = msg.body || ''
+                  const idx = body.toLowerCase().indexOf(q)
+                  let before = '', match = '', after = ''
+                  if (idx >= 0) {
+                    before = body.slice(Math.max(0, idx - 40), idx)
+                    if (idx > 40) before = '…' + before
+                    match = body.slice(idx, idx + q.length)
+                    after = body.slice(idx + q.length, idx + q.length + 60)
+                    if (idx + q.length + 60 < body.length) after += '…'
+                  } else {
+                    before = body.slice(0, 100)
+                    if (body.length > 100) before += '…'
+                  }
+
+                  return (
+                    <button
+                      key={msg.id}
+                      className="w-full text-left px-4 py-3 hover:bg-surface-2 transition-colors border-b border-[rgba(28,27,26,0.04)] last:border-b-0 flex gap-3 items-start"
+                      onClick={() => {
+                        scrollToMessage(msg.id)
+                        setSearchOpen(false)
+                        setSearchQuery('')
+                      }}
+                    >
+                      <Avatar
+                        sx={{
+                          width: 28,
+                          height: 28,
+                          bgcolor: msg.mine ? 'primary.light' : '#EEEDEA',
+                          color: msg.mine ? 'primary.main' : 'text.secondary',
+                          fontSize: 11,
+                          fontWeight: 600,
+                          flexShrink: 0,
+                          mt: 0.25,
+                        }}
+                      >
+                        {initialsOf(displayName(msg.senderId))}
+                      </Avatar>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <span className="text-[13px] font-semibold text-ink truncate">{displayName(msg.senderId)}</span>
+                          <span className="text-[11px] text-ink-muted shrink-0">{msg.time}</span>
+                        </div>
+                        <p className="text-[13px] text-ink-secondary truncate">
+                          {before}<mark className="bg-amber/25 text-ink rounded-sm px-0.5">{match}</mark>{after}
+                        </p>
+                      </div>
+                    </button>
+                  )
+                })
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -426,24 +505,18 @@ export default function ChatPage() {
             </p>
           )}
 
-          {chatroomId && messages.length === 0 && !(searchOpen && searchQuery.trim()) && (
+          {chatroomId && messages.length === 0 && (
             <p className="text-center text-sm text-ink-tertiary py-10 px-4">
               No messages yet — say hello 👋
             </p>
           )}
 
-          {searchOpen && searchQuery.trim() && displayMessages.length === 0 && messages.length > 0 && (
-            <p className="text-center text-sm text-ink-tertiary py-10 px-4">
-              No messages match in this thread. Try different words, or check spelling.
-            </p>
-          )}
-
-          {displayMessages.map((msg, i) => {
+          {messages.map((msg) => {
             if (msg.role === 'system') {
               return (
                 <div
                   key={msg.id}
-                  ref={i === 0 && searchOpen && searchQuery.trim() ? firstSearchHitRef : undefined}
+                  data-msg-id={msg.id}
                   className="flex justify-center mb-4"
                 >
                   <span className="text-[12px] text-ink-tertiary italic">{msg.body}</span>
@@ -453,8 +526,8 @@ export default function ChatPage() {
             return (
               <div
                 key={msg.id}
-                ref={i === 0 && searchOpen && searchQuery.trim() ? firstSearchHitRef : undefined}
-                className="flex gap-3 mb-6 group"
+                data-msg-id={msg.id}
+                className="flex gap-3 mb-6 group transition-colors duration-500"
               >
                 <div className="pt-0.5">
                   <Avatar
@@ -485,6 +558,7 @@ export default function ChatPage() {
       </div>
 
       {/* Input */}
+      {canSend ? (
       <div className="border-t border-[rgba(28,27,26,0.06)] bg-surface-1">
         <div className="max-w-[680px] mx-auto px-5 py-4">
           <div className="bg-base border border-[rgba(28,27,26,0.10)] rounded-2xl p-3 px-4 flex flex-col gap-0 focus-within:border-amber focus-within:shadow-[0_0_0_3px_rgba(196,145,58,0.12)] transition-all">
@@ -525,6 +599,13 @@ export default function ChatPage() {
           </div>
         </div>
       </div>
+      ) : chatroomId && channelPermsLoaded ? (
+      <div className="border-t border-[rgba(28,27,26,0.06)] bg-surface-1">
+        <p className="text-center text-xs text-ink-tertiary py-3">
+          You don't have permission to send messages in this channel.
+        </p>
+      </div>
+      ) : null}
 
       {/* Members Popover */}
       <Popover

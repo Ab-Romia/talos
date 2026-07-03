@@ -15,7 +15,7 @@ import MuiButton from '@mui/material/Button'
 import Alert from '@mui/material/Alert'
 import CircularProgress from '@mui/material/CircularProgress'
 import {
-  Hash, Plus, Search, ChevronDown, Settings, MessageSquare, FileText, LogOut, Layers,
+  Hash, Plus, Search, ChevronDown, Settings, MessageSquare, FileText, LogOut, Layers, Bell,
 } from 'lucide-react'
 import { logout } from '../../store/authSlice'
 import {
@@ -25,7 +25,10 @@ import {
   setActiveChatroom,
   clearWorkspaceError,
 } from '../../store/workspaceSlice'
+import { markRead } from '../../store/notificationsSlice'
 import * as R from '../../constants/Routes'
+import NotificationsBell from './NotificationsBell'
+import { usePermissions } from '../../contexts/PermissionsContext'
 
 export default function Sidebar() {
   const location = useLocation()
@@ -34,9 +37,11 @@ export default function Sidebar() {
   const currentPath = location.pathname
 
   const {
-    workspaces, chatrooms, activeWorkspaceId, activeChatroomId, loading, error,
+    workspaces, chatrooms, activeWorkspaceId, activeChatroomId, unreadChannels, loading, error,
   } = useSelector((s) => s.workspace)
   const user = useSelector((s) => s.auth.user)
+  const { hasPerm } = usePermissions()
+  const canViewChannels = hasPerm('channel', 'view')
 
   const [searchQuery, setSearchQuery] = useState('')
   const [workspaceAnchor, setWorkspaceAnchor] = useState(null)
@@ -90,8 +95,13 @@ export default function Sidebar() {
     }
   }
 
+  const notifications = useSelector((s) => s.notifications.items)
+
   const handleSelectChatroom = (id) => {
     dispatch(setActiveChatroom(id))
+    notifications
+      .filter((n) => !n.read_at && n.data?.channel_id === id)
+      .forEach((n) => dispatch(markRead(n.id)))
     navigate(R.CHAT_PAGE)
   }
 
@@ -158,46 +168,52 @@ export default function Sidebar() {
         </Alert>
       )}
 
-      {/* Search */}
-      <div className="mx-3 mt-3 mb-4">
-        <div className="flex items-center gap-2 h-8 bg-base border border-[rgba(28,27,26,0.08)] rounded-lg px-2.5">
-          <Search size={14} className="text-ink-muted shrink-0" />
-          <input
-            type="text"
-            placeholder="Search channels..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="bg-transparent border-none text-[13px] text-ink outline-none w-full placeholder:text-ink-muted"
-          />
-        </div>
-      </div>
+      {canViewChannels && (
+        <>
+          {/* Search */}
+          <div className="mx-3 mt-3 mb-4">
+            <div className="flex items-center gap-2 h-8 bg-base border border-[rgba(28,27,26,0.08)] rounded-lg px-2.5">
+              <Search size={14} className="text-ink-muted shrink-0" />
+              <input
+                type="text"
+                placeholder="Search channels..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="bg-transparent border-none text-[13px] text-ink outline-none w-full placeholder:text-ink-muted"
+              />
+            </div>
+          </div>
 
-      {/* Scrollable nav area */}
-      <div className="flex-1 overflow-y-auto px-3">
-        {/* Channels */}
-        <SectionHeader label="Channels" onAdd={() => setCreateChannelOpen(true)} />
-        <ul className="list-none mb-4">
-          {loading && !chatrooms.length && (
-            <li className="px-2.5 py-2 text-[12px] text-ink-tertiary flex items-center gap-2">
-              <CircularProgress size={12} /> Loading…
-            </li>
-          )}
-          {!loading && filteredChannels.length === 0 && (
-            <li className="px-2.5 py-2 text-[12px] text-ink-tertiary">
-              {chatrooms.length === 0 ? 'No channels yet' : 'No matches'}
-            </li>
-          )}
-          {filteredChannels.map((ch) => (
-            <NavItem
-              key={ch.id}
-              icon={<Hash size={15} />}
-              label={ch.name}
-              active={ch.id === activeChatroomId && currentPath === R.CHAT_PAGE}
-              onClick={() => handleSelectChatroom(ch.id)}
-            />
-          ))}
-        </ul>
-      </div>
+          {/* Scrollable nav area */}
+          <div className="flex-1 overflow-y-auto px-3">
+            {/* Channels */}
+            <SectionHeader label="Channels" onAdd={() => setCreateChannelOpen(true)} />
+            <ul className="list-none mb-4">
+              {loading && !chatrooms.length && (
+                <li className="px-2.5 py-2 text-[12px] text-ink-tertiary flex items-center gap-2">
+                  <CircularProgress size={12} /> Loading…
+                </li>
+              )}
+              {!loading && filteredChannels.length === 0 && (
+                <li className="px-2.5 py-2 text-[12px] text-ink-tertiary">
+                  {chatrooms.length === 0 ? 'No channels yet' : 'No matches'}
+                </li>
+              )}
+              {filteredChannels.map((ch) => (
+                <NavItem
+                  key={ch.id}
+                  icon={<Hash size={15} />}
+                  label={ch.name}
+                  active={ch.id === activeChatroomId && currentPath === R.CHAT_PAGE}
+                  unread={unreadChannels.includes(ch.id)}
+                  onClick={() => handleSelectChatroom(ch.id)}
+                />
+              ))}
+            </ul>
+          </div>
+        </>
+      )}
+      {!canViewChannels && <div className="flex-1" />}
 
       {/* Quick nav - pinned to bottom */}
       <div className="px-3 py-2 border-t border-[rgba(28,27,26,0.06)]">
@@ -227,11 +243,14 @@ export default function Sidebar() {
             {userName || 'Signed in'}
           </span>
         </div>
-        <Tooltip title="Settings">
-          <IconButton size="small" onClick={() => navigate(R.SETTINGS)} sx={{ color: 'text.secondary' }}>
-            <Settings size={15} />
-          </IconButton>
-        </Tooltip>
+        <div className="flex items-center gap-0.5">
+          <NotificationsBell />
+          <Tooltip title="Settings">
+            <IconButton size="small" onClick={() => navigate(R.SETTINGS)} sx={{ color: 'text.secondary' }}>
+              <Settings size={15} />
+            </IconButton>
+          </Tooltip>
+        </div>
       </div>
 
       {/* Create Channel Dialog */}
@@ -309,7 +328,7 @@ function SectionHeader({ label, onAdd }) {
   )
 }
 
-function NavItem({ icon, label, active, onClick }) {
+function NavItem({ icon, label, active, unread, onClick }) {
   return (
     <li
       className={`flex items-center gap-2.5 h-8 px-2.5 rounded-lg cursor-pointer transition-colors mb-0.5 ${
@@ -318,7 +337,7 @@ function NavItem({ icon, label, active, onClick }) {
       onClick={onClick}
     >
       <span className="text-ink-tertiary w-4 text-center shrink-0">{icon}</span>
-      <span className="text-[13px] font-medium flex-1 truncate">{label}</span>
+      <span className={`text-[13px] flex-1 truncate ${unread ? 'font-bold text-ink' : 'font-medium'}`}>{label}</span>
     </li>
   )
 }

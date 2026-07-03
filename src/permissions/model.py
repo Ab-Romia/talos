@@ -4,7 +4,7 @@ from typing import Iterable, Self, Generator
 
 from pydantic import BaseModel
 from pydantic_core import core_schema
-from sqlalchemy import Enum, Table, Uuid, Column, ForeignKey, Boolean, orm
+from sqlalchemy import Enum, Table, Uuid, Column, ForeignKey, Boolean, orm, and_
 from sqlalchemy import UniqueConstraint, Sequence, update, event, select, CheckConstraint, func
 from sqlalchemy.dialects.postgresql import BIT, BitString, ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship, foreign
@@ -217,7 +217,7 @@ class RolePermission(Base):
     )
 
     permission = relationship("Permission", backref="role_associations")
-    role = relationship("Role", back_populates="permissions", overlaps="permissions,permission_overrides")
+    role = relationship("Role", overlaps="permissions,permission_overrides")
     channel = relationship("Channel")
 
 
@@ -258,7 +258,10 @@ class Role(Base):
     users = relationship("User", secondary=users_roles, back_populates="roles")
     permissions: Mapped[list[RolePermission]] = relationship(
         RolePermission,
-        back_populates="role",
+        primaryjoin=lambda: and_(
+            foreign(RolePermission.role_id) == Role.id,
+            RolePermission.channel_id.is_(None),
+        ),
         cascade="all, delete-orphan",
         overlaps="role,permission_overrides",
     )
