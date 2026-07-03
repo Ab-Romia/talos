@@ -180,3 +180,68 @@ def test_ask_uses_channel_ai_overrides(client, test_channel, auth_token, path, f
         client.patch(f"/api/workspaces/{test_channel.workspace_id}/ai/config",
                      json={"retrieval_top_k": None},
                      headers={"Authorization": f"Bearer {auth_token}"})
+
+
+def _seed_unindexed(channel_id, contents):
+    """Seed un-indexed USER messages (oldest -> newest) directly; returns ids."""
+    import time
+    from datetime import datetime, timedelta, timezone
+    import chat.model, workspace.model, filesystem.model, notifications.model  # noqa: F401
+    from database import SessionLocal
+    from chat.model import Message, MessageRole as MR
+    base = datetime.now(timezone.utc)
+    ids = []
+    with SessionLocal() as db:
+        for i, content in enumerate(contents):
+            m = Message(channel_id=channel_id, sender_id=None, role=MR.USER,
+                        content=content, sent_at=base + timedelta(seconds=i))
+            # sender_id NULL is fine for the tail loader; avoids user fixtures
+            db.add(m)
+            db.flush()  # the id default fires at flush, not at construction
+            ids.append(m.id)
+        db.commit()
+    return ids
+
+
+def _delete_messages(ids):
+    from database import SessionLocal
+    from chat.model import Message
+    with SessionLocal() as db:
+        for mid in ids:
+            row = db.get(Message, mid)
+            if row is not None:
+                db.delete(row)
+        db.commit()
+
+
+def test_tail_respects_char_budget(client, test_channel, auth_token, path, fake_chain, monkeypatch):
+    """A burst of huge un-indexed messages must NOT all be injected: the tail
+    keeps newest-first within chat_context_char_budget (never empty)."""
+    from config import global_rag_config
+    monkeypatch.setattr(global_rag_config, "chat_context_char_budget", 16000)
+    ids = _seed_unindexed(test_channel.id, ["A" * 10000, "B" * 10000, "C" * 10000])
+    try:
+        _ask(client, path, test_channel, auth_token, include_citations=False)
+        history = fake_chain.last.kwargs["chat_history"]
+        # Only the newest (C) fits: C=10k, +B would be 20k > 16k budget.
+        assert len(history) == 1
+        assert history[0].content == "C" * 10000
+        # exclusion set must match what was actually injected
+        assert fake_chain.last.kwargs["exclude_message_ids"] == {str(ids[2])}
+    finally:
+        _delete_messages(ids)
+
+
+def test_tail_never_empty_even_if_newest_exceeds_budget(client, test_channel, auth_token, path, fake_chain, monkeypatch):
+    """A single message larger than the whole budget is still injected whole —
+    the budget bounds accumulation, it never silently truncates content."""
+    from config import global_rag_config
+    monkeypatch.setattr(global_rag_config, "chat_context_char_budget", 16000)
+    ids = _seed_unindexed(test_channel.id, ["X" * 50000])
+    try:
+        _ask(client, path, test_channel, auth_token, include_citations=False)
+        history = fake_chain.last.kwargs["chat_history"]
+        assert len(history) == 1
+        assert history[0].content == "X" * 50000
+    finally:
+        _delete_messages(ids)

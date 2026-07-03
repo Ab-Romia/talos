@@ -58,15 +58,25 @@ class AskRequest(BaseModel):
     debug: bool = False  # log model + retrieved chunks + exact prompt for this call
 
 
-async def _load_unindexed_tail(channel_id: UUID, cap: int) -> tuple[list[BaseMessage], set[str]]:
-    """The channel's un-indexed tail (tier 1), chronological, capped.
+async def _load_unindexed_tail(
+    channel_id: UUID, cap: int, char_budget: int,
+) -> tuple[list[BaseMessage], set[str]]:
+    """The channel's un-indexed tail (tier 1), chronological, doubly bounded.
 
-    Returns the history (for the prompt's chat_history slot) and the set of its
-    message_ids. The ids let RAGChain drop these from tier-2 recall, so a message
-    briefly present in both tiers (its vector is in Milvus before its indexed_at
-    commit lands) is still counted exactly once. A full tail (len == cap) means
-    the indexer is lagging, so warn. SYSTEM rows (join/leave notices) are
-    skipped — they are not conversation.
+    Two independent bounds: `cap` limits the COUNT of messages (SQL LIMIT),
+    `char_budget` limits their total LENGTH — a burst of huge un-indexed
+    messages must not blow the model's context window. Selection is
+    newest-first (the most recent conversation is the most relevant tail),
+    and the newest message is ALWAYS kept whole: the budget stops
+    accumulation, it never truncates content.
+
+    Returns the history (for the prompt's chat_history slot) and the set of
+    its message_ids. The ids let RAGChain drop these from tier-2 recall, so a
+    message briefly present in both tiers (its vector is in Milvus before its
+    indexed_at commit lands) is still counted exactly once — the set contains
+    ONLY the injected messages, so budget-dropped ones stay recallable.
+    A full tail (len == cap) means the indexer is lagging, so warn.
+    SYSTEM rows (join/leave notices) are skipped — they are not conversation.
     """
     if cap <= 0:
         return [], set()
@@ -82,13 +92,28 @@ async def _load_unindexed_tail(channel_id: UUID, cap: int) -> tuple[list[BaseMes
     if len(rows) >= cap:
         logger.warning("un-indexed chat tail hit cap; indexer may be lagging",
                        channel_id=str(channel_id), cap=cap)
+
+    included: list[Message] = []  # newest -> oldest
+    total_chars = 0
+    for m in rows:  # rows are newest-first
+        text_len = len(message_text(m))
+        if included and total_chars + text_len > char_budget:
+            logger.warning(
+                "un-indexed tail truncated by char budget",
+                channel_id=str(channel_id), kept=len(included),
+                dropped=len(rows) - len(included), budget=char_budget,
+            )
+            break
+        included.append(m)
+        total_chars += text_len
+
     history: list[BaseMessage] = []
-    for m in reversed(rows):  # oldest -> newest
+    for m in reversed(included):  # oldest -> newest
         history.append(
             AIMessage(content=message_text(m)) if m.role == MessageRole.ASSISTANT
             else HumanMessage(content=message_text(m))
         )
-    tail_ids = {str(m.id) for m in rows}
+    tail_ids = {str(m.id) for m in included}
     return history, tail_ids
 
 
@@ -158,7 +183,11 @@ async def ask_question(channel_id: UUID, body: AskRequest, session: SessionDep):
 
     request_id = str(uuid.uuid7())
 
-    history, tail_ids = await _load_unindexed_tail(channel_id, global_rag_config.chat_context_cap)
+    history, tail_ids = await _load_unindexed_tail(
+        channel_id,
+        global_rag_config.chat_context_cap,
+        global_rag_config.chat_context_char_budget,
+    )
     asked_at = datetime.now(timezone.utc)
     user_id = cast(UUID, session.sub)
 

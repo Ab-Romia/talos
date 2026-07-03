@@ -77,6 +77,10 @@ class RagConfig(BaseSettings):
     chat_index_max_batches: int = 10
     chat_recall_k: int = 3
     chat_context_cap: int = 50
+    # Char budget for that tail (≈ tokens×4, tokenizer-free). The message cap
+    # bounds COUNT; this bounds LENGTH, so 50 pasted walls of text can't blow
+    # the model's context window. The newest message is always kept whole.
+    chat_context_char_budget: int = 16000
     # Conversation segmentation for chat-memory indexing: a segment closes on
     # an inactivity gap or a size cap; segments (not single messages) are the
     # embedded retrieval unit.
