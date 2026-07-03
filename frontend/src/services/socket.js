@@ -81,3 +81,16 @@ export function onNotification(handler) {
     }
   }
 }
+
+export function onAiTyping(handler) {
+  const s = getSocket()
+  if (!s) return () => {}
+  s.on('ai_typing', handler)
+  return () => {
+    try {
+      s.off('ai_typing', handler)
+    } catch {
+      /* socket gone */
+    }
+  }
+}

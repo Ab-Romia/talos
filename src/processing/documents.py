@@ -1,9 +1,9 @@
 """Document processing pipeline: extract text, chunk, and prepare for RAG ingestion."""
 
+import asyncio
 import os
 import tempfile
 
-from fsspec.asyn import AsyncFileSystem
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sqlalchemy.orm import Session
@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 
 
 # TODO: update storage interface
-async def process_document(file_record: File, db: Session, storage: AsyncFileSystem):
+async def process_document(file_record: File, db: Session, storage):
     """Download the file from MinIO, extract text, chunk, and ingest into Milvus."""
     ext = os.path.splitext(file_record.filename)[1].lower()
 
@@ -24,8 +24,10 @@ async def process_document(file_record: File, db: Session, storage: AsyncFileSys
         tmp_path = tmp.name
 
     try:
-        # Download from MinIO
-        await storage.download_file_to_path(file_record.id.hex, tmp_path)
+        key = file_record.uri.removeprefix("minio://")
+        data = await asyncio.to_thread(storage.cat_file, key)
+        with open(tmp_path, "wb") as f:
+            f.write(data)
         logger.info("Downloaded file for processing", file_id=str(file_record.id), path=tmp_path)
 
         # Extract text elements

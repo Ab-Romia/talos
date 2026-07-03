@@ -52,10 +52,13 @@ def get_query_rewriter():
 def get_hyde_embeddings():
     base_embeddings = get_embeddings()
     hyde_llm = ChatOpenAI(
-        model="gpt-3.5-turbo",
+        model=global_rag_config.openai_model,
         temperature=0.0,
         max_completion_tokens=150,
         api_key=global_rag_config.openai_api_key,
+        base_url=global_rag_config.openai_base_url,
+        timeout=60,
+        max_retries=0,
     )
     return HypotheticalDocumentEmbedder.from_llm(
         llm=hyde_llm, base_embeddings=base_embeddings, prompt_key="web_search"

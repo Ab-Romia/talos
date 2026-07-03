@@ -9,9 +9,4 @@
     <orderEntry type="jdk" jdkName="uv (graduation-project)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
-  <component name="PyDocumentationSettings">
-    <option name="format" value="GOOGLE" />
-    <option name="myDocStringFormat" value="Google" />
-    <option name="analyzeDoctest" value="false" />
-  </component>
 </module>

@@ -7,6 +7,11 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      MILVUS_HOST: milvus-standalone
+      HF_HOME: /models/hf
+    volumes:
+      - hf_cache:/models
     ports:
       - "8000:8000"
     depends_on:
@@ -32,7 +37,10 @@ services:
       MINIO__INTERNAL_ENDPOINT: minio:9000
       MINIO__EXTERNAL_ENDPOINT: ${MINIO_EXTERNAL_ENDPOINT:-localhost:9000}
       REDIS__URL: redis://redis:6379
-    command: [ "taskiq", "worker", "broker:broker", "notifications.tasks", "--app-dir=src" ]
+      HF_HOME: /models/hf
+    volumes:
+      - hf_cache:/models
+    command: [ "taskiq", "worker", "broker:broker", "notifications.tasks", "processing.tasks", "--app-dir=src" ]
     depends_on:
       postgres:
         condition: service_healthy
@@ -174,6 +182,7 @@ volumes:
   etcd_data:
   minio_data:
   redis_data:
+  hf_cache:
 
 networks:
   default:

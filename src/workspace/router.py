@@ -6,6 +6,9 @@ from permissions.router import (
     workspace as workspace_permission_router,
     channel as channel_permission_router)
 from workspace import require_perms
+from workspace.settings import workspace_settings, channel_settings
+from workspace.channels import channels as channels_router
+from workspace.channel_members import channel_members
 
 workspace = APIRouter(
     prefix="/workspaces/{workspace_id}",
@@ -18,6 +21,10 @@ channel = APIRouter(
 
 workspace.include_router(workspace_permission_router)
 workspace.include_router(workspace_files_router)
+workspace.include_router(workspace_settings)
+workspace.include_router(channels_router)
 channel.include_router(channel_permission_router)
 channel.include_router(channel_chat_router)
 channel.include_router(channel_files_router)
+channel.include_router(channel_settings)
+channel.include_router(channel_members)

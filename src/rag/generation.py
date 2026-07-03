@@ -22,6 +22,9 @@ def get_llm(provider: str = "openai", streaming: bool | None = None):
             temperature=global_rag_config.llm_temperature,
             streaming=streaming,
             api_key=global_rag_config.openai_api_key,
+            base_url=global_rag_config.openai_base_url,
+            timeout=60,
+            max_retries=0,
         )
     else:
         raise ValueError(f"Unknown LLM provider: {provider}")

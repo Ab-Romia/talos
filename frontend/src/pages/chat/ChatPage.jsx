@@ -12,15 +12,16 @@ import ListItem from '@mui/material/ListItem'
 import ListItemAvatar from '@mui/material/ListItemAvatar'
 import ListItemText from '@mui/material/ListItemText'
 import {
-  Search, Users, Bold, Code, ArrowUp, X,
+  Search, Users, Bold, Code, ArrowUp, X, Sparkles,
 } from 'lucide-react'
 
 import { useSelector, useDispatch as useReduxDispatch } from 'react-redux'
 import { markChannelUnread } from '../../store/workspaceSlice'
 import { usePermissions } from '../../contexts/PermissionsContext'
 import { chatService } from '../../services/chat'
-import { onChatMessage, getSocket } from '../../services/socket'
+import { onChatMessage, onAiTyping, getSocket } from '../../services/socket'
 import { ChatMessageContent } from '../../components/chat/ChatMessageContent'
+import { AiTypingIndicator } from '../../components/chat/AiTypingIndicator'
 import { ChatComposerField } from '../../components/chat/ChatComposerField'
 
 function fmtTime(iso) {
@@ -63,6 +64,7 @@ export default function ChatPage() {
   const [membersLoading, setMembersLoading] = useState(false)
   const [sending, setSending] = useState(false)
   const [chatroomName, setChatroomName] = useState('')
+  const [aiThinking, setAiThinking] = useState(false)
 
   const user = useSelector((state) => state.auth.user)
   const {
@@ -85,6 +87,9 @@ export default function ChatPage() {
   const textareaRef = useRef(null)
   const nextIdRef = useRef(1)
   const membersMapRef = useRef(new Map())
+  const aiThinkingTimer = useRef(null)
+  const firstSearchHitRef = useRef(null)
+  const lastScrolledFirstMatchId = useRef(null)
 
   const membersMap = useMemo(() => {
     const map = new Map()
@@ -103,16 +108,23 @@ export default function ChatPage() {
 
   // MessageSchema dict -> UI message.
   const toUiMessage = useCallback(
-    (m) => ({
-      id: nextIdRef.current++,
-      serverId: m.id,
-      senderId: m.sender_id,
-      role: m.role,
-      mine: m.sender_id === user?.id,
-      time: fmtTime(m.sent_at),
-      body: m.content,
-    }),
-    [user],
+    (m) => {
+      const isAI = m.role === 'assistant'
+      const name = isAI ? 'Talos AI' : displayName(m.sender_id)
+      return {
+        id: nextIdRef.current++,
+        serverId: m.id,
+        senderId: m.sender_id,
+        role: m.role,
+        isAI,
+        mine: m.sender_id === user?.id,
+        name,
+        initials: initialsOf(name),
+        time: fmtTime(m.sent_at),
+        body: m.content,
+      }
+    },
+    [displayName, user],
   )
 
   const searchResults = useMemo(() => {
@@ -195,6 +207,10 @@ export default function ChatPage() {
 
       if (m.channel_id !== chatroomId) return
 
+      // The assistant's reply has landed — retire any "thinking" indicator
+      // even if the stop signal was dropped.
+      if (m.role === 'assistant') setAiThinking(false)
+
       setMessages((prev) => {
         if (prev.some((x) => x.serverId === m.id)) return prev
         if (m.sender_id === user?.id) {
@@ -213,11 +229,45 @@ export default function ChatPage() {
     return () => off()
   }, [chatroomId, user, toUiMessage])
 
+  // Realtime: show a live "Talos is thinking…" indicator between the trigger
+  // message and the assistant's reply. Ephemeral — reset on channel switch and
+  // guarded by a safety timeout so a dropped stop signal can't pin it forever.
+  useEffect(() => {
+    setAiThinking(false)
+    if (aiThinkingTimer.current) {
+      clearTimeout(aiThinkingTimer.current)
+      aiThinkingTimer.current = null
+    }
+    if (!chatroomId) return
+    getSocket()
+    const off = onAiTyping((payload) => {
+      if (!payload || payload.channel_id !== chatroomId) return
+      if (payload.status === 'start') {
+        setAiThinking(true)
+        if (aiThinkingTimer.current) clearTimeout(aiThinkingTimer.current)
+        aiThinkingTimer.current = setTimeout(() => setAiThinking(false), 90000)
+      } else {
+        setAiThinking(false)
+        if (aiThinkingTimer.current) {
+          clearTimeout(aiThinkingTimer.current)
+          aiThinkingTimer.current = null
+        }
+      }
+    })
+    return () => {
+      off()
+      if (aiThinkingTimer.current) {
+        clearTimeout(aiThinkingTimer.current)
+        aiThinkingTimer.current = null
+      }
+    }
+  }, [chatroomId])
+
   useEffect(() => {
     if (threadRef.current) {
       threadRef.current.scrollTop = threadRef.current.scrollHeight
     }
-  }, [messages])
+  }, [messages, aiThinking])
 
   const showSnackbar = useCallback((message) => {
     setSnackbar({ open: true, message })
@@ -227,8 +277,8 @@ export default function ChatPage() {
     setSnackbar((prev) => ({ ...prev, open: false }))
   }, [])
 
-  const handleSend = useCallback(async () => {
-    const text = input.trim()
+  const sendText = useCallback(async (rawText) => {
+    const text = (rawText ?? '').trim()
     if (!text || sending || !chatroomId) return
 
     const localKey = nextIdRef.current++
@@ -264,7 +314,15 @@ export default function ChatPage() {
     } finally {
       setSending(false)
     }
-  }, [input, sending, chatroomId, user, showSnackbar])
+  }, [sending, chatroomId, user, showSnackbar])
+
+  const handleSend = useCallback(() => sendText(input), [sendText, input])
+
+  const handleAskAI = useCallback(() => {
+    const t = input.trim()
+    if (!t) return
+    sendText(t.toLowerCase().startsWith('@talos') ? t : `@talos ${t}`)
+  }, [sendText, input])
 
   const handleKeyDown = useCallback(
     (e) => {
@@ -534,14 +592,14 @@ export default function ChatPage() {
                     sx={{
                       width: 34,
                       height: 34,
-                      bgcolor: msg.mine ? 'primary.light' : '#EEEDEA',
-                      color: msg.mine ? 'primary.main' : 'text.secondary',
+                      bgcolor: msg.isAI ? 'rgba(196,145,58,0.15)' : msg.mine ? 'primary.light' : '#EEEDEA',
+                      color: msg.isAI ? '#C4913A' : msg.mine ? 'primary.main' : 'text.secondary',
                       fontSize: 13,
                       fontWeight: 600,
                       flexShrink: 0,
                     }}
                   >
-                    {initialsOf(displayName(msg.senderId))}
+                    {msg.isAI ? <Sparkles size={16} /> : msg.initials}
                   </Avatar>
                 </div>
                 <div className="flex-1 min-w-0">
@@ -554,6 +612,8 @@ export default function ChatPage() {
               </div>
             )
           })}
+
+          {aiThinking && !searchOpen && <AiTypingIndicator />}
         </div>
       </div>
 
@@ -575,6 +635,15 @@ export default function ChatPage() {
                       <Icon size={15} />
                     </IconButton>
                   ))}
+                  <div className="flex-1" />
+                  <button
+                    onClick={handleAskAI}
+                    disabled={!input.trim() || !chatroomId || sending}
+                    className="flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-[12px] font-medium text-amber hover:bg-amber-subtle transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="Ask the AI in this channel (everyone can see the reply)"
+                  >
+                    <Sparkles size={13} /> Ask AI
+                  </button>
                 </div>
                 <ChatComposerField
                   inputRef={textareaRef}
