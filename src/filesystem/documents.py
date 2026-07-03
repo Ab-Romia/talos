@@ -71,6 +71,9 @@ async def upload_document(workspace_id: uuid.UUID, file: UploadFile, user: UserD
     db.commit()
     db.refresh(db_file)
 
+    from processing.tasks import process_file
+    await process_file.kiq(db_file.id)
+
     return FileMetadata.model_validate(db_file)
 
 

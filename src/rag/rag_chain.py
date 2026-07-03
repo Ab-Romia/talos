@@ -92,8 +92,18 @@ class RAGChain:
         self.last_query_info["rewritten_query"] = rewritten.strip()
 
         docs = self.retriever.invoke(rewritten)
+        if self.workspace_id:
+            docs = self._prioritize_documents(docs)
         self.retrieved_docs = docs
         return docs
+
+    @staticmethod
+    def _prioritize_documents(docs, max_messages: int = 4):
+        doc_chunks = [d for d in docs if d.metadata.get("file_id")]
+        if not doc_chunks:
+            return docs
+        msg_chunks = [d for d in docs if not d.metadata.get("file_id")]
+        return doc_chunks + msg_chunks[:max_messages]
 
     # TODO: use prompt template
     @staticmethod

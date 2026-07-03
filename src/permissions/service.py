@@ -42,7 +42,7 @@ def user_perms(
         .select_from(Role)
         .join(Channel, Channel.id == channel_id, isouter=True)
         .join(Override, (Override.role_id == Role.id) & (Override.channel_id == channel_id), isouter=True)
-        .where(Role.users.any(id=user_id) | (Role.id == Role.workspace_id))  # Include workspace base permissions
+        .where(Role.users.any(id=user_id))
         .where(Role.workspace_id == func.coalesce(workspace_id, Channel.workspace_id))
         .group_by()
     )
