@@ -1,5 +1,8 @@
 # 07 — Integration Map
 
+Concepts are explained once in `00-foundations.md`; this chapter points back with
+`(→ 00 §n)` only where a concept term actually shows up in a seam.
+
 Everything RAG code touches outside `src/rag/` and `src/processing/`, and everything
 that touches back. This is the seam inventory: what we import from teammates, what we
 mount into their routers, what tables/events/permission strings are shared, and the
@@ -109,8 +112,8 @@ await sio.emit("ai_message", {
     "question": question,
     "content": answer,
     "role": "assistant",
-    "request_id": request_id,
-}, room=f"channel:{channel_id}")   # rag/router.py:128-140
+    "request_id": request_id,          # uuid7, minted per /ask — the correlation key (→ 00 §13)
+}, room=f"channel:{channel_id}")   # Socket.IO room convention, → 00 §13
 ```
 This is deliberately **not** the chat module's `message` event/`MessageSchema` — see
 `router.py:124-125`'s comment: `MessageSchema.sender_id` is non-optional but assistant
@@ -141,7 +144,9 @@ unique constraint can't guard the default row (Postgres treats NULLs as distinct
 
 **Milvus `talos_documents` — shared collection, source-field discipline, and the
 concrete leak risk.** Both file chunks and chat-memory segments live in the same
-collection (`WORKSPACE_COLLECTION`, `vector_store.py:69`). The only thing partitioning
+collection (`WORKSPACE_COLLECTION`, `vector_store.py:69`) — the dynamic-schema,
+metadata-filtered design from 00 §3, and the convention-not-schema source discipline it
+depends on (→ 00 §3). The only thing partitioning
 them is every caller's own `source == "file"` / `source == "chat"` expr conjunct (see
 file 06's Milvus section). **Confirmed cross-branch leak risk, not yet landed on this
 tree:** `docs/audits/2026-07-02-deep-audit-findings.md`: "`origin/search`:

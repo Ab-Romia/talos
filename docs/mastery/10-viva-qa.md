@@ -5,12 +5,17 @@ answers. Each answer is quotable in a defense and traceable to code. Organized b
 theme: architecture, correctness, security/tenancy, evaluation, operations, and
 tradeoffs/YAGNI.
 
+Where an answer leans on a concept (embeddings, chunking, reranking, decay math,
+and so on), a pointer like `(→ 00 §n)` sends you to `00-foundations.md` to rehearse
+the idea underneath before you're asked to explain it cold.
+
 ---
 
 ## Architecture
 
 **Q1. Why one Milvus collection for both files and chat, instead of two?**
-One collection (`talos_documents`) with a `source` field (`"file"` / `"chat"`)
+One collection (`talos_documents`, our vector database → 00 §3) with a `source`
+field (`"file"` / `"chat"`)
 keeps a single connection, schema, and index to operate, and lets one query filter
 to either stream. Retrieval always conjoins `source == "file"` or `source ==
 "chat"` into the tenancy expr (`rag_chain.py:103,114`), so the streams never bleed.
@@ -19,7 +24,9 @@ filter doesn't already give.
 
 **Q2. Why embed conversation as segments, not individual messages?**
 A lone message like "yes, let's do that" embeds meaninglessly — per-message vectors
-fragment a conversation below the level similarity search can work on. The indexer
+fragment a conversation below the level similarity search can work on (embeddings
+encode meaning as geometry; too little text gives a mushy, unfindable vector,
+→ 00 §2/§4). The indexer
 groups settled messages into topic-coherent segments closed by an inactivity gap
 or size cap (`build_chat_segments`, `chat_indexing.py:43-67`). SeCom (ICLR 2025)
 showed segment-level retrieval beats turn- and session-level under the same
@@ -55,7 +62,7 @@ channel row, cleans each against the whitelist, and layers them via
 circular?**
 It's the opposite of circular: eval calls the *same* `build_rag_pipeline` and
 `RAG_PROMPT`, with the only substitution being `InMemoryVectorStore` for Milvus
-(same cosine geometry). That's what makes "what we evaluate is what we ship"
+(same cosine geometry, → 00 §2). That's what makes "eval == ship" (→ 00 §12)
 literally true — a retrieval change that doesn't move eval isn't measured, and the
 guard `tests/rag/test_eval_uses_production_path.py` machine-checks the shared path.
 
@@ -86,7 +93,9 @@ JSONB) is a **one-file review**, not a scattered break across every read site
 `process_document` calls `delete_file_chunks(file_id, workspace_id)` immediately
 before re-ingesting (`documents.py:148-152`), so re-running deletes the prior
 chunks first — Milvus has no unique constraint on `(file_id, chunk_index)`, so
-without the purge a retry would duplicate vectors.
+without the purge a retry would duplicate vectors. This is the general
+at-least-once/idempotent-retry discipline the whole task-queue layer needs
+(→ 00 §13).
 
 **Q11. How is the chat indexer idempotent on a crashed tick?**
 Order is **purge → ingest → stamp → commit** (`chat_indexing.py:157-169`). A crash
@@ -94,7 +103,8 @@ before the stamp leaves rows un-`indexed_at`; the next tick re-selects the *same
 deterministic oldest batch (`ORDER BY sent_at ASC LIMIT`) and the pre-ingest purge
 (`delete_chat_segments_for_messages`, matching any of the batch's `message_ids`)
 removes partial segments before re-inserting. Segments are batch-local, so no
-segment ever spans two batches.
+segment ever spans two batches. Same idea as Q10: the queue redelivers at least
+once, so the handler purges-then-inserts to stay idempotent (→ 00 §13).
 
 **Q12. Walk me through the advisory-lock design and the bug it avoids.**
 `index_pending_messages` takes pg session-advisory lock `0x7A105C47` on a
@@ -103,7 +113,9 @@ The bug it avoids: session locks bind to the *connection*, and the ORM session
 commits mid-run — a commit can return its pooled connection to the pool, so
 unlocking via the ORM session could hit a different connection, silently no-op, and
 leak the lock forever. The dedicated connection is also crash-safe: pg releases the
-lock when the connection drops.
+lock when the connection drops — necessary because the queue underneath is
+at-least-once, so "a second run might start" is a real case, not a hypothetical
+(→ 00 §13).
 
 **Q13. Two worker processes, cron overlap, Redis redelivery — how do you prevent
 double indexing?**
@@ -111,7 +123,8 @@ All three concurrency vectors funnel through the same advisory lock: a second
 concurrent run calls `pg_try_advisory_lock`, gets `false`, logs "lock held
 elsewhere," and returns 0 (`chat_indexing.py:143-145`). taskiq's scheduler overlap
 guard only covers the enqueue coroutine, and RedisStreamBroker redelivers after a
-10-min idle timeout — the lock is the actual guarantee, not the scheduler.
+10-min idle timeout (Redis Streams give at-least-once delivery, → 00 §13) — the
+lock is the actual guarantee, not the scheduler.
 
 **Q14. How does the AI-config PATCH handle two concurrent first-writes?**
 Check-then-insert races the unique constraint. `_apply_patch` catches
@@ -211,30 +224,32 @@ kept git-ignored (`REPORT.md`).
 It guarantees the eval's retrieval and generation are the production functions —
 `build_rag_pipeline`, `RAG_PROMPT`, a `RagConfig` derived from
 `global_rag_config` — so the headline number reflects the deployed default. It
-stops at two honest gaps (manual §9): hybrid/BM25 is measured in eval but is a
-dead no-op in prod (no corpus passed), and chat memory has **no** quantitative eval
-coverage yet.
+stops at two honest gaps (manual §9): hybrid/BM25 (→ 00 §7) is measured in eval
+but is a dead no-op in prod (no corpus passed), and chat memory has **no**
+quantitative eval coverage yet.
 
 **Q28. Tell me the v6/v7 lineage and how it led to today's defaults.**
 v6 was the de-leaked benchmark run (canonical, PDF-backed); v7 was a targeted local
 eval showcasing rerank/HyDE/rewrite but bypassing the production pipeline (raw
 sentence-transformers, pool=50, clean corpora). The 2026-07-02 audit showed v7
-didn't cover the live regime, so a real-substrate ablation was built
-(`evaluation/live_pdf_eval/`) — 83 judged questions over the actual guide PDF — and
-*that* set today's defaults: `chunking_strategy="by_title"`, `retrieval_top_k=10`,
-`rerank_fetch_k=50` (REPORT.md, config comments `config.py:28-62`).
+didn't cover the live regime, so a real-substrate ablation (one variable changed
+per arm, → 00 §12) was built (`evaluation/live_pdf_eval/`) — 83 judged questions
+over the actual guide PDF — and *that* set today's defaults:
+`chunking_strategy="by_title"` (§4), `retrieval_top_k=10`, `rerank_fetch_k=50`
+(reranking, → 00 §6) (REPORT.md, config comments `config.py:28-62`).
 
 **Q29. What was the single biggest quality win and how big was it?**
-Chunk hygiene. The live corpus was 1,778 element-level fragments (median 67 chars)
-because the legacy `RecursiveCharacterTextSplitter` splits but never merges
-(audit F1). Switching to `by_title` (merged section-sized chunks, ~440 chars,
-0.000 boilerplate) gave **+18.6 points** judged correctness alone (REPORT.md, arm
-A1); bge-small added +1.2 more (A2, the winner at 0.855 vs 0.657 baseline).
+Chunk hygiene (→ 00 §4). The live corpus was 1,778 element-level fragments (median
+67 chars) because the legacy `RecursiveCharacterTextSplitter` splits but never
+merges (audit F1). Switching to `by_title` (merged section-sized chunks, ~440
+chars, 0.000 boilerplate) gave **+18.6 points** judged correctness (→ 00 §12)
+alone (REPORT.md, arm A1); bge-small (→ 00 §5) added +1.2 more (A2, the winner at
+0.855 vs 0.657 baseline).
 
 **Q30. Why keep reranking and query-rewrite on if hygiene did most of the work?**
-Because the judged arms say so, not intuition. A2 (rerank on) beat A4 (rerank off)
-end-to-end 0.855 vs 0.837 — the phase-1 page-recall edge for dense-only did *not*
-survive judged evaluation. Rewrite was marginal here (+0.006 on standalone
+Because the judged arms say so, not intuition. A2 (rerank on, → 00 §6) beat A4
+(rerank off) end-to-end 0.855 vs 0.837 — the phase-1 page-recall edge for
+dense-only did *not* survive judged evaluation (a proxy-metric trap, → 00 §12). Rewrite was marginal here (+0.006 on standalone
 questions) but is retained for the conversational `/ask` path, where v7 showed its
 real value (+0.41 recall@5 on follow-ups) (REPORT.md "Winners").
 
@@ -260,7 +275,8 @@ is.
 Run exactly **one** scheduler instance (taskiq requirement — two schedulers double
 every tick); index lag is *masked*, not fatal (un-indexed messages ride verbatim
 in tier 1 — doubly bounded: at most `chat_context_cap` messages AND
-`chat_context_char_budget` characters, newest first, so even an insane backlog of
+`chat_context_char_budget` characters (a char budget works because tokens track
+character count closely, → 00 §1), newest first, so even an insane backlog of
 huge messages cannot blow the prompt); and the advisory lock guards concurrency
 across the two default worker processes. Retries are `retry_on_error=True, max_retries=3` immediate attempts,
 with the next cron tick as the durable fallback (`chat_tasks.py:21`, manual §8).
@@ -295,15 +311,17 @@ dimension error — what happened and what's the fix?**
 `_assert_collection_dim` (`vector_store.py:119-137`) probed the configured
 embedder, found its dim ≠ the live collection's, and failed fast — doing its job of
 catching a lost `EMBEDDING_PROVIDER` env before it silently returns garbage
-neighbors. Fix: either restore the matching env, or re-ingest the collection
-(`scripts/reingest_workspace_files.py` + `UPDATE messages SET indexed_at = NULL`).
+neighbors (dimension is a contract, → 00 §2). Fix: either restore the matching
+env, or re-ingest the collection (`scripts/reingest_workspace_files.py` +
+`UPDATE messages SET indexed_at = NULL`).
 
 **Q38. How does a re-ingest actually run given the file claim-gate?**
 `process_file` claims a file by flipping UPLOADED/FAILED → UPLOADED and no-ops any
 other status (including INDEXED). `reingest_workspace_files.py` flips each target
 file's status back to UPLOADED (committed) right before calling `process_file`, so
 re-ingestion actually runs; `process_document`'s own per-file purge keeps it
-idempotent even if run twice (`reingest_workspace_files.py:13-26`).
+idempotent even if run twice — the same at-least-once discipline as any queued
+task (`reingest_workspace_files.py:13-26`, → 00 §13).
 
 ---
 
@@ -327,3 +345,63 @@ Also deliberately skipped from the research: reply-graph/thread-aware selection
 knowledge-graph memory (Zep/Graphiti — real but disproportionate infra, uneven
 gains). The consistent YAGNI test: does the added complexity buy a *measured* win
 this system's scale and tenancy model actually need? If not, it waits.
+
+---
+
+## Concept warm-ups (from 00-foundations)
+
+Five examiner-style questions on the ideas underneath the code, not the code
+itself. If any answer feels shaky, reread the cited section before the defense —
+these are the ones an examiner reaches for when they want to know you understand
+*why*, not just *what*.
+
+**W1. Why retrieval-augmented generation instead of fine-tuning the model or just
+using a bigger one (→ 00 §1)?**
+An LLM only knows its frozen training data plus whatever is in the prompt right
+now — it has never seen your workspace's PDFs — and when the prompt lacks the
+answer it hallucinates fluently rather than admitting it doesn't know. Fine-tuning
+or a bigger model doesn't fix either problem: the model still isn't reading your
+current documents. RAG fixes both by controlling *what's in the prompt* — retrieve
+the relevant passages, paste them in, then instruct the model to answer from that
+context.
+
+**W2. What's the difference between a bi-encoder and a cross-encoder, and why do
+we fetch 50 candidates but only keep 10 (→ 00 §6)?**
+A bi-encoder embeds the query and each passage *independently*, so passages can be
+pre-embedded and search is fast — but the model never sees query and passage
+together, so it misses fine-grained interactions. A cross-encoder reads the pair
+together and scores it far more accurately, but it's too slow to run over a whole
+corpus. Fetching 50 with the cheap bi-encoder and rescoring down to 10 with the
+cross-encoder gets both: speed at scale, accuracy at the end — and it only works
+if the true answer is actually inside that pool of 50 (the burial problem).
+
+**W3. Why bge over MiniLM, and why does the query instruction exist (→ 00
+§2/§5)?**
+MiniLM is trained for general sentence similarity ("do these two sentences say the
+same thing"); bge is trained specifically for retrieval ("would this passage
+*answer* this question") — a different, asymmetric relation. Because bge is
+asymmetric, the query side needs an instruction prefix ("Represent this sentence
+for searching relevant passages: ") to land in the same space as the passages it's
+supposed to match. Forget the prefix and nothing errors — retrieval quality just
+silently degrades, which is exactly the kind of bug that's invisible until you eval.
+
+**W4. Chunking (`by_title`) beat the embedder swap 18.6 points to 1.2 in the
+ablation. What's the general lesson (→ 00 §4/§5/§12)?**
+Garbage chunks poison every downstream stage — a better embedder just encodes the
+same noisy fragments more precisely, it can't manufacture answer material that
+isn't there. `by_title` fixed *what the vectors represent* (section-sized,
+single-topic chunks instead of 67-char fragments); the embedder swap only
+improved *how* those representations were computed. Fix the representation before
+upgrading the computation — the ablation's one-variable-at-a-time design is what
+let us attribute the two effects separately instead of crediting a bundle.
+
+**W5. Page-recall went up while answers got worse — why did that proxy metric
+mislead, and why didn't judged correctness (→ 00 §12)?**
+Page-recall only asks "did any retrieved chunk come from a gold page" — fragment
+chunking produces many tiny chunks per page, so it's easy to hit the page by
+accident even while returning boilerplate or noise as the actual chunk content.
+Judged correctness is end-to-end: a strong LLM judge scores the *answer* against
+gold material, so it catches failures anywhere in the funnel, including "the right
+page was touched but no usable material reached the prompt." The lesson: optimize
+the metric that matches the real goal, and treat any proxy metric's disagreement
+with the end-to-end metric as a warning, not a tiebreaker.

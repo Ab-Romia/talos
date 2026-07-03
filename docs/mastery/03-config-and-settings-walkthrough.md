@@ -17,6 +17,11 @@ Layer 1 is `RagConfig` (`config/config.py`). Layers 2 and 3 live in the
 into a *real* `RagConfig` copy, which every downstream `config=` seam already
 honours. The HTTP surface for editing layers 2 and 3 is `settings_router.py`.
 
+The underlying RAG/ML concepts each knob controls are explained once, in depth,
+in `00-foundations.md`; this chapter only walks the code. Wherever a field's
+meaning presumes a concept, you'll see a pointer like `(→ 00 §n)` — follow it
+if the field name alone doesn't tell you what it's for.
+
 Read the files in this order:
 
 1. `config/prompts.py` — the two prompt templates (leaf).
@@ -46,7 +51,9 @@ Rewritten Query:
 **Its job:** feed the query rewriter (`get_query_rewriter` = this prompt piped
 into the LLM). It asks the model to expand the raw question with keywords while
 preserving intent, producing a string that retrieves better than the bare
-question. It runs only when `config.use_query_rewrite` is on.
+question — the query-rewrite trick that closes the gap between vague user
+phrasing and the corpus's declarative prose (→ 00 §8). It runs only when
+`config.use_query_rewrite` is on.
 
 ### `RAG_PROMPT` — lines 19–33
 A `ChatPromptTemplate` with three parts, each doing a distinct job:
@@ -110,36 +117,62 @@ default; pydantic-settings overrides any of them from the environment.
 - `openai_api_key: SecretStr | None` — wrapped in `SecretStr` so it never prints
   in logs or `repr`.
 - `openai_model` = `"gpt-4o-mini"` — the generation (and, today, rewrite/HyDE) model.
-- `embedding_model` = `"text-embedding-3-small"`, `embedding_provider` = `"openai"`.
+- `embedding_model` = `"text-embedding-3-small"`, `embedding_provider` = `"openai"` —
+  which vendor/model turns text into vectors. Both are load-bearing together:
+  embeddings from different models aren't interchangeable, so changing either
+  means the whole corpus must be re-embedded/re-ingested, not just reconfigured
+  (→ 00 §2, §5 for the MiniLM→bge story and why bge won).
 
 **Milvus (lines 24–26)**
 - `milvus_host`, `milvus_port` (19530), `milvus_collection_name`
   (`"talos_documents"`). The last is the single collection both files and chat
-  memory share (see `WORKSPACE_COLLECTION`).
+  memory share (see `WORKSPACE_COLLECTION`) — the vector database that answers
+  "nearest rows to this vector" (kNN/dense retrieval) and filters by metadata
+  like `workspace_id`/`source` (→ 00 §3).
 
 **Retrieval tuning (lines 28–53)** — these carry eval provenance in their comments:
 - `retrieval_top_k` = 10 (line 31). Comment: 10 beat 5 by +0.03–0.05 page-recall
-  in the live-PDF ablation.
+  in the live-PDF ablation. This is the *narrow* final count the model actually
+  sees.
 - `rerank_fetch_k` = 50 (line 39). The wide candidate pool the dense stage fetches
   *before* the cross-encoder narrows to `retrieval_top_k`. Comment: widening here
   is what lets reranking improve recall rather than merely reorder; ignored when
-  `use_reranking` is False. Eval picked 50 over 20.
+  `use_reranking` is False. Eval picked 50 over 20. The two fields are a coupled
+  pair — fetch wide with the cheap bi-encoder, then rescore narrow with the
+  cross-encoder — because the right passage is often "buried" outside a narrow
+  fetch and a reranker can only promote what's in its pool (→ 00 §6).
 - `use_hybrid_retrieval` = False (line 40) — BM25 hybrid, effectively eval-only
-  (needs an in-memory corpus).
-- `use_reranking` = True (line 41).
+  (needs an in-memory corpus). BM25 is lexical (word-match) search, complementary
+  to embeddings' semantic match; flipping this on in production is a silent
+  no-op today (→ 00 §7).
+- `use_reranking` = True (line 41) — gates the cross-encoder rescoring pass
+  described above (→ 00 §6).
 - `use_hyde` = True, `use_query_rewrite` = True (lines 46–47). Comment (42–45):
   each adds an LLM call per query; gated so they can be turned off; default keeps
-  the prior always-on behaviour.
+  the prior always-on behaviour. `use_hyde` embeds an LLM-hallucinated
+  hypothetical answer instead of the raw question (the fake answer never reaches
+  the user — it's only a search probe); `use_query_rewrite` expands a short,
+  vague question into an explicit search query. Both target the same mismatch:
+  user questions are short and conversational, corpus passages are long and
+  declarative (→ 00 §8).
 - `compression_type` = `NONE` (line 49); `compression_similarity_threshold` = 0.76
   (line 53). Comment: configurable so the eval calibrates it and prod ships what
-  eval swept; 0.76 was too aggressive for `text-embedding-3-small`.
+  eval swept; 0.76 was too aggressive for `text-embedding-3-small`. Contextual
+  compression trims or drops retrieved chunks before they reach the prompt; there
+  are three compressor types (`embeddings`/`llm`/`pipeline`), and the similarity
+  threshold is specifically the `embeddings` compressor's drop cutoff — set it
+  too high (as 0.76 was here) and it silently empties the context (→ 00 §9).
 
 **Chunking (lines 55–67)**
 - `chunk_size` = 1000, `chunk_overlap` = 200.
 - `chunking_strategy` = `"by_title"` (line 62). Comment (57–61): `"recursive"`
   fragmented elements into ~67-char chunks with 9–13% boilerplate; `"by_title"`
   merges into ~440-char section chunks with 0 boilerplate and +18.6pt judged
-  correctness.
+  correctness. The core distinction: `chunk_size` for `"recursive"` is a
+  *ceiling, not a target* — it only splits oversized pieces, never merges
+  undersized ones — whereas `"by_title"` walks the parser's typed elements and
+  *merges* them into one chunk per document section, which is what fixes the
+  too-small-to-mean-anything fragments (→ 00 §4).
 - `chunk_prepend_section_title` = False (line 67). Comment: ablated and failed its
   pre-set bar, stays off.
 
@@ -150,20 +183,33 @@ default; pydantic-settings overrides any of them from the environment.
   the un-indexed tail aren't indexed prematurely (comment 70–71).
 - `chat_recall_k` = 3 (line 78) — final segments kept after re-ranking.
 - `chat_context_cap` = 50 (line 79) — the tier-1 tail COUNT bound (used by
-  `_load_unindexed_tail`).
+  `_load_unindexed_tail`) — a cap on *number of messages*, not tokens.
 - `chat_context_char_budget` = 16000 (line 83) — the tier-1 tail LENGTH bound
   (≈4k tokens, tokenizer-free): a burst of huge un-indexed messages can't blow
-  the context window; the newest message is always kept whole.
+  the context window; the newest message is always kept whole. Characters are
+  used as a cheap proxy for tokens (a token is roughly ¾ of a word) precisely to
+  avoid running a tokenizer just to bound what fits in the LLM's context window
+  (→ 00 §1).
 - `chat_segment_gap_minutes` = 30, `chat_segment_max_messages` = 12 (lines 81–84)
   — a conversation segment (the embedded unit) closes on an inactivity gap or a
   size cap.
 - `chat_recall_fetch_k` = 10 (line 88) — the wider pool fetched before chat
-  re-ranking.
-- `chat_decay_half_life_hours` = 168.0 (one week, line 89).
-- `chat_recall_overlap_threshold` = 0.6 (line 90) — the Jaccard redundancy floor.
+  re-ranking, the same fetch-wide/rescore-narrow shape as `rerank_fetch_k`
+  above (→ 00 §6).
+- `chat_decay_half_life_hours` = 168.0 (one week, line 89) — the exponential
+  time-decay half-life: a segment this many hours old keeps half its relevance
+  weight, so recent conversation is favored without erasing old-but-relevant
+  segments (→ 00 §11).
+- `chat_recall_overlap_threshold` = 0.6 (line 90) — the Jaccard redundancy floor:
+  candidates whose word-set overlap with an already-picked segment exceeds this
+  are skipped, so near-duplicate segments don't fill all the recall slots
+  (→ 00 §11).
 
 **LLM behaviour (lines 92–93)**
-- `llm_temperature` = 0.0 (deterministic), `llm_streaming` = True.
+- `llm_temperature` = 0.0 (deterministic), `llm_streaming` = True. Temperature
+  controls sampling randomness — 0 is near-deterministic most-likely-token
+  output, which is what you want for "report what the document says" rather
+  than creative variation (→ 00 §1).
 
 **LangSmith tracing (lines 95–97)** — `langchain_tracing_v2` (False), API key,
 project name.
@@ -172,7 +218,10 @@ project name.
 - `ai_model_allow_list` = `["gpt-4o-mini", "gpt-4o", "qwen2.5:7b-instruct"]`. The
   *vetted* set of models a workspace admin may select — never free text. The
   comment says "extend deliberately," and the `AiConfigPatch._model_vetted`
-  validator enforces it.
+  validator enforces it. This exists because an unvetted model could have a
+  different (or no) context window, different cost, or weaker instruction-
+  following — none of which the rest of the pipeline (prompt sizing, latency
+  budget) is built to tolerate.
 
 ### Env mechanics of pydantic-settings — lines 103–105
 `model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8",

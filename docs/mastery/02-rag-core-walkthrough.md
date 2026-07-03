@@ -5,6 +5,10 @@ of your RAG system by yourself. Every claim below is grounded in the code at
 `src/rag/`. Line references are to the files as they stand on
 `feature/chat-message-memory`.
 
+Every concept named here — embeddings, HyDE, cross-encoders, BM25, and the rest
+— is explained in full in `00-foundations.md`; this chapter only reminds you at
+the point of use, with pointers like `(→ 00 §n)`.
+
 Read the files in this dependency order, because each one leans on the ones above it:
 
 1. `message_text.py` — turns a stored message into plain text (leaf, no deps).
@@ -71,9 +75,14 @@ update. Both `router.py` (`_load_unindexed_tail`) and the chat indexer call
 **Job in one sentence:** build the chat LLM from a `RagConfig`.
 
 ### `get_llm(provider, streaming, config)` — lines 8–21
-- `streaming` defaults to `config.llm_streaming` when not passed (lines 10–11).
+- `streaming` defaults to `config.llm_streaming` when not passed (lines 10–11) —
+  streaming means the API yields tokens as they're generated instead of waiting
+  for the full answer, which is why `/ask` can start sending bytes before
+  generation finishes (→ 00 §1).
 - `openai` → a `ChatOpenAI` built from `config.openai_model`,
-  `config.llm_temperature`, `streaming`, and `config.openai_api_key` (lines 13–19).
+  `config.llm_temperature` (sampling randomness — low temperature keeps the
+  model close to "report what the document says" instead of getting creative,
+  → 00 §1), `streaming`, and `config.openai_api_key` (lines 13–19).
 - any other provider → `ValueError` (line 21).
 
 **Why:** everything about the model comes from the passed `config`, never from a
@@ -92,6 +101,11 @@ copied config and this function honours it. The default `config=global_rag_confi
 **Job in one sentence:** own every Milvus interaction — construct cached
 embedders, hand back vectorstores, and delete vectors — plus install the one
 monkeypatch that makes LangChain's Milvus client cooperate with the pymilvus ORM.
+Milvus is our **vector database**: it stores embeddings plus per-row metadata
+and answers "nearest neighbours to this vector" queries — **dense
+retrieval**, as opposed to word-matching (BM25, §7 below) — while also letting
+a query filter on scalar fields like `workspace_id` or `source` (**metadata
+filtering**) so one collection safely serves many tenants (→ 00 §3).
 
 **Read it in this order:** the ORM bridge (`_link_milvus_client_orm`,
 `_install_milvus_client_orm_bridge`, and its call at line 53), then the embedding
@@ -139,8 +153,16 @@ Lazily opens the ORM `default` alias connection once per process, guarded by the
 module-global `_milvus_connected` flag. Every ORM-touching function calls it first.
 
 ### Embeddings — lines 85–143
+> **Concept.** An embedder turns text into a fixed-length vector so that
+> similar meaning lands near similar meaning — that's what "embeddings" below
+> means throughout this file (→ 00 §2). `normalize_embeddings=True` rescales
+> every vector to length 1 first, so the vector DB's similarity search can use
+> a cheap dot product instead of full cosine similarity.
+
 - `BGE_QUERY_INSTRUCTION` (line 86) is the exact prefix the BAAI bge-en-v1.5 model
-  card requires on the *query* side. Omitting it silently degrades retrieval
+  card requires on the *query* side. bge is an **asymmetric** embedder — trained
+  to treat queries and passages differently, so only the query gets this
+  instruction prefix (→ 00 §5). Omitting it silently degrades retrieval
   quality, which is why it is a named constant, not an inline string.
 - `_hf_embeddings_for(model)` (lines 94–103): if the model name contains `"bge-"`,
   build `HuggingFaceBgeEmbeddings` with the query instruction and
@@ -164,7 +186,10 @@ differ only in embedding-affecting kwargs you add later, they'd collide — exte
 the key if you add such a knob.
 
 ### `_assert_collection_dim(collection_name, provider, model)` — lines 119–137
-`@lru_cache` (one probe per process). Ensures the live collection connection
+Dimension is a contract: a 384-dim embedder and a 1536-dim collection can't
+talk to each other, and the failure surfaces as an opaque error deep inside
+Milvus rather than a clear message (→ 00 §2). This function is the guard that
+turns that into a fail-fast check. `@lru_cache` (one probe per process). Ensures the live collection connection
 (`_ensure_milvus_connection`), returns early if the collection doesn't exist
 (nothing to check). Reads the `vector` field's `dim` from the collection schema
 (lines 127–130), embeds a throwaway string to learn the embedder's real dimension
@@ -234,7 +259,9 @@ memory is stored as segments, so use the array helper for chat cleanup.
 ## `src/rag/retrieval/compression.py`
 
 **Job in one sentence:** optionally wrap a retriever in a context-compression
-stage chosen by `config.compression_type`.
+stage chosen by `config.compression_type`. **Contextual compression** trims or
+drops retrieved chunks before they reach the prompt, catching the irrelevant
+sentences that even good chunks carry (→ 00 §9).
 
 ### `compression_retriever(base_retriever, compression_type, config)` — lines 16–44
 A `match` over `CompressionType`:
@@ -244,7 +271,9 @@ A `match` over `CompressionType`:
 - `PIPELINE` → embeddings filter *then* LLM extractor, chained in a
   `DocumentCompressorPipeline` (cheap filter first, expensive LLM second).
 - `_` (i.e. `NONE`) → return the base retriever untouched (line 40). This is the
-  default, so compression is off unless configured.
+  default, so compression is off unless configured — with section-sized chunks
+  and a reranker already in place, the marginal cleanup rarely justifies the
+  extra latency/cost (→ 00 §9).
 
 When a compressor is chosen it's wrapped in `ContextualCompressionRetriever`
 (lines 42–43).
@@ -266,16 +295,22 @@ query rewriter and the HyDE embedder.
 
 ### `get_query_rewriter(config)` — lines 14–16
 `QUERY_REWRITE_PROMPT | get_llm(config=config)` — a LangChain runnable that takes
-`{"query": ...}` and returns a rewritten string. See chapter 03 for the prompt
-text.
+`{"query": ...}` and returns a rewritten string. **Query rewriting** exists
+because users write short, vague, conversational questions while the corpus
+holds long declarative passages — an LLM call turns the question into an
+explicit, self-contained search query before retrieval runs (→ 00 §8). See
+chapter 03 for the prompt text.
 
 ### `get_hyde_embeddings(config)` — lines 19–29
 Builds a `HypotheticalDocumentEmbedder`: it asks a small, deterministic
 `ChatOpenAI` (temperature 0, `max_completion_tokens=150`) to hallucinate a
 plausible answer document, then embeds *that* with the base embeddings, using
-LangChain's built-in `web_search` prompt (`prompt_key="web_search"`). The idea:
-a hypothetical answer sits closer in vector space to real answer passages than the
-bare question does.
+LangChain's built-in `web_search` prompt (`prompt_key="web_search"`). This is
+**HyDE (Hypothetical Document Embeddings)**: instead of embedding the question,
+you embed a fabricated answer paragraph — wrong on facts, but shaped like a
+real answer passage, so it lands closer to true answer passages in vector space
+than the bare question does; the hallucination itself never reaches the user
+(→ 00 §8).
 
 **Why both are separate builders gated by config:** each is an *extra LLM call per
 query* (rewriter) or per query (HyDE generation). `RAGChain.__init__` only
@@ -302,16 +337,18 @@ score = rank_relevance * (floor + (1 - floor) * 0.5^(age_h / half_life))
 ```
 
 Broken down, matching the code in `select_chat_context` (lines 42–47):
-- `relevance = 1.0 / (1.0 + rank)` (line 44). **Rank-based, not distance-based.**
-  Milvus returns candidates already sorted by similarity; using their *position*
-  (0, 1, 2, …) instead of raw distances makes the score independent of whichever
-  distance metric the collection uses (docstring, lines 5–6). Rank 0 → 1.0, rank
-  1 → 0.5, rank 2 → 0.33, …
-- `decay = 0.5 ** (age_h / half_life)` (line 45). Pure exponential half-life: a
-  segment `half_life_hours` old contributes `decay = 0.5`.
+- `relevance = 1.0 / (1.0 + rank)` (line 44). **Rank-based, not distance-based**
+  relevance (→ 00 §11): Milvus returns candidates already sorted by similarity;
+  using their *position* (0, 1, 2, …) instead of raw distances makes the score
+  independent of whichever distance metric the collection uses (docstring,
+  lines 5–6). Rank 0 → 1.0, rank 1 → 0.5, rank 2 → 0.33, …
+- `decay = 0.5 ** (age_h / half_life)` (line 45). **Exponential half-life
+  decay** (→ 00 §11): a segment `half_life_hours` old contributes `decay = 0.5`,
+  two half-lives old contributes 0.25, and so on — the standard "radioactive
+  decay" curve for "recent conversation matters more."
 - `recency = _DECAY_FLOOR + (1 - _DECAY_FLOOR) * decay` (line 46), with
   `_DECAY_FLOOR = 0.25` (line 15). This rescales decay from the range `[0,1]` into
-  `[0.25, 1.0]`. **Why the floor:** without it, a very old segment decays to ≈0
+  `[0.25, 1.0]`. **Why the floor** (→ 00 §11): without it, a very old segment decays to ≈0
   and can *never* be recalled even if it's the only relevant thing said. The floor
   guarantees an old-but-uniquely-relevant segment keeps at least 25% of its
   relevance weight (docstring, lines 6–7).
@@ -324,8 +361,9 @@ unparseable stamp it returns `0.0` — i.e. treats it as brand new (no decay),
 failing *toward* keeping the segment rather than dropping it.
 
 ### `_jaccard(a, b)` — lines 27–30
-Standard Jaccard over two token sets: `|a ∩ b| / |a ∪ b|`, with `0.0` for any
-empty set.
+Standard **Jaccard similarity** over two token sets: `|a ∩ b| / |a ∪ b|` — the
+fraction of shared vocabulary, 0 (disjoint) to 1 (identical); used below to
+catch near-duplicate segments (→ 00 §11), with `0.0` for any empty set.
 
 ### `select_chat_context(candidates, *, k, now, half_life_hours, overlap_threshold, stats)` — lines 33–71
 1. Score every candidate (lines 42–47), storing `(score, rank, doc)`.
@@ -367,7 +405,14 @@ bottom.
 
 ### `_get_cross_encoder(model_name)` — lines 28–32
 `@lru_cache(maxsize=1)` around `HuggingFaceCrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")`.
-Loads the reranker model **once** per process. The comment (lines 30–31) records
+Unlike the embedder (a **bi-encoder** — query and passage embedded
+independently, fast but unable to notice fine-grained interactions between
+them), a **cross-encoder** reads the query and passage together through one
+transformer and scores the pair directly: more accurate, far too slow to run
+over a whole corpus (→ 00 §6). `ms-marco` names the training set — Microsoft's
+large public dataset of real search queries with human-labelled relevant
+passages, the standard training data for passage rerankers. Loads the reranker
+model **once** per process. The comment (lines 30–31) records
 the bug this fixes: without the cache, a fresh transformer was instantiated on
 *every chat message* — seconds of load time per request.
 
@@ -378,17 +423,25 @@ The stages, gated by config:
    `dense_k = config.rerank_fetch_k if config.use_reranking else config.retrieval_top_k`
    (line 52). This is the crux of *why reranking helps*: when reranking is on you
    fetch a **wider** pool (`rerank_fetch_k`, default 50) so the cross-encoder can
-   promote docs the dense stage ranked below the final `top_k`; when it's off,
-   fetching more than `top_k` is wasted work (comment, lines 50–51). Any
+   promote docs the dense stage ranked below the final `top_k`. The pathology this
+   guards against is **burial** — the right passage sitting at dense-rank 10–20,
+   below the cutoff, while weaker candidates fill the top slots; a reranker can
+   only promote what's *in the pool* (→ 00 §6). When reranking is off, fetching
+   more than `top_k` is wasted work (comment, lines 50–51). Any
    tenancy/file filter arrives via `search_kwargs` and is merged into the base
    search kwargs (lines 54–55) — that's how `RAGChain` injects the
    `workspace_id`/`source`/`file_id` Milvus expression.
-2. **Optional BM25 hybrid** (lines 60–73). Only when `use_hybrid_retrieval` *and*
+2. **Optional BM25 hybrid** (lines 60–73). **BM25** is lexical (word-match)
+   search — score a document by the query words it literally contains, good at
+   exact identifiers that embeddings can smear over — and **hybrid retrieval**
+   fuses it with dense results so each covers the other's blind spot (→ 00 §7).
+   Only when `use_hybrid_retrieval` *and*
    a `corpus` is supplied: builds a `BM25Retriever` from the corpus and combines
    it 50/50 with dense in an `EnsembleRetriever`. If hybrid is requested but no
    corpus is given (the production Milvus path passes none), it logs a warning and
    falls back to dense-only (lines 68–72). **This is why hybrid is effectively an
-   eval-only feature today** — production has no in-memory corpus to BM25 over.
+   eval-only feature today** — production has no in-memory corpus to BM25 over,
+   since BM25 needs the whole corpus tokenized in memory to score against.
 3. **Optional rerank** (lines 75–81). When `use_reranking`, wrap the base
    retriever in a `ContextualCompressionRetriever` whose compressor is a
    `CrossEncoderReranker` with `top_n=config.retrieval_top_k` — i.e. it narrows the
@@ -423,7 +476,7 @@ read by the three consumers named in the docstring (lines 13–15).
 |---|---|---|
 | `model` (18) | `config.openai_model` | the generation model; logged in `ask.trace` |
 | `embedding_provider` (19) | `config.embedding_provider` | which embedder ran |
-| `request_id` (20) | `self.request_id` | correlation id from `/ask` (uuid7) |
+| `request_id` (20) | `self.request_id` | correlation id from `/ask` (**uuid7** — a UUID whose leading bits encode the timestamp, so ids sort by creation time, unlike random uuid4, → 00 §13) |
 | `retrieval_ms` (21) | `self._retrieval_ms` (timed in `prepare`) | rounded to 0.1ms |
 | `generation_ms` (22) | `self._generation_ms` (timed in `stream_answer`) | rounded |
 | `effective_config` (23) | every `OVERRIDABLE` key + hybrid/compression | the resolved knobs actually used |
@@ -544,8 +597,11 @@ The **retrieval half**, run eagerly.
 **Why it raises instead of swallowing:** the docstring (lines 229–232) is the
 whole design point. `prepare` runs *before* any HTTP response is committed, so a
 Milvus outage or a rewrite-LLM failure raises here and the HTTP layer can turn it
-into a real 502 — *before* any bytes stream. Contrast this with generation, which
-can only fail *after* the response is already 200.
+into a real 502 — *before* any bytes stream. Contrast this with generation,
+which **streams** tokens as they're produced (→ 00 §1): once the first token
+has gone out the HTTP status is already sent as 200, so a failure there can
+only be signalled *inside* the stream, not by changing the status code — this
+is why it can only fail *after* the response is already 200.
 
 ### `stream_answer(prepared, include_citations)` — lines 252–272
 The **generation half**.
@@ -668,7 +724,10 @@ Three marker constants matter because a client parses the raw text stream on the
 - `_DEBUG_MARKER = "\n\n__ASK_DEBUG__\n"` (line 48): precedes the JSON debug
   payload when `debug=True`, so the client can split it off.
 - `_ERROR_MARKER = "\n\n[ask:error]"` (line 51): appended to an already-200 stream
-  when generation dies mid-way, so the client can tell "model finished" from
+  when generation dies mid-way. Once the response has started streaming, the
+  HTTP status is already committed as 200 — there is no way to retroactively
+  turn it into an error status (→ 00 §1) — so this marker is the only channel
+  left for the client to tell "model finished" from
   "backend died."
 
 ### `AskRequest` — lines 54–58
@@ -679,7 +738,9 @@ Three marker constants matter because a client parses the raw text stream on the
 Loads tier 1 — the channel's un-indexed tail, **doubly bounded**: `cap` limits
 the COUNT of messages (SQL `LIMIT`), `char_budget` limits their total LENGTH
 (`chat_context_char_budget`, default 16,000 chars ≈ 4k tokens) so a burst of
-huge un-indexed messages can't blow the model's context window.
+huge un-indexed messages can't blow the model's **context window** — the hard
+cap on how much text (measured in **tokens**, ≈ ¾ of a word each) an LLM call
+can read plus write (→ 00 §1).
 - `cap <= 0` → empty.
 - Query: messages where `channel_id` matches, `indexed_at IS NULL`,
   and `role != SYSTEM`, ordered `sent_at DESC`, limited to `cap`. **SYSTEM rows
@@ -744,7 +805,11 @@ The orchestrator. Its flow, in order (the docstring summarizes the intent):
    `global_rag_config.chat_context_cap` (count) and
    `chat_context_char_budget` (length); capture `asked_at` at request start;
    resolve `user_id` from the session.
-3. **`_build_and_prepare` on a worker thread** (lines 168–191). Inside a
+3. **`_build_and_prepare` on a worker thread** (lines 168–191). FastAPI runs
+   `async` handlers on one **event loop** — a single thread cooperatively
+   switching between requests at every `await` — so blocking work run directly
+   on it freezes every other request. `asyncio.to_thread(fn)` is the escape
+   hatch: it runs a sync function on a worker thread instead (→ 00 §13). Inside a
    `def` run via `asyncio.to_thread`:
    - Open a **sync** `SessionLocal` and `resolve_ai_config(workspace_id,
      channel_id, db)` to get the effective config + provenance (lines 173–176).
@@ -760,8 +825,10 @@ The orchestrator. Its flow, in order (the docstring summarizes the intent):
    any exception logs and becomes `HTTPException(502, "retrieval failed")` —
    this is exactly the "fail before any bytes" contract `prepare` was designed for.
 5. **Threadpool streaming** (lines 196–206): the inner `stream()` async generator
-   drives `chain.stream_answer(...)` through `iterate_in_threadpool`, so the
-   blocking LLM/token work runs in a threadpool and never blocks the event loop.
+   drives `chain.stream_answer(...)` through `iterate_in_threadpool` — the other
+   escape hatch from §13, which consumes a sync generator from async code — so
+   the blocking LLM/token work runs in a threadpool and never blocks the event
+   loop (→ 00 §13).
    Each chunk is appended to `parts` and yielded.
 6. **`[ask:error]` on mid-stream failure** (lines 203–206): if generation throws
    *after* the response is already 200, log and yield `_ERROR_MARKER`, then

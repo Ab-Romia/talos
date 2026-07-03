@@ -7,6 +7,10 @@ test database (no mocking of the ORM, no in-memory DB substitution), and
 be driven from a notebook, not from `pytest -q`. You need to be fluent in
 both, and in exactly where the line between them is.
 
+The RAG/ML concepts this chapter leans on (embeddings, chunking, reranking,
+judged correctness, ablation, statistical significance, and the rest) are all
+explained once in `00-foundations.md`; pointers here look like `(→ 00 §n)`.
+
 ---
 
 ## 1. Test architecture
@@ -148,12 +152,15 @@ run) — since `init()` needs a real reachable Postgres.
   appends a trace payload, citation footers are stripped before persisting,
   AI messages broadcast to the channel's realtime room, workspace/channel
   AI-settings overrides actually reach the chain, and the tier-1 tail's char
-  budget (`chat_context_char_budget`): a burst of huge un-indexed messages
-  injects only what fits newest-first, while a single over-budget message is
-  still injected whole (never-empty, never-truncate).
+  budget (`chat_context_char_budget` — measured in characters rather than
+  tokens as a cheap proxy for the LLM's context window, tokens ≈ ¾ word, → 00
+  §1): a burst of huge un-indexed messages injects only what fits newest-first,
+  while a single over-budget message is still injected whole (never-empty,
+  never-truncate).
 - **`test_build_pipeline.py`** — `build_rag_pipeline` is the single shared
   retrieval composition used everywhere; specifically proves two historical
-  "toggle lies" are fixed: reranking widens the candidate pool (fetches
+  "toggle lies" are fixed: reranking (fetch wide with the bi-encoder, rescore
+  narrow with a cross-encoder, → 00 §6) widens the candidate pool (fetches
   `rerank_fetch_k`, returns `retrieval_top_k`) rather than reranking within
   the same top-k, and enabling hybrid retrieval can no longer silently no-op
   when a corpus isn't supplied.
@@ -168,8 +175,10 @@ run) — since `init()` needs a real reachable Postgres.
   ancient results, a lone old candidate still survives if it's the only one,
   near-duplicate segments get suppressed, and the `k` cap plus missing
   `sent_at` metadata are handled without crashing.
-- **`test_chunking.py`** — chunking hygiene for `build_chunk_documents`:
-  `by_title` drops `Header`/`Footer` noise elements, merges short fragments
+- **`test_chunking.py`** — chunking hygiene for `build_chunk_documents`
+  (splitting documents into embeddable, retrievable units — the section-aware
+  `by_title` strategy, → 00 §4): `by_title` drops `Header`/`Footer` noise
+  elements, merges short fragments
   while retaining section metadata, respects `max_characters`, honors the
   `chunk_prepend_section_title` flag, and — critically — the `"recursive"`
   legacy strategy's output is byte-identical to its pre-refactor behavior
@@ -187,14 +196,17 @@ run) — since `init()` needs a real reachable Postgres.
   regardless of requested model).
 - **`test_embeddings_selection.py`** — the HuggingFace embedder branch of
   `get_embeddings`/`_build_embeddings` honors `config.embedding_model` (not
-  hardcoded), and BGE-family models automatically get the BGE query
-  instruction prefix; an unknown embedding provider still raises rather than
-  silently falling back.
-- **`test_eval_uses_production_path.py`** — "eval == ship": the eval harness
-  (`tests/rag_evaluation/eval_utils.py`) must not contain a private
-  reimplementation of retrieval — it must import and drive the real
-  `build_rag_pipeline`/`RAG_PROMPT` — and its `production_default` ablation
-  row must be *derived from*, not hand-copied from, the live
+  hardcoded), and BGE-family models (`BAAI/bge-small-en-v1.5`, our
+  retrieval-trained embedder that needs an asymmetric query-side instruction
+  prefix, → 00 §2/§5) automatically get the BGE query instruction prefix; an
+  unknown embedding provider still raises rather than silently falling back.
+- **`test_eval_uses_production_path.py`** — "eval == ship" (the harness
+  imports and runs the actual production retrieval/prompt code, not a
+  lookalike, so an eval result is evidence about production behavior, → 00
+  §12): the eval harness (`tests/rag_evaluation/eval_utils.py`) must not
+  contain a private reimplementation of retrieval — it must import and drive
+  the real `build_rag_pipeline`/`RAG_PROMPT` — and its `production_default`
+  ablation row must be *derived from*, not hand-copied from, the live
   `global_rag_config`, so it can never silently drift out of sync with what
   actually ships.
 - **`test_message_text.py`** — `message_text()` is the single seam
@@ -202,7 +214,10 @@ run) — since `init()` needs a real reachable Postgres.
   JSONB rich-text doc) into plain text; None content becomes `""`, plain
   strings pass through, ProseMirror docs get their text nodes extracted.
 - **`test_rag_chain.py`** — `RAGChain` built on the shared pipeline via
-  dependency injection (fake retriever/llm, no live services touched): the
+  dependency injection (fake retriever/llm — the real bi-encoder embed-and-
+  search pipeline, → 00 §2/§3/§6, is deliberately bypassed so these tests
+  exercise `RAGChain`'s own logic, not retrieval quality; no live services
+  touched): the
   live question is never duplicated into `chat_history`, a structured
   `RagTrace` is populated after every query, `prepare()` then
   `stream_answer()` produces output identical to the older combined
@@ -315,6 +330,12 @@ that drives real LLM calls and (optionally) real embeddings, costs real
 money per run, and produces a judged report — categorically different from
 the fast, hermetic, DB-backed pytest suite above.
 
+> **Judged correctness / LLM-as-judge.** The headline metric this harness
+> exists to produce: for each question, the full pipeline generates an
+> answer, and a separate strong LLM scores that answer against gold answer
+> material — an end-to-end metric that catches failures anywhere in the
+> funnel, not just at retrieval. (→ 00 §12)
+
 ### `RagVariant` → production `build_rag_pipeline` (261–281, 402–541)
 
 `build_retriever` (261–281) is explicitly "a thin adapter over the
@@ -359,6 +380,11 @@ locks down.
 
 ### The ablation grid (`default_variants`, 332–399)
 
+> **Ablation.** Each row below changes exactly one variable relative to the
+> row before it (chunking alone, then +bge, then +rerank widening, etc.), so
+> a measured score delta can be attributed to that one change rather than to
+> "the bundle." (→ 00 §12)
+
 Rows, in order: `closed_book` (no retrieval at all — pure LLM knowledge
 baseline), `dense_only` (bare dense retrieval, nothing else on),
 **`production_default`** (see below), `+rewrite`, `+hyde` (rewrite + HyDE),
@@ -394,13 +420,21 @@ row every eval report should headline, because it's the only row that's
 ### Metrics: IR + judge
 
 **IR metrics** (970–1005, unified via `ir_metrics_at_k` at 1387–1405): classic
-retrieval metrics computed from `retrieved_ids` vs. `gold_ids` —
-`hit_rate_at_k`, `recall_at_k`, `precision_at_k`, `reciprocal_rank`,
-`ndcg_at_k`. `ir_metrics_at_k` bundles all five under a `f"{metric}@{k}"`
-key naming convention, matching the BEIR benchmark reporting style
-(Thakur et al., NeurIPS 2021) — the docstring specifically recommends
-reporting both `@5` (matches production `top_k`) and `@10` (BEIR leaderboard
-convention) so numbers are externally comparable.
+retrieval metrics computed from `retrieved_ids` vs. `gold_ids` — the
+page-level gold labels attached to each paraphrase-constrained question (so
+lexical overlap can't fake a hit), → 00 §12 — `hit_rate_at_k`, `recall_at_k`,
+`precision_at_k`, `reciprocal_rank`, `ndcg_at_k`. `ir_metrics_at_k` bundles
+all five under a `f"{metric}@{k}"` key naming convention, matching the BEIR
+benchmark reporting style (Thakur et al., NeurIPS 2021) — the docstring
+specifically recommends reporting both `@5` (matches production `top_k`) and
+`@10` (BEIR leaderboard convention) so numbers are externally comparable.
+
+> **Beware `recall_at_k` as a proxy.** It only asks "did a retrieved chunk
+> come from a gold page," which fragment-sized chunks can win easily (many
+> tiny chunks per page) while still delivering no usable answer material —
+> the live remediation caught exactly this: page-recall went *up* on worse
+> chunking. Treat IR metrics as a diagnostic alongside judged correctness,
+> never as a substitute for it. (→ 00 §12)
 
 **LLM-as-judge metrics** (1081–1164), all via `_structured_invoke` (uses
 OpenAI native Structured Outputs, `method="json_schema", strict=True`, with
@@ -424,7 +458,10 @@ Statistical rigor layered on top: `bootstrap_ci` (percentile bootstrap over
 resampled means), `paired_wilcoxon` (paired Wilcoxon signed-rank with
 rank-biserial effect size, `scipy` if available else a hand-rolled normal
 approximation), `holm_bonferroni` (step-down p-value correction across
-multiple comparisons), and `two_judge_consistency` (re-judges a sample with
+multiple comparisons — in plain words, testing several ablation arms against
+baseline inflates the odds that *one* arm looks significant purely by luck;
+Holm correction raises the bar per-comparison so a winning arm's p-value can
+be trusted, → 00 §12), and `two_judge_consistency` (re-judges a sample with
 a second LLM to bound self-enhancement / judge bias, per Zheng et al.,
 NeurIPS 2023 §4 — Pearson + Spearman correlation + mean absolute
 disagreement between two judges).

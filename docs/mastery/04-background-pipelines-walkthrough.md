@@ -6,6 +6,10 @@ explain, line by line, why each piece of defensive code exists — most of it is
 there because of a real bug class (double-processing, connection-affinity
 leaks, orphaned locks), not decoration.
 
+The RAG concepts this chapter leans on — embeddings, chunking, Milvus, chat
+segments — are explained once, in depth, in `00-foundations.md`; pointers back
+to it look like `(→ 00 §n)`.
+
 ---
 
 ## 1. `src/processing/chat_indexing.py`
@@ -37,7 +41,10 @@ query/update work.
 **Why**: Two things can trigger a concurrent run of this function: (a) the
 default taskiq deployment runs 2 worker processes, and a cron tick can land on
 both around the same time; (b) `RedisStreamBroker` redelivers a message if a
-consumer doesn't ack within its idle timeout (10 min), so a slow-but-still-
+consumer doesn't ack within its idle timeout (10 min) — the **at-least-once
+delivery** guarantee behind every Redis Streams-backed queue: a message may
+run twice, so the handler must be **idempotent**, safe to re-run (→ 00 §13) —
+so a slow-but-still-
 running tick can get redelivered and executed a second time. The body's own
 logic (purge → ingest → stamp) is only idempotent for **sequential** runs — if
 two runs overlap, both can select the same un-indexed batch, both purge, and
@@ -80,7 +87,10 @@ entire function body, and only that same `lock_conn` ever issues the unlock.
 inactivity gap greater than `gap_seconds` since the previous message in the
 same channel, or (3) the current segment reaching `max_messages`.
 
-**Why**: A segment, not a single message, is the retrieval unit. The comment
+**Why**: A segment, not a single message, is the retrieval unit — the same
+role a section chunk plays for files (→ 00 §4): one segment becomes one
+embedded row, and it's what chat-memory recall re-ranks and returns (→ 00
+§11). The comment
 cites SeCom-style research: topic-coherent multi-turn segments retrieve better
 than embedding individual messages (a single message like "yeah, that one" is
 useless out of context). An inactivity gap is the cheapest *online-safe*
@@ -115,13 +125,18 @@ ProseMirror JSON) into plain text (see `rag/message_text.py`, exercised by
 `tests/rag/test_message_text.py`).
 
 **The metadata contract** (83–90) — this is the part you must be able to
-recite:
+recite. These become the scalar metadata fields written alongside the vector
+on each Milvus row (→ 00 §3) — every field here exists because some later
+query needs to filter or join on it, so treat additions to this dict as a
+schema decision, not a convenience:
 - `chatroom_id`: `str(segment[0].channel_id)`. Scopes chat vectors by
   channel for retrieval filtering. No `workspace_id` is stored because
   `channel_id` is already globally unique on this branch's schema (see the
   module docstring) — a workspace join isn't needed to disambiguate.
 - `source`: literal `"chat"` — the discriminator that separates chat vectors
-  from file-upload vectors in the single shared Milvus collection.
+  from file-upload vectors in the single shared Milvus collection (→ 00 §3);
+  every query into that collection must conjoin a `source` filter or it will
+  silently mix chat and file rows.
 - `segment_id`: a fresh `uuid.uuid4()` per segment — a stable handle for one
   logical conversation window (shared across all chunk-index pieces of that
   segment).
@@ -270,6 +285,14 @@ Declare the taskiq cron task that drives the indexer above, draining a
 backlog across multiple batches within one tick instead of leaking one batch
 per cron interval.
 
+> **Concept.** Three roles you'll see split across processes in this
+> pipeline: a **scheduler** process decides *when* a cron-labelled task should
+> fire; a **worker** process is what actually executes the task body; and
+> **Redis** (via taskiq's `RedisStreamBroker`) is the queue that carries the
+> "run this now" message from one to the other. This file declares the *what*
+> and *when*; `scheduler.py` (§4 below) is the process that watches for it;
+> the worker process picks it up and runs it (→ 00 §13).
+
 ### Read it in this order
 1. Module docstring (1–6).
 2. `_CRON` (18) — the schedule string.
@@ -344,7 +367,10 @@ history is degraded. The drain loop clears the whole backlog (bounded by
 **`asyncio.to_thread`**: `index_pending_messages` is a fully synchronous,
 blocking function (sync SQLAlchemy `Session`, sync Milvus client calls, sync
 embedding calls). Running it directly inside the `async def` task would block
-the single-threaded taskiq event loop, starving every other concurrently
+the single-threaded taskiq event loop — the same cooperative-scheduling model
+FastAPI's `async` handlers use, where one thread hops between tasks only at
+`await` points, so any blocking call freezes everything else on it (→ 00
+§13) — starving every other concurrently
 scheduled task on that worker. `asyncio.to_thread` offloads it to a thread
 pool so the event loop stays responsive.
 
@@ -579,7 +605,14 @@ so a failure partway through parsing/chunking/ingesting still cleans up disk.
 ### `_partition_elements` (23–27)
 
 Thin wrapper over `unstructured.partition.auto.partition(filename=...,
-strategy="fast")`. Raises `ImportError` naturally if `unstructured` isn't
+strategy="fast")`. This is the step that turns a raw PDF into `unstructured`'s
+typed **elements** — `Title`, `NarrativeText`, `ListItem`, `Header`,
+`Footer`, `PageBreak`, `Image`… (→ 00 §4) — not chunks yet: an element is one
+structural piece of the document as the parser sees it (a heading, a
+paragraph, a footer line), while a chunk is what actually gets embedded and
+stored as one Milvus row. `build_chunk_documents` below is what turns the
+former into the latter, and the two chunking strategies differ almost
+entirely in *how* they do that turning. Raises `ImportError` naturally if `unstructured` isn't
 installed — the caller (`process_document`) catches specifically `ImportError`
 to fall back to `_fallback_extract`, so any *other* exception from `partition`
 (a malformed file, an unsupported format) is **not** swallowed and propagates
@@ -592,16 +625,22 @@ exclusive strategies via `cfg.chunking_strategy`:
 
 **`"recursive"` (legacy, default — 77–94)**: one `Document` per `unstructured`
 element (paragraph/title/etc.), with `RecursiveCharacterTextSplitter` only
-ever *splitting* oversized elements further — it never merges short
+ever *splitting* oversized elements further — `chunk_size` here is a
+**ceiling, not a target** (→ 00 §4): it caps how big a chunk can get, but does
+nothing to grow one that's too small — it never merges short
 elements together, so a document with many short paragraphs produces many
-small fragment chunks. The comment explicitly flags this must stay a
+small fragment chunks. This is exactly the pathology the live corpus hit:
+one piece per element, no merging, and the result was 1,778 fragments
+(median 67 characters, mostly headings and TOC lines) instead of ~375
+section-sized chunks (→ 00 §4). The comment explicitly flags this must stay a
 **faithful reproduction of the pre-2026-07 corpus** — this is the ablation
 baseline everything else is measured against, so don't casually "improve" it.
 
 **`"by_title"` (37–75)**: filters out `_NOISE_CATEGORIES` elements first
 (`Header`, `Footer`, `PageBreak`, `Image` — running boilerplate that hurts
 retrieval by winning similarity matches against genuinely irrelevant chunks),
-then uses `unstructured.chunking.title.chunk_by_title` to *pack/merge*
+then uses `unstructured.chunking.title.chunk_by_title` — the section-aware,
+*merging* strategy described in → 00 §4 — to *pack/merge*
 elements into sections bounded by `max_characters=cfg.chunk_size`, with
 `new_after_n_chars=min(800, cfg.chunk_size)` (soft target before force-
 starting a new chunk) and `combine_text_under_n_chars=200` (merge short
@@ -623,7 +662,9 @@ merged section — it's fully excluded, not just down-weighted.
 
 ### `process_document` orchestration and `delete_file_chunks` idempotency (98–168)
 
-Same "purge before ingest" idempotency pattern as the chat indexer, but
+Same "purge before ingest" idempotency pattern as the chat indexer (→ 00
+§13: at-least-once delivery means this task can run twice, so purge-before-
+reingest is what keeps a re-run a no-op instead of a duplicate), but
 scoped by `(file_id, workspace_id)` instead of by message ids:
 
 ```python
@@ -633,12 +674,25 @@ from rag.ingestion import ingest_file_chunks
 ingest_file_chunks(chunks, str(file_record.workspace_id), str(file_record.id))
 ```
 
-**Why** (comment at 145–148): "Milvus has no unique constraint on
-`(file_id, chunk_index)` — re-ingesting without this would duplicate
-chunks." Any retry (whether from the claim-update's lack of mutual exclusion
-in `tasks.py`, or a legitimately re-triggered reprocess) purges stale chunks
-for that file before adding new ones, so retries never leave duplicate or
-orphaned vectors behind.
+`ingest_file_chunks` is where the actual embedding happens — each chunk's
+text is run through the embedder (→ 00 §2) to get a vector, and the
+(vector, metadata) row is written into the shared `talos_documents`
+collection with `source="file"` (→ 00 §3), the same source-discrimination
+discipline the chat indexer's metadata contract follows above. Because
+embedding happens here, at ingest time, both a chunking-strategy change and
+an embedding-model change invalidate whatever is already in Milvus: switching
+`chunking_strategy` reshapes what text gets embedded (→ 00 §4), and switching
+`EMBEDDING_MODEL` produces vectors in a different, incompatible space (→ 00
+§5) — either one means the existing rows are stale and every affected file
+needs to go back through this pipeline (`scripts/reingest_workspace_files.py`
+does this at corpus scale; here it's per-file).
+
+**Why the purge runs first** (comment at 145–148): "Milvus has no unique
+constraint on `(file_id, chunk_index)` — re-ingesting without this would
+duplicate chunks." Any retry (whether from the claim-update's lack of mutual
+exclusion in `tasks.py`, or a legitimately re-triggered reprocess) purges
+stale chunks for that file before adding new ones, so retries never leave
+duplicate or orphaned vectors behind.
 
 **No-text-extracted path** (135–139): if `chunks` ends up empty (e.g. a
 scanned image-only PDF with no OCR), the function logs a warning, sets
@@ -829,7 +883,10 @@ scheduler = TaskiqScheduler(broker, sources=[LabelScheduleSource(broker)])
 `taskiq scheduler scheduler:scheduler <task-modules> --app-dir=src` (per the
 module docstring) — this is not the worker process, it's the thing that
 watches for `schedule=[...]` labels and fires the corresponding task onto the
-broker at the right time. `LabelScheduleSource(broker)` means **any**
+broker at the right time. Concretely: scheduler decides *when*, broker
+(Redis) carries the message, worker executes it (→ 00 §13) — three
+separate deployables, which is why the next gotcha (mismatched module lists
+between scheduler and worker) is a real failure mode and not a hypothetical. `LabelScheduleSource(broker)` means **any**
 `@broker.task(schedule=[...])` anywhere in the imported task modules is
 auto-discovered — no manual registration list to keep in sync. `chat_tasks
 .index_chat_messages` is the only current example. If you add a second

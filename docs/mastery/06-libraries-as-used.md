@@ -1,5 +1,9 @@
 # 06 — Libraries As We Actually Use Them
 
+Concepts (embeddings, chunking, reranking, HyDE, BM25, infra primitives) are explained
+once, from first principles, in `00-foundations.md`; this chapter assumes you've read it
+and just points back with `(→ 00 §n)` at each concept's first substantive use here.
+
 This is not library documentation. It is a record of how *we* wired each dependency
 into `src/rag/` (and the two teammate seams we depend on: `src/chat/`, `src/database.py`,
 `src/broker.py`). Every claim cites `file:line` in this repo (branch
@@ -32,16 +36,19 @@ into `src/rag/` (and the two teammate seams we depend on: `src/chat/`, `src/data
 
 ## langchain-core: Documents, retrievers, prompts, streaming — and the deleted chain
 
-**`Document` is our universal chunk unit.** File chunks and chat-memory segments are
-both `langchain_core.documents.Document`; retrieval always returns a `list[Document]`
+**`Document` is our universal chunk unit.** A `Document` is just a chunk's embedded row
+made concrete — the unit of ingestion and retrieval (→ 00 §4). File chunks and
+chat-memory segments are both `langchain_core.documents.Document`; retrieval always
+returns a `list[Document]`
 regardless of source (`source == "file"` vs `source == "chat"` in metadata —
 `src/rag/rag_chain.py:101-117`).
 
-**`BaseRetriever` is our composition point, not `VectorStore` directly.**
+**`BaseRetriever` is our composition point, not `VectorStore` directly.** This is the
+retrieval funnel (→ 00 §10) expressed as decorator composition, not a diagram.
 `build_rag_pipeline()` (`src/rag/retrieval/retrievers.py:35-85`) is "the single
 definition of how Talos retrieves" (its own docstring, `:42-49`) — it wraps a
 `vectorstore.as_retriever(...)` in zero or more `BaseRetriever` decorators
-(`EnsembleRetriever` for BM25 hybrid, `ContextualCompressionRetriever` for rerank,
+(`EnsembleRetriever` for BM25 hybrid, eval-only, → 00 §7; `ContextualCompressionRetriever` for rerank,
 `ContextualCompressionRetriever` again for LLM/embeddings compression via
 `compression_retriever()`, `src/rag/retrieval/compression.py:16-44`). Both `RAGChain`
 (Milvus-backed) and the eval harness (`InMemoryVectorStore`-backed) call this same
@@ -113,7 +120,9 @@ branch) still call the old `.query()`/`.stream_query()` shape and never see the 
 
 ## langchain_milvus + pymilvus: dynamic schema, expr grammar, the ORM bridge
 
-**One collection, dynamic schema, source-field discipline.** `WORKSPACE_COLLECTION =
+**One collection, dynamic schema, source-field discipline.** This is the vector-DB and
+metadata-filtering machinery from the concept chapter, concretely (→ 00 §3).
+`WORKSPACE_COLLECTION =
 global_rag_config.milvus_collection_name` (`src/rag/vector_store.py:69`, default
 `"talos_documents"`, `src/config/config.py:26`) backs **both** file chunks and
 chat-memory segments. `get_workspace_vectorstore()` builds a `langchain_milvus.Milvus`
@@ -128,7 +137,8 @@ the shared talos_documents collection"); chat recall's expr conjoins `source == 
 `expr`, not a schema constraint — see the integration map for the known leak risk on
 the not-yet-merged `search` branch.
 
-**Milvus expr filter grammar we actually use:**
+**Milvus expr filter grammar we actually use** (the metadata-filtering half of §3's kNN
++ filter model):
 - Simple equality + AND: `f'workspace_id == "{workspace_id}"'`, joined with `" && "`
   (`rag_chain.py:103-107`, `vector_store.py:246-248`).
 - `in [...]` list membership for `file_ids` scoping:
@@ -205,15 +215,19 @@ import-time monkeypatch since it's installed globally, not per-instance.
 
 ## sentence-transformers / HF embeddings + cross-encoder reranker
 
-**Embedding provider selection is config-driven, cached, and model-aware.**
-`get_embeddings()` (`vector_store.py:140-143`) resolves `provider`/`model` from
+**Embedding provider selection is config-driven, cached, and model-aware.** Embeddings
+themselves are meaning-as-geometry (→ 00 §2); this is the plumbing that turns that idea
+into a reusable object. `get_embeddings()` (`vector_store.py:140-143`) resolves
+`provider`/`model` from
 `RagConfig` and delegates to `_build_embeddings()` (`vector_store.py:106-116`), an
 `@lru_cache(maxsize=None)` keyed on `(provider, model, api_key)` — the comment explains
 why: "constructing the embedder (esp. the HuggingFace sentence-transformer) loads the
-model from disk and costs ~3.5s — otherwise paid on every query"
-(`vector_store.py:108-110`). For `provider == "huggingface"`, `_hf_embeddings_for(model)`
+model from disk and costs ~3.5s — otherwise paid on every query" (this is exactly the
+per-request-load cost §2 flags as unaffordable) (`vector_store.py:108-110`). For
+`provider == "huggingface"`, `_hf_embeddings_for(model)`
 (`:94-103`) branches on model name: any model containing `"bge-"` gets
-`HuggingFaceBgeEmbeddings` with `query_instruction=BGE_QUERY_INSTRUCTION` and
+`HuggingFaceBgeEmbeddings` with `query_instruction=BGE_QUERY_INSTRUCTION` — the query-only
+asymmetric prefix (→ 00 §5) — and
 `encode_kwargs={"normalize_embeddings": True}`; everything else gets plain
 `HuggingFaceEmbeddings(model_name=model)`.
 
@@ -237,8 +251,11 @@ guarding against "env lost `EMBEDDING_PROVIDER` and fell back to OpenAI/1536 aga
 `embeddings` wasn't injected by the caller (`:205-211`) — HyDE and eval callers that
 supply their own `Embeddings` instance skip the check by design.
 
-**Cross-encoder reranker: one process-wide instance.** `CROSS_ENCODER_MODEL =
-"cross-encoder/ms-marco-MiniLM-L-6-v2"` (`retrievers.py:25`); `_get_cross_encoder()`
+**Cross-encoder reranker: one process-wide instance.** The cross-encoder/bi-encoder
+distinction and why fetch-wide-then-rescore-narrow works is §6's territory (→ 00 §6);
+here it's one model name and one cache. `CROSS_ENCODER_MODEL =
+"cross-encoder/ms-marco-MiniLM-L-6-v2"` — MS MARCO, the standard passage-reranker
+training set (→ 00 §6) (`retrievers.py:25`); `_get_cross_encoder()`
 (`:28-32`) is `@lru_cache(maxsize=1)` wrapping `HuggingFaceCrossEncoder(model_name=...)`
 — comment: "Without this, a fresh transformer was being instantiated on every chat
 message." No explicit device placement call exists in this file (no `.to("cpu")`); HF
@@ -377,7 +394,8 @@ imports) and executes `@broker.task`-decorated functions, e.g. `index_chat_messa
 `broker.py:50-56` builds `RedisStreamBroker(url=cfg().redis.url)
 .with_result_backend(RedisAsyncResultBackend(redis_url=..., result_ex_time=3600))
 .with_middlewares(SmartRetryWithCallbackMiddleware())`. Redis Streams give
-at-least-once delivery with consumer-group semantics; unacked messages become eligible
+at-least-once delivery with consumer-group semantics — the concrete case of the
+"queue may redeliver, tasks must be idempotent" rule (→ 00 §13); unacked messages become eligible
 for redelivery after an idle timeout (taskiq-redis's `idle_timeout`, not overridden here
 — library default applies since no explicit value is passed to `RedisStreamBroker(...)`
 at `broker.py:50`). Results expire after 1 hour (`result_ex_time=60*60`, `:53`).
@@ -464,7 +482,8 @@ that scope through a relative path; every read/write routes through this prefix.
 `asynchronous=True` to `S3FileSystem.__init__` (`:20`), so this is the async fsspec
 variant — methods are coroutines (`_url`, and by extension `_get_file` inherited from
 `S3FileSystem`, not overridden here). The one async override present, `_url()`
-(`:33-39`), rewrites the presigned URL's host from the internal MinIO endpoint to
+(`:33-39`), builds a presigned URL — a time-limited signed link straight to storage,
+letting the browser skip the app proxy (→ 00 §13) — and rewrites its host from the internal MinIO endpoint to
 `public_endpoint` when configured, so browsers get a reachable URL while server-side
 code talks to MinIO over its internal address.
 
@@ -495,7 +514,8 @@ async_mode="asgi", logger=False, engineio_logger=False)`
 (`src/chat/realtime.py:18-24`). The Redis-backed manager is what lets `sio.emit(...)`
 reach clients connected to a *different* uvicorn worker process than the one issuing the
 emit — required because `/ask`'s HTTP handler (a different ASGI app/process context than
-a socket connection) needs to broadcast to everyone in a channel room.
+a socket connection) needs to broadcast to everyone in a channel room (the
+rooms-plus-cross-process-manager pattern, → 00 §13).
 
 **Rooms are `"channel:{channel_id}"` strings.** Every RAG-side emit and every
 chat-side broadcast use this exact room-naming convention — see
@@ -539,6 +559,10 @@ causes.)
 ---
 
 ## SQLAlchemy sync + async duality
+
+This section is the event-loop-vs-threads rule (→ 00 §13) applied to our two session
+types — read that section first if "why does a sync `Session` need `asyncio.to_thread`"
+isn't already obvious.
 
 **Two independent engines/sessionmakers, both defined in `src/database.py`.** `engine =
 create_engine(cfg().database.url, ...)` (sync, `database.py:14-18`) and `async_engine =
@@ -616,7 +640,8 @@ persisted answer (`:45,208`), `_DEBUG_MARKER` prefixes an appended JSON debug bl
 (`:48,230`).
 
 **`iterate_in_threadpool` bridges `RAGChain`'s sync generator into the async
-response.** `chain.stream_answer(...)` is a **synchronous** generator (LLM `.stream()`
+response.** This is the other event-loop escape hatch from §13 (→ 00 §13) — consuming a
+sync generator from async code without blocking the loop. `chain.stream_answer(...)` is a **synchronous** generator (LLM `.stream()`
 calls are sync, `rag_chain.py:263`), but `StreamingResponse` needs an async iterable;
 `async for chunk in iterate_in_threadpool(gen):` (`router.py:200`, `gen =
 chain.stream_answer(...)`, `:198`) runs each `next(gen)` call in Starlette's threadpool

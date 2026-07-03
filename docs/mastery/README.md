@@ -12,6 +12,7 @@ the *code-level* one (every file, every function, every library, every seam).
 
 | # | File | What it makes you master |
 |---|------|--------------------------|
+| 00 | `00-foundations.md` | The concepts beneath the code — embeddings, chunking, bge vs MiniLM, reranking, HyDE, the eval story — assuming nothing |
 | 01 | `01-mental-model.md` | The system in layers, the ownership map, repo orientation, the running stack |
 | 02 | `02-rag-core-walkthrough.md` | Every function in `src/rag/` core: chain, router, trace, retrieval |
 | 03 | `03-config-and-settings-walkthrough.md` | `RagConfig`, prompts, `ai_settings` (incl. the security story) |
@@ -25,7 +26,8 @@ the *code-level* one (every file, every function, every library, every seam).
 
 ## How to study this (suggested)
 
-1. **Day 1:** Owner's Manual cover-to-cover, then chapter 01, then 02. After
+1. **Day 1:** Chapter 00 first — slowly, it's the vocabulary everything else is
+   written in. Then Owner's Manual cover-to-cover, then chapter 01, then 02. After
    02, do the drill: run one `@ai` ask with `debug:true` and narrate every
    trace field out loud from memory.
 2. **Day 2:** Chapters 03–05. Drill: add a throwaway `RagConfig` field, watch

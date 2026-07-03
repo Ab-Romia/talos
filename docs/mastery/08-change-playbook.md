@@ -7,6 +7,10 @@ to prove you didn't*. Every recipe names the exact files, the test you write
 aspirational — the file:line references are real and current on
 `feature/chat-message-memory`.
 
+Concepts this chapter leans on — embeddings, chunking, reranking, decay math,
+and the rest — are explained once, properly, in `00-foundations.md`; a pointer
+like `(→ 00 §n)` sends you there for the idea behind a recipe.
+
 The mental model to keep the whole time: the system funnels through **three
 chokepoints** — `RagConfig` (all knobs, `src/config/config.py`),
 `build_rag_pipeline` (all file retrieval, `src/rag/retrieval/retrievers.py:35`),
@@ -164,7 +168,8 @@ widening) → optional compression. Insert your stage as another wrapper around
 `base_retriever`, gated by a `RagConfig` flag (R1) so it's a toggle, not a
 hard-coded behavior change. Keep the widening contract intact: `dense_k =
 rerank_fetch_k if use_reranking else retrieval_top_k` (`retrievers.py:52`) is what
-lets a later narrowing stage actually improve recall instead of just reordering.
+lets a later narrowing stage actually improve recall instead of just reordering —
+the wide fetch exists to rescue candidates buried below the old cutoff (→ 00 §6).
 
 **Test first:** `tests/rag/test_build_pipeline.py` — assert the stage appears when
 the flag is on and is absent when off, using a fake vectorstore (no Milvus).
@@ -199,8 +204,10 @@ MiniLM in the live ablation (REPORT.md A2, +1.2 correctness over MiniLM-hygiene,
 **The dim / re-ingest decision (do this consciously):**
 - Milvus fixes vector dim **at collection creation**. bge-small is 384-dim, same
   as MiniLM → the collection *shape* is unchanged, but every vector was produced
-  by the old model and **must be re-embedded**. text-embedding-3-small is 1536-dim
-  → dim changes → you must drop + recreate.
+  by the old model and **must be re-embedded** — vectors from different models are
+  incomparable even at equal dimension, so matching shape never means matching
+  meaning (→ 00 §2/§5). text-embedding-3-small is 1536-dim → dim changes → you must
+  drop + recreate.
 - `_assert_collection_dim` (`vector_store.py:119-137`, called from
   `get_workspace_vectorstore:207`) fails fast at first query if the configured
   embedder's dim ≠ the live collection's — so a lost `EMBEDDING_PROVIDER` env can't
@@ -211,7 +218,8 @@ MiniLM in the live ablation (REPORT.md A2, +1.2 correctness over MiniLM-hygiene,
   `reingest_workspace_files.py:13-26`) **and** reset chat vectors
   (`UPDATE messages SET indexed_at = NULL`, then let the indexer re-embed).
   `process_document` purges old file chunks per file (`documents.py:148-152`) so
-  re-running is idempotent.
+  re-running is idempotent — required because the task queue is at-least-once and
+  may replay a re-ingest (→ 00 §13).
 
 **Test first:** `tests/rag/test_embeddings_selection.py` — assert the provider/
 model routes to the right embedder class and that bge gets the instruction prefix.
@@ -252,7 +260,8 @@ For segmentation, `tests/chat/test_chat_indexing.py` asserts gap/size boundaries
 (+18.6 pts, REPORT.md A1). For segmentation, unit tests + `debug_ask.py`
 (chat memory has no quantitative eval yet — an honest gap, manual §9).
 **Re-index to apply to old data**: segment/chunk shape changes only affect newly
-ingested vectors; existing rows keep their old shape until re-ingested (R4's
+ingested vectors; existing rows keep their old shape until re-ingested — a chunking
+change rewrites what the corpus *is*, not just how it's stored (→ 00 §4) — (R4's
 `indexed_at = NULL` recipe for chat).
 
 **Blast radius:** ingest-time only; live retrieval is unchanged until re-ingest.
@@ -318,7 +327,9 @@ stays ~1ms during an `/ask`).
 **Edit:** `src/rag/retrieval/chat_selection.py` — `select_chat_context`
 (`chat_selection.py:33-71`). The scoring is
 `relevance(1/(1+rank)) × (floor + (1-floor)·0.5^(age_h/half_life))`
-(`chat_selection.py:44-47`); redundancy is greedy Jaccard suppression
+(`chat_selection.py:44-47`) — rank-based relevance, exponential half-life decay
+with a floor, and Jaccard-based redundancy suppression are all explained from
+first principles at → 00 §11; redundancy is greedy Jaccard suppression
 (`chat_selection.py:53-61`). Keep it a **pure function** — it takes candidates and
 returns a subset, no I/O, so it's trivially testable and can't fail an answer
 (the caller wraps recall in a degrade-to-file-only guard,
@@ -484,8 +495,9 @@ A message is either in the un-indexed tail (tier 1, `indexed_at IS NULL`,
 `exclude_message_ids` and recall drops any segment overlapping the tail
 (`rag_chain.py:154-162`), so a message briefly in both (vector lands before the
 `indexed_at` commit) is counted once. The tail is doubly bounded
-(`chat_context_cap` messages AND `chat_context_char_budget` chars, newest
-first) — and `exclude_message_ids` must contain ONLY the injected messages:
+(`chat_context_cap` messages AND `chat_context_char_budget` chars — a char budget
+because tokens track character count closely enough to bound cheaply, → 00 §1 —
+newest first) — and `exclude_message_ids` must contain ONLY the injected messages:
 budget-dropped ones stay recallable rather than vanishing from both tiers.
 **Guard:** `tests/rag/test_chat_recall_dedupe.py` +
 `test_ask_endpoint.py::test_tail_respects_char_budget`. Never inject the tail
@@ -515,7 +527,8 @@ directly inside a function that already receives a `config`.
 can change across commits (a lock taken there could unlock on a different pooled
 connection and leak forever). A second run logs and returns 0
 (`chat_indexing.py:143-145`). Order is purge → ingest → stamp → commit so a crash
-leaves rows un-stamped and the next tick re-selects the same deterministic batch.
+leaves rows un-stamped and the next tick re-selects the same deterministic batch —
+the same at-least-once/idempotent-retry discipline as R4's re-ingest (→ 00 §13).
 **Guard:** `tests/chat/test_chat_indexing.py`. Never move the lock onto the ORM
 session; never stamp before ingest; run exactly one scheduler.
 

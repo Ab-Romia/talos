@@ -1,7 +1,10 @@
 # 01 · The Mental Model
 
 Hold the system as **four layers and three chokepoints**. Everything else in
-this guide hangs off this picture.
+this guide hangs off this picture. (If any term here is unfamiliar —
+embeddings, reranking, chunking — read `00-foundations.md` first; every concept
+the guide uses is explained there, and later chapters cross-reference it as
+`→ 00 §n`.)
 
 ## The four layers
 
