@@ -49,6 +49,10 @@ class RagConfig(BaseSettings):
     chunk_size: int = 1000
     chunk_overlap: int = 200
     chunking_strategy: str = "recursive"
+    # "by_title" only: prepend the active section heading to each chunk's text
+    # before embedding ("[Section]\ntext"). Cheap contextual anchor; ablated in
+    # evaluation/live_pdf_eval before any default flip.
+    chunk_prepend_section_title: bool = False
 
     # Chat-memory indexing: the cron embeds messages older than the grace window
     # (so live messages still in the un-indexed tail aren't indexed prematurely);
