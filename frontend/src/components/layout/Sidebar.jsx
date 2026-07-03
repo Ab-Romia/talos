@@ -15,7 +15,7 @@ import MuiButton from '@mui/material/Button'
 import Alert from '@mui/material/Alert'
 import CircularProgress from '@mui/material/CircularProgress'
 import {
-  Hash, Plus, Search, ChevronDown, Settings, MessageSquare, FileText,
+  Hash, Plus, Search, ChevronDown, Settings, MessageSquare, FileText, Sparkles,
 } from 'lucide-react'
 import { logout } from '../../store/authSlice'
 import {
@@ -97,6 +97,7 @@ export default function Sidebar() {
 
   const navItems = [
     { label: 'Chat', path: R.CHAT_PAGE, icon: MessageSquare },
+    { label: 'AI Assistant', path: R.AI, icon: Sparkles },
     { label: 'Documents', path: R.DOCUMENTS, icon: FileText },
     { label: 'Settings', path: R.SETTINGS, icon: Settings },
   ]

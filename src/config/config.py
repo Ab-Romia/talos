@@ -17,6 +17,7 @@ class CompressionType(str, Enum):
 
 class RagConfig(BaseSettings):
     openai_api_key: SecretStr | None = None
+    openai_base_url: str | None = None
     openai_model: str = "gpt-4o-mini"
 
     embedding_model: str = "text-embedding-3-small"
@@ -26,7 +27,7 @@ class RagConfig(BaseSettings):
     milvus_port: int = 19530
     milvus_collection_name: str = "documents_v2"
 
-    retrieval_top_k: int = 5
+    retrieval_top_k: int = 10
     use_hybrid_retrieval: bool = False
     use_reranking: bool = True
 

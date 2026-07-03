@@ -69,6 +69,10 @@ async def post_message(channel_id: UUID, req: SendRequest, session: SessionDep):
         message.model_dump(mode="json"),
         room=f"channel:{channel_id}",
     )
+
+    from chat.ai import maybe_ai_reply
+    await maybe_ai_reply(channel_id, req.text)
+
     return {
         "id": message.id,
         "sent_at": message.sent_at,

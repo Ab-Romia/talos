@@ -19,6 +19,7 @@ from utils.exceptions import dbapi_error_handler
 from workspace.router import workspace as workspace_router, channel as channel_router
 from workspace.discovery import router as workspaces_list_router
 from filesystem.documents import router as documents_router
+from ai import router as ai_router
 
 templates = Jinja2Templates(directory="frontend/templates")
 
@@ -58,6 +59,7 @@ app.include_router(auth_router, prefix="/api", tags=["auth"])
 app.include_router(notifications_router, prefix="/api")
 app.include_router(workspaces_list_router, prefix="/api")
 app.include_router(documents_router, prefix="/api")
+app.include_router(ai_router, prefix="/api")
 app.include_router(workspace_router, prefix="/api")
 app.include_router(channel_router, prefix="/api")
 app.include_router(gdrive_proxy_router, prefix="/api/storage", tags=["gdrive-proxy"])

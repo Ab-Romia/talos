@@ -5,9 +5,31 @@ from langchain_core.vectorstores import VectorStore
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_milvus import Milvus
 from langchain_openai import OpenAIEmbeddings
-from pymilvus import connections, Collection, utility
+from pymilvus import connections, Collection, utility, MilvusClient
 
 from config import global_rag_config
+
+_orm_registration_patched = False
+
+
+def _patch_client_orm_registration():
+    global _orm_registration_patched
+    if _orm_registration_patched:
+        return
+    _orm_registration_patched = True
+
+    _orig_init = MilvusClient.__init__
+
+    def _init(self, *args, **kwargs):
+        _orig_init(self, *args, **kwargs)
+        uri = kwargs.get("uri") or (args[0] if args else None)
+        if uri and not connections.has_connection(self._using):
+            connections.connect(alias=self._using, uri=uri)
+
+    MilvusClient.__init__ = _init
+
+
+_patch_client_orm_registration()
 
 __all__ = [
     "get_embeddings",
@@ -28,8 +50,7 @@ def _ensure_milvus_connection():
     if not _milvus_connected:
         connections.connect(
             alias="default",
-            host=global_rag_config.milvus_host,
-            port=global_rag_config.milvus_port,
+            uri=f"http://{global_rag_config.milvus_host}:{global_rag_config.milvus_port}",
         )
         _milvus_connected = True
 
@@ -66,6 +87,9 @@ def get_vectorstore(
         collection_name=collection_name,
         auto_id=True,
         enable_dynamic_field=True,
+        connection_args={
+            "uri": f"http://{global_rag_config.milvus_host}:{global_rag_config.milvus_port}",
+        },
     )
 
 
@@ -115,8 +139,7 @@ def get_workspace_vectorstore(
         auto_id=True,
         enable_dynamic_field=True,
         connection_args={
-            "host": global_rag_config.milvus_host,
-            "port": global_rag_config.milvus_port,
+            "uri": f"http://{global_rag_config.milvus_host}:{global_rag_config.milvus_port}",
         },
     )
 

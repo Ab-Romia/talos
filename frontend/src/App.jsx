@@ -10,6 +10,7 @@ const SignupPage = lazy(() => import('./pages/auth/SignupPage'))
 const CompleteSignupPage = lazy(() => import('./pages/auth/CompleteSignupPage'))
 const OnboardingPage = lazy(() => import('./pages/onboarding/OnboardingPage'))
 const ChatPage = lazy(() => import('./pages/chat/ChatPage'))
+const AIChatPage = lazy(() => import('./pages/ai/AIChatPage'))
 const DocumentsPage = lazy(() => import('./pages/documents/DocumentsPage'))
 const SettingsPage = lazy(() => import('./pages/settings/SettingsPage'))
 const AppLayout = lazy(() => import('./components/layout/AppLayout'))
@@ -94,6 +95,7 @@ export default function App() {
       <Route path="/" element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
         <Route index element={<Navigate to={R.CHAT_PAGE} replace />} />
         <Route path="chat" element={<ChatPage />} />
+        <Route path="ai" element={<AIChatPage />} />
         <Route path="documents" element={<DocumentsPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>

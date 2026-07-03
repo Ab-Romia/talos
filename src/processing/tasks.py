@@ -1,13 +1,13 @@
 """Task dispatcher for file processing."""
 
+import asyncio
 import uuid
 
-import fsspec
-from sqlalchemy import update as sa_update
+from sqlalchemy import select, update as sa_update
 
 from broker import broker
 from config import cfg
-from database import AsyncSessionLocal
+from database import SessionLocal
 from filesystem.model import File, FileStatus
 from utils.logger import get_logger
 
@@ -18,9 +18,10 @@ logger = get_logger(__name__)
 @broker.task()
 async def process_file(file_id: uuid.UUID):
     """Main task dispatcher. Routes to document or image processor by MIME type."""
-    storage = fsspec.filesystem("minio", config=cfg().minio)
+    from filesystem.documents import _fs
+    storage = _fs()
 
-    with AsyncSessionLocal() as db:
+    with SessionLocal() as db:
         """
         Atomically claim the file: flip status to PROCESSING only when the
         current state is workable (UPLOADED or FAILED). rowcount == 0 means
@@ -72,7 +73,7 @@ async def process_file(file_id: uuid.UUID):
                     f"No processor registered for MIME type {file_record.content_type}"
                 )
 
-            file_record.status = FileStatus.INDEXED
+            file_record.processing_status = FileStatus.INDEXED
             db.commit()
             logger.info("File processing complete", file_id=file_id)
 
@@ -87,7 +88,33 @@ async def process_file(file_id: uuid.UUID):
                     underlying_error=str(e)[:500],
                 )
                 return
-            file_record.status = FileStatus.PROCESSING_FAILED
+            file_record.processing_status = FileStatus.PROCESSING_FAILED
             file_record.processing_error = str(e)[:2048]
             db.commit()
             raise
+
+
+@broker.task()
+async def index_message(message_id: uuid.UUID, channel_id: uuid.UUID, content: str):
+    """Embed a chat message into the workspace vector store for RAG retrieval."""
+    from workspace.model import Channel
+
+    with SessionLocal() as db:
+        workspace_id = db.scalar(select(Channel.workspace_id).where(Channel.id == channel_id))
+
+    if workspace_id is None:
+        return
+
+    from langchain_core.documents import Document
+    from rag.vector_store import get_workspace_vectorstore
+
+    doc = Document(
+        page_content=content,
+        metadata={
+            "workspace_id": str(workspace_id),
+            "channel_id": str(channel_id),
+            "message_id": str(message_id),
+            "source": "chat message",
+        },
+    )
+    await asyncio.to_thread(get_workspace_vectorstore().add_documents, [doc])

@@ -67,3 +67,19 @@ export function onChatMessage(handler) {
     }
   }
 }
+
+// Subscribe to the ephemeral `ai_typing` event the backend emits while the
+// in-channel assistant is generating a reply. Payload: { channel_id, status }
+// where status is 'start' or 'stop'. Never persisted — purely a live signal.
+export function onAiTyping(handler) {
+  const s = getSocket()
+  if (!s) return () => {}
+  s.on('ai_typing', handler)
+  return () => {
+    try {
+      s.off('ai_typing', handler)
+    } catch {
+      /* socket gone */
+    }
+  }
+}

@@ -175,6 +175,9 @@ async def message(sid: str, data: dict[str, Any]):
         skip_sid=sid,
     )
 
+    from chat.ai import maybe_ai_reply
+    await maybe_ai_reply(message.channel_id, message.content)
+
     # Concurrently fetch sessions of all participants to get their user_ids for the ack response.
     participants = sio.manager.get_participants("/", f"channel:{message.channel_id}")
     sessions = await asyncio.gather(
