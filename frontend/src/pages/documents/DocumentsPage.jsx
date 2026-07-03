@@ -20,6 +20,7 @@ import TableHead from '@mui/material/TableHead'
 import TableRow from '@mui/material/TableRow'
 import { Plus, Search, Upload, Grid3X3, List, FileText, Filter, Download } from 'lucide-react'
 import { documentService } from '../../services/documents'
+import { usePermissions } from '../../contexts/PermissionsContext'
 
 const typeColors = { PDF: '#C4462A', DOCX: '#2E6FC4', TXT: '#6B6966', MD: '#3D8C5C' }
 
@@ -60,6 +61,9 @@ export default function DocumentsPage() {
   const lastWorkspaceIdRef = useRef(null)
 
   const { activeWorkspaceId: workspaceId } = useSelector((s) => s.workspace)
+  const { hasPerm, permissionsLoaded } = usePermissions()
+  const canRead = hasPerm('files', 'read')
+  const canCreate = hasPerm('files', 'create')
 
   const loadDocuments = useCallback(async () => {
     if (!workspaceId) {
@@ -177,6 +181,19 @@ export default function DocumentsPage() {
     return matchesSearch && matchesType
   })
 
+  if (permissionsLoaded && !canRead) {
+    return (
+      <div className="flex flex-col h-full bg-base">
+        <header className="h-14 bg-base border-b border-[rgba(28,27,26,0.10)] flex items-center px-6 shrink-0">
+          <h1 className="text-lg font-semibold text-ink tracking-tight">Documents</h1>
+        </header>
+        <p className="text-center text-sm text-ink-tertiary py-10 px-4">
+          You don't have permission to view documents in this workspace.
+        </p>
+      </div>
+    )
+  }
+
   return (
     <>
       {/* Hidden file input */}
@@ -192,6 +209,7 @@ export default function DocumentsPage() {
       {/* Header */}
       <header className="h-14 bg-base border-b border-[rgba(28,27,26,0.10)] flex items-center justify-between px-6 shrink-0">
         <h1 className="text-lg font-semibold text-ink tracking-tight">Documents</h1>
+        {canCreate && (
         <Button
           variant="contained"
           startIcon={<Plus size={16} />}
@@ -200,10 +218,12 @@ export default function DocumentsPage() {
         >
           Upload documents
         </Button>
+        )}
       </header>
 
       <div className="flex-1 overflow-y-auto p-6">
         {/* Drop zone */}
+        {canCreate && (
         <div
           className={`border-2 border-dashed rounded-xl bg-surface-2 p-10 flex flex-col items-center justify-center text-center mb-8 cursor-pointer transition-colors ${
             dragOver
@@ -222,6 +242,7 @@ export default function DocumentsPage() {
           </p>
           <p className="text-[13px] text-ink-tertiary">Supports PDF, DOCX, TXT, MD — up to 50MB</p>
         </div>
+        )}
 
         {/* Toolbar */}
         <div className="flex items-center justify-between mb-5">

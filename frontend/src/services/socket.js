@@ -67,3 +67,17 @@ export function onChatMessage(handler) {
     }
   }
 }
+
+export function onNotification(handler) {
+  const s = getSocket()
+  if (!s) return () => {}
+  const events = ['notification', 'notification.created', 'notification:new']
+  events.forEach((evt) => s.on(evt, handler))
+  return () => {
+    try {
+      events.forEach((evt) => s.off(evt, handler))
+    } catch {
+      /* socket gone */
+    }
+  }
+}

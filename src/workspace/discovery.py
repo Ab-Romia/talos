@@ -18,7 +18,7 @@ router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 STANDARD_PERMS = [
     ("workspace", "view"), ("workspace.role", "view"), ("workspace.role", "manage"),
     ("channel", "view"),
-    ("channel.message", "view_history"), ("channel.message", "send"),
+    ("channel.message", "send"),
     ("channel.member", "view_presence"),
     ("files", "read"), ("files", "write"), ("files", "create"),
 ]
@@ -37,12 +37,14 @@ class AddMemberRequest(BaseModel):
     identifier: str = Field(min_length=1, max_length=320)
 
 
-def _serialize(db, ws: Workspace) -> dict:
+def _serialize(db, ws: Workspace, accessible_channel_ids: set | None = None) -> dict:
     channels = db.scalars(
         select(Channel)
         .where(Channel.workspace_id == ws.id, Channel.deleted_at.is_(None))
         .order_by(Channel.created_at)
     ).all()
+    if accessible_channel_ids is not None:
+        channels = [c for c in channels if c.id in accessible_channel_ids]
     return {
         "id": str(ws.id),
         "name": ws.name,
@@ -157,6 +159,8 @@ def provision_workspace(db, owner: User, name: str) -> Workspace:
 @router.get("/")
 def list_my_workspaces(user: UserDep, db: DatabaseDep):
     """List workspaces the current user owns or is a member of, with their channels."""
+    from chat.realtime import _get_accessible_channels
+
     workspaces = db.scalars(
         select(Workspace)
         .where(Workspace.deleted_at.is_(None))
@@ -170,7 +174,8 @@ def list_my_workspaces(user: UserDep, db: DatabaseDep):
         )
         .order_by(Workspace.created_at)
     ).all()
-    return [_serialize(db, ws) for ws in workspaces]
+    accessible = _get_accessible_channels(db, user.id)
+    return [_serialize(db, ws, accessible) for ws in workspaces]
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
