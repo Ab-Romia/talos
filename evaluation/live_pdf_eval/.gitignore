@@ -1,2 +1,4 @@
 results/cache/
 data/
+results/judged_arms.json
+results/*.log
