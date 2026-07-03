@@ -82,6 +82,27 @@ def _ensure_milvus_connection():
         _milvus_connected = True
 
 
+# bge-en-v1.5 retrieval instruction (query side only) — per the BAAI model card.
+BGE_QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
+
+
+def _bge_embeddings_cls():
+    from langchain_community.embeddings import HuggingFaceBgeEmbeddings
+    return HuggingFaceBgeEmbeddings
+
+
+def _hf_embeddings_for(model: str) -> Embeddings:
+    """HF embedder for the configured model. bge-en models need the query-side
+    instruction prefix or retrieval quality silently degrades."""
+    if "bge-" in model:
+        return _bge_embeddings_cls()(
+            model_name=model,
+            query_instruction=BGE_QUERY_INSTRUCTION,
+            encode_kwargs={"normalize_embeddings": True},
+        )
+    return HuggingFaceEmbeddings(model_name=model)
+
+
 @lru_cache(maxsize=None)
 def _build_embeddings(provider: str, model: str, api_key: str | None) -> Embeddings:
     # Cached: constructing the embedder (esp. the HuggingFace sentence-transformer)
@@ -90,11 +111,30 @@ def _build_embeddings(provider: str, model: str, api_key: str | None) -> Embeddi
     if provider == "openai":
         return OpenAIEmbeddings(model=model, api_key=api_key)
     elif provider == "huggingface":
-        return HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2"
-        )
+        return _hf_embeddings_for(model)
     else:
         raise ValueError(f"Unknown embedding provider: {provider}")
+
+
+@lru_cache(maxsize=None)
+def _assert_collection_dim(collection_name: str, provider: str, model: str) -> None:
+    """Fail fast if the configured embedder's dimension doesn't match the live
+    collection (e.g. env lost EMBEDDING_PROVIDER and fell back to OpenAI/1536
+    against a 384-dim corpus). Cached: one probe embedding per process."""
+    _ensure_milvus_connection()
+    if not utility.has_collection(collection_name):
+        return
+    field = next((f for f in Collection(collection_name).schema.fields if f.name == "vector"), None)
+    if field is None:
+        return
+    coll_dim = field.params.get("dim")
+    emb_dim = len(get_embeddings(provider).embed_query("dimension probe"))
+    if coll_dim is not None and emb_dim != int(coll_dim):
+        raise RuntimeError(
+            f"Embedding dim mismatch: {provider}/{model} produces {emb_dim}-dim vectors "
+            f"but collection '{collection_name}' is {coll_dim}-dim. Fix EMBEDDING_* env "
+            f"or re-ingest the collection."
+        )
 
 
 def get_embeddings(provider: str | None = None, config=global_rag_config) -> Embeddings:
@@ -164,6 +204,11 @@ def get_workspace_vectorstore(
     """
     if embeddings is None:
         embeddings = get_embeddings(embedding_provider)
+        _assert_collection_dim(
+            collection_name,
+            embedding_provider or global_rag_config.embedding_provider,
+            global_rag_config.embedding_model,
+        )
 
     return Milvus(
         embedding_function=embeddings,
