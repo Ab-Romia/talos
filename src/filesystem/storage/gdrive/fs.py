@@ -1,4 +1,5 @@
 import io
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from typing import AsyncIterator, Any, Literal, TYPE_CHECKING
@@ -8,6 +9,7 @@ from authlib.integrations.httpx_client import AsyncOAuth2Client
 from cachetools import LRUCache
 from fsspec.asyn import AbstractAsyncStreamedFile, AsyncFileSystem
 
+from auth.model import GDriveOwnerType
 from auth.utils import jwt
 from config import cfg
 
@@ -43,12 +45,27 @@ class GDriveFileSystem(AsyncFileSystem):
     _INFO_FIELDS = "id,name,mimeType,size,modifiedTime,createdTime,sha256Checksum"
     _LS_FIELDS = f"files({_INFO_FIELDS}),nextPageToken"
 
-    def __init__(self, user_creds: UserCreds, root_folder_id: str = "root", **kwargs):
+    def __init__(
+            self,
+            user_creds: UserCreds | None = None,
+            root_folder_id: str = "root",
+            owner_type: GDriveOwnerType | None = None,
+            owner_id: uuid.UUID | None = None,
+            **kwargs,
+    ):
         super().__init__(**kwargs)
-        self.user_creds = user_creds
+        self.user_creds = user_creds or UserCreds(
+            id=uuid.uuid4(),
+            access_token="",
+            refresh_token=None,
+            expires_at=None,
+            scopes=[],
+        )
         self.client_creds = cfg().auth.oauth_clients.get("google")
         assert self.client_creds, "Google OAuth client config is required"
         self.root_folder_id = root_folder_id
+        self.owner_type = owner_type or GDriveOwnerType.workspace
+        self.owner_id = owner_id or self.user_creds.id
 
     @asynccontextmanager
     async def client(self):
@@ -243,7 +260,8 @@ class GDriveFileSystem(AsyncFileSystem):
         if fn is None:
             raise ValueError(f"Unsupported operation: {operation!r}")
         claims = DriveClaims(
-            user_creds_id=self.user_creds.id,
+            owner_type=self.owner_type,
+            owner_id=self.owner_id,
             file_path=path,
             op=operation,
             exp=jwt.now() + timedelta(minutes=expiration),

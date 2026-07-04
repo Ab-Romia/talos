@@ -4,7 +4,7 @@ from enum import Enum as PyEnum
 from typing import Any, TYPE_CHECKING
 
 import sqlalchemy as sql
-from sqlalchemy import Uuid, ForeignKey, DateTime, func
+from sqlalchemy import Uuid, ForeignKey, DateTime, func, UniqueConstraint
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -104,6 +104,29 @@ class ProviderToken(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=func.now(), onupdate=func.now()
     )
+
+
+class GDriveOwnerType(str, PyEnum):
+    workspace = "workspace"
+    channel = "channel"
+
+
+class GDriveConnection(Base):
+    __tablename__ = "gdrive_connections"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    owner_type: Mapped[GDriveOwnerType] = mapped_column(sql.Enum(GDriveOwnerType), nullable=False)
+    owner_id: Mapped[uuid.UUID] = mapped_column(sql.Uuid, nullable=False)
+    root_folder_id: Mapped[str | None] = mapped_column()
+    root_folder_name: Mapped[str | None] = mapped_column()
+    access_token: Mapped[str] = mapped_column()
+    refresh_token: Mapped[str | None] = mapped_column()
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    scope: Mapped[str | None] = mapped_column()
+    connected_by_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("owner_type", "owner_id"),)
 
 
 class Session(Base):

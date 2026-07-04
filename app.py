@@ -13,7 +13,7 @@ from auth.router import router as auth_router
 from auth.utils.session import SessionMiddleware
 from chat.realtime import sio
 from config import cfg
-from filesystem.storage.gdrive.router import router as gdrive_proxy_router
+from filesystem.storage.gdrive.router import router as gdrive_proxy_router, gdrive_oauth_router
 from notifications.router import notifications as notifications_router
 from utils.exceptions import dbapi_error_handler
 from workspace.router import workspace as workspace_router, channel as channel_router
@@ -57,6 +57,7 @@ app.include_router(notifications_router, prefix="/api")
 app.include_router(workspace_router, prefix="/api")
 app.include_router(channel_router, prefix="/api")
 app.include_router(gdrive_proxy_router, prefix="/api/storage", tags=["gdrive-proxy"])
+app.include_router(gdrive_oauth_router)
 
 # TODO: replace with reverse proxy
 app.add_middleware(
