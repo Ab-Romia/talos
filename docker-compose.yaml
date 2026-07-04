@@ -7,12 +7,15 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      MILVUS_HOST: milvus-standalone
+      HF_HOME: /models/hf
+    volumes:
+      - hf_cache:/models
     ports:
       - "8000:8000"
     depends_on:
       postgres:
-        condition: service_healthy
-      milvus-standalone:
         condition: service_healthy
       minio:
         condition: service_healthy
@@ -20,6 +23,7 @@ services:
         condition: service_healthy
 
   worker:
+    profiles: ["async"]   # async taskiq worker (notifications); not needed for FE<->BE integration
     build:
       context: .
       target: worker
@@ -33,7 +37,30 @@ services:
       MINIO__INTERNAL_ENDPOINT: minio:9000
       MINIO__EXTERNAL_ENDPOINT: ${MINIO_EXTERNAL_ENDPOINT:-localhost:9000}
       REDIS__URL: redis://redis:6379
-    command: [ "taskiq", "worker", "broker:broker", "notifications.tasks", "--app-dir=src" ]
+      HF_HOME: /models/hf
+    volumes:
+      - hf_cache:/models
+    command: [ "taskiq", "worker", "broker:broker", "notifications.tasks", "processing.tasks", "processing.chat_tasks", "--app-dir=src" ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  scheduler:
+    profiles: ["async"]   # cron source for chat-memory indexing; pairs with the worker
+    build:
+      context: .
+      target: worker
+    hostname: talos-scheduler
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-talos_app}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-talos}
+      MILVUS_HOST: milvus-standalone
+      REDIS__URL: redis://redis:6379
+    command: [ "taskiq", "scheduler", "scheduler:scheduler", "processing.chat_tasks", "--app-dir=src" ]
     depends_on:
       postgres:
         condition: service_healthy
@@ -61,6 +88,7 @@ services:
       retries: 5
 
   postgres-test:
+    profiles: ["test"]   # only for the test suite
     image: postgres:latest
     hostname: postgres-test
     restart: unless-stopped
@@ -74,6 +102,7 @@ services:
       - "5433:5432"
 
   etcd:
+    profiles: ["rag"]   # Milvus dependency (vector store) - RAG only
     container_name: milvus-etcd
     image: quay.io/coreos/etcd:v3.6.7
     environment:
@@ -119,8 +148,9 @@ services:
     environment:
       MINIO_ACCESS_KEY: ${MINIO__ACCESS_KEY}
       MINIO_SECRET_KEY: ${MINIO__SECRET_KEY}
+    entrypoint: [""]   # clear the image's default `mc` entrypoint so /bin/sh runs
     command: >
-      sh -c "
+      /bin/sh -c "
         mc alias set local http://minio:9000 ${MINIO__ACCESS_KEY} ${MINIO__SECRET_KEY};
         mc mb local/talos || true;
       "
@@ -143,6 +173,7 @@ services:
       retries: 3
 
   milvus-standalone:
+    profiles: ["rag"]   # vector store - RAG only, not needed for FE<->BE integration
     container_name: milvus-standalone
     image: milvusdb/milvus
     command: [ "milvus", "run", "standalone" ]
@@ -171,6 +202,7 @@ volumes:
   etcd_data:
   minio_data:
   redis_data:
+  hf_cache:
 
 networks:
   default:

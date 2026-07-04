@@ -205,6 +205,7 @@ def update_workspace_role_permissions(
                        for p in request_permissions.iter(db))
 
     role.permissions.clear()
+    db.flush()
     role.permissions.extend([
         RolePermission(
             permission_id=p.id,
@@ -225,7 +226,7 @@ def update_workspace_role_permissions(
 def update_workspace_role_members(
         workspace_id: WorkspaceID,
         role_id: RoleID,
-        member_ids: Annotated[list[uuid.UUID], Form()],
+        member_ids: Annotated[list[uuid.UUID], Form(default_factory=list)],
         db: DatabaseDep,
 ):
     """
@@ -316,7 +317,20 @@ def get_channel_role_override(channel_id: uuid.UUID, role_id: RoleID, db: Databa
     if override is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Override not found")
 
-    return override
+    return {
+        "role_id": str(override.role_id),
+        "channel_id": str(override.channel_id),
+        "permission_overrides": [
+            {
+                "resource": po.permission.resource,
+                "action": po.permission.action,
+                "scope": po.scope.value,
+                "is_deny": po.is_deny,
+            }
+            for po in override.permission_overrides
+            if po.permission is not None
+        ],
+    }
 
 
 @channel.put("/roles/{role_id}", dependencies=[require_perms("workspace.role:manage")])
@@ -362,6 +376,8 @@ def update_channel_roles_override(
         for p, is_deny in permissions
     )
 
+    override.permission_overrides.clear()
+    db.flush()
     override.permission_overrides.extend(
         RolePermission(
             permission_id=p.id,

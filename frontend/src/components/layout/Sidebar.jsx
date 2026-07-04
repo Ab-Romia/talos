@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { useDispatch } from 'react-redux'
+import { useDispatch, useSelector } from 'react-redux'
 import Avatar from '@mui/material/Avatar'
 import IconButton from '@mui/material/IconButton'
 import Tooltip from '@mui/material/Tooltip'
@@ -12,25 +12,23 @@ import TextField from '@mui/material/TextField'
 import Menu from '@mui/material/Menu'
 import MenuItem from '@mui/material/MenuItem'
 import MuiButton from '@mui/material/Button'
+import Alert from '@mui/material/Alert'
+import CircularProgress from '@mui/material/CircularProgress'
 import {
-  Hash, Lock, Plus, Search, ChevronDown, Settings, MessageSquare, FileText, Bot,
+  Hash, Plus, Search, ChevronDown, Settings, MessageSquare, FileText, LogOut, Layers, Sparkles,
 } from 'lucide-react'
 import { logout } from '../../store/authSlice'
+import {
+  createWorkspace,
+  createChatroom,
+  switchWorkspace,
+  setActiveChatroom,
+  clearWorkspaceError,
+} from '../../store/workspaceSlice'
+import { markRead } from '../../store/notificationsSlice'
 import * as R from '../../constants/Routes'
-
-const channels = [
-  { name: 'general', icon: Hash },
-  { name: 'announcements', icon: Hash },
-  { name: 'projects', icon: Hash },
-  { name: 'resources', icon: Hash },
-  { name: 'private-notes', icon: Lock },
-]
-
-const directMessages = [
-  { name: 'Mohab Sherif', initials: 'MS', online: true },
-  { name: 'Kyrollos Youssef', initials: 'KY', online: false },
-  { name: 'Talos AI', initials: 'T', isAI: true, online: true },
-]
+import NotificationsBell from './NotificationsBell'
+import { usePermissions } from '../../contexts/PermissionsContext'
 
 export default function Sidebar() {
   const location = useLocation()
@@ -38,23 +36,26 @@ export default function Sidebar() {
   const dispatch = useDispatch()
   const currentPath = location.pathname
 
+  const {
+    workspaces, chatrooms, activeWorkspaceId, activeChatroomId, unreadChannels, loading, error,
+  } = useSelector((s) => s.workspace)
+  const user = useSelector((s) => s.auth.user)
+  const { hasPerm } = usePermissions()
+  const canViewChannels = hasPerm('channel', 'view')
+
   const [searchQuery, setSearchQuery] = useState('')
   const [workspaceAnchor, setWorkspaceAnchor] = useState(null)
   const [createChannelOpen, setCreateChannelOpen] = useState(false)
-  const [newMessageOpen, setNewMessageOpen] = useState(false)
+  const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
   const [channelName, setChannelName] = useState('')
-  const [messageText, setMessageText] = useState('')
-  const [messageRecipient, setMessageRecipient] = useState('')
+  const [newWorkspaceName, setNewWorkspaceName] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
-  const navItems = [
-    { label: 'Chat', path: R.CHAT_PAGE, icon: MessageSquare },
-    { label: 'Documents', path: R.DOCUMENTS, icon: FileText },
-    { label: 'Settings', path: R.SETTINGS, icon: Settings },
-  ]
-
+  const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
   const query = searchQuery.toLowerCase()
-  const filteredChannels = channels.filter((ch) => ch.name.toLowerCase().includes(query))
-  const filteredDMs = directMessages.filter((dm) => dm.name.toLowerCase().includes(query))
+  const filteredChannels = chatrooms.filter((ch) =>
+    (ch.name || '').toLowerCase().includes(query),
+  )
 
   const handleWorkspaceClick = (e) => setWorkspaceAnchor(e.currentTarget)
   const handleWorkspaceClose = () => setWorkspaceAnchor(null)
@@ -64,16 +65,58 @@ export default function Sidebar() {
     dispatch(logout())
   }
 
-  const handleCreateChannel = () => {
-    setChannelName('')
-    setCreateChannelOpen(false)
+  const handleSelectWorkspace = async (id) => {
+    handleWorkspaceClose()
+    if (id === activeWorkspaceId) return
+    await dispatch(switchWorkspace(id))
   }
 
-  const handleSendMessage = () => {
-    setMessageText('')
-    setMessageRecipient('')
-    setNewMessageOpen(false)
+  const handleCreateChannel = async () => {
+    if (!channelName.trim() || !activeWorkspaceId) return
+    setSubmitting(true)
+    const res = await dispatch(createChatroom({ workspaceId: activeWorkspaceId, name: channelName.trim() }))
+    setSubmitting(false)
+    if (createChatroom.fulfilled.match(res)) {
+      setChannelName('')
+      setCreateChannelOpen(false)
+      navigate(R.CHAT_PAGE)
+    }
   }
+
+  const handleCreateWorkspace = async () => {
+    if (!newWorkspaceName.trim()) return
+    setSubmitting(true)
+    const res = await dispatch(createWorkspace(newWorkspaceName.trim()))
+    setSubmitting(false)
+    if (createWorkspace.fulfilled.match(res)) {
+      setNewWorkspaceName('')
+      setCreateWorkspaceOpen(false)
+      navigate(R.CHAT_PAGE)
+    }
+  }
+
+  const notifications = useSelector((s) => s.notifications.items)
+
+  const handleSelectChatroom = (id) => {
+    dispatch(setActiveChatroom(id))
+    notifications
+      .filter((n) => !n.read_at && n.data?.channel_id === id)
+      .forEach((n) => dispatch(markRead(n.id)))
+    navigate(R.CHAT_PAGE)
+  }
+
+  const navItems = [
+    { label: 'Chat', path: R.CHAT_PAGE, icon: MessageSquare },
+    { label: 'AI Assistant', path: R.AI, icon: Sparkles },
+    { label: 'Documents', path: R.DOCUMENTS, icon: FileText },
+    { label: 'Settings', path: R.SETTINGS, icon: Settings },
+  ]
+
+  const workspaceInitial = (activeWorkspace?.name || 'W').charAt(0).toUpperCase()
+  const userName = user?.name || user?.username || ''
+  const userInitials = userName
+    ? userName.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()
+    : 'U'
 
   return (
     <aside className="w-[260px] bg-surface-2 border-r border-[rgba(28,27,26,0.08)] flex flex-col shrink-0">
@@ -83,81 +126,95 @@ export default function Sidebar() {
         onClick={handleWorkspaceClick}
       >
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 bg-amber rounded-lg flex items-center justify-center text-white text-sm font-bold shadow-sm">A</div>
+          <div className="w-8 h-8 bg-amber rounded-lg flex items-center justify-center text-white text-sm font-bold shadow-sm">
+            {workspaceInitial}
+          </div>
           <div className="text-left">
-            <span className="text-sm font-semibold text-ink block leading-tight">Alex Uni</span>
-            <span className="text-[11px] text-ink-tertiary">7 members</span>
+            <span className="text-sm font-semibold text-ink block leading-tight">
+              {activeWorkspace?.name || (loading ? 'Loading…' : 'No workspace')}
+            </span>
+            <span className="text-[11px] text-ink-tertiary">
+              {workspaces.length} workspace{workspaces.length === 1 ? '' : 's'}
+            </span>
           </div>
         </div>
         <ChevronDown size={14} className="text-ink-tertiary" />
       </button>
 
       <Menu anchorEl={workspaceAnchor} open={Boolean(workspaceAnchor)} onClose={handleWorkspaceClose}>
-        <MenuItem selected onClick={handleWorkspaceClose}>Alex Uni</MenuItem>
-        <MenuItem onClick={handleWorkspaceClose}>Create workspace</MenuItem>
-        <MenuItem onClick={handleSignOut}>Sign out</MenuItem>
+        {workspaces.map((ws) => (
+          <MenuItem
+            key={ws.id}
+            selected={ws.id === activeWorkspaceId}
+            onClick={() => handleSelectWorkspace(ws.id)}
+          >
+            <Layers size={14} style={{ marginRight: 8 }} /> {ws.name}
+          </MenuItem>
+        ))}
+        <MenuItem onClick={() => { handleWorkspaceClose(); setCreateWorkspaceOpen(true) }}>
+          <Plus size={14} style={{ marginRight: 8 }} /> Create workspace
+        </MenuItem>
+        <MenuItem onClick={handleSignOut}>
+          <LogOut size={14} style={{ marginRight: 8 }} /> Sign out
+        </MenuItem>
       </Menu>
 
-      {/* Search */}
-      <div className="mx-3 mt-3 mb-4">
-        <div className="flex items-center gap-2 h-8 bg-base border border-[rgba(28,27,26,0.08)] rounded-lg px-2.5">
-          <Search size={14} className="text-ink-muted shrink-0" />
-          <input
-            type="text"
-            placeholder="Search..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="bg-transparent border-none text-[13px] text-ink outline-none w-full placeholder:text-ink-muted"
-          />
-        </div>
-      </div>
+      {error && (
+        <Alert
+          severity="error"
+          onClose={() => dispatch(clearWorkspaceError())}
+          sx={{ mx: 1.5, mb: 1, fontSize: 12 }}
+        >
+          {error}
+        </Alert>
+      )}
 
-      {/* Scrollable nav area */}
-      <div className="flex-1 overflow-y-auto px-3">
-        {/* Channels */}
-        <SectionHeader label="Channels" onAdd={() => setCreateChannelOpen(true)} />
-        <ul className="list-none mb-4">
-          {filteredChannels.map((ch) => (
-            <NavItem key={ch.name} icon={<ch.icon size={15} />} label={ch.name} onClick={() => navigate(R.CHAT_PAGE)} />
-          ))}
-        </ul>
+      {canViewChannels && (
+        <>
+          {/* Search */}
+          <div className="mx-3 mt-3 mb-4">
+            <div className="flex items-center gap-2 h-8 bg-base border border-[rgba(28,27,26,0.08)] rounded-lg px-2.5">
+              <Search size={14} className="text-ink-muted shrink-0" />
+              <input
+                type="text"
+                placeholder="Search channels..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="bg-transparent border-none text-[13px] text-ink outline-none w-full placeholder:text-ink-muted"
+              />
+            </div>
+          </div>
 
-        {/* Direct Messages */}
-        <SectionHeader label="Direct Messages" onAdd={() => setNewMessageOpen(true)} />
-        <ul className="list-none mb-4">
-          {filteredDMs.map((dm) => (
-            <li
-              key={dm.name}
-              className={`flex items-center gap-2.5 h-9 px-2.5 rounded-lg cursor-pointer transition-colors mb-0.5 ${
-                dm.isAI && currentPath === R.CHAT_PAGE
-                  ? 'bg-amber-subtle text-amber'
-                  : 'hover:bg-surface-3 text-ink-secondary'
-              }`}
-              onClick={() => navigate(R.CHAT_PAGE)}
-            >
-              <div className="relative">
-                <Avatar
-                  sx={{
-                    width: 24, height: 24, fontSize: 11,
-                    bgcolor: dm.isAI ? 'primary.light' : '#EEEDEA',
-                    color: dm.isAI ? 'primary.main' : 'text.secondary',
-                    border: dm.isAI ? '1.5px solid' : 'none',
-                    borderColor: dm.isAI ? 'rgba(196,145,58,0.4)' : 'transparent',
-                  }}
-                >
-                  {dm.initials}
-                </Avatar>
-                {dm.online && (
-                  <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-success rounded-full border-2 border-surface-2" />
-                )}
-              </div>
-              <span className={`text-[13px] ${dm.isAI && currentPath === R.CHAT_PAGE ? 'font-semibold' : 'font-medium'}`}>
-                {dm.name}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </div>
+          {/* Scrollable nav area */}
+          <div className="flex-1 overflow-y-auto px-3">
+            {/* Channels */}
+            <SectionHeader label="Channels" onAdd={() => setCreateChannelOpen(true)} />
+            <ul className="list-none mb-4">
+              {loading && !chatrooms.length && (
+                <li className="px-2.5 py-2 text-[12px] text-ink-tertiary flex items-center gap-2">
+                  <CircularProgress size={12} /> Loading…
+                </li>
+              )}
+              {!loading && filteredChannels.length === 0 && (
+                <li className="px-2.5 py-2 text-[12px] text-ink-tertiary">
+                  {chatrooms.length === 0 ? 'No channels yet' : 'No matches'}
+                </li>
+              )}
+              {filteredChannels.map((ch) => (
+                <NavItem
+                  key={ch.id}
+                  icon={<Hash size={15} />}
+                  label={ch.name}
+                  active={ch.id === activeChatroomId && currentPath === R.CHAT_PAGE}
+                  unread={unreadChannels.includes(ch.id)}
+                  onClick={() => handleSelectChatroom(ch.id)}
+                />
+              ))}
+            </ul>
+          </div>
+        </>
+      )}
+      {!canViewChannels && <div className="flex-1" />}
 
       {/* Quick nav - pinned to bottom */}
       <div className="px-3 py-2 border-t border-[rgba(28,27,26,0.06)]">
@@ -181,65 +238,77 @@ export default function Sidebar() {
       <div className="flex items-center justify-between px-4 py-3 border-t border-[rgba(28,27,26,0.06)]">
         <div className="flex items-center gap-2.5">
           <Avatar sx={{ width: 30, height: 30, bgcolor: 'primary.light', color: 'primary.main', fontSize: 12, fontWeight: 600 }}>
-            AM
+            {userInitials}
           </Avatar>
-          <span className="text-[13px] font-medium text-ink">Abdelrahman Mashaal</span>
+          <span className="text-[13px] font-medium text-ink truncate max-w-[140px]">
+            {userName || 'Signed in'}
+          </span>
         </div>
-        <Tooltip title="Settings">
-          <IconButton size="small" onClick={() => navigate(R.SETTINGS)} sx={{ color: 'text.secondary' }}>
-            <Settings size={15} />
-          </IconButton>
-        </Tooltip>
+        <div className="flex items-center gap-0.5">
+          <NotificationsBell />
+          <Tooltip title="Settings">
+            <IconButton size="small" onClick={() => navigate(R.SETTINGS)} sx={{ color: 'text.secondary' }}>
+              <Settings size={15} />
+            </IconButton>
+          </Tooltip>
+        </div>
       </div>
 
       {/* Create Channel Dialog */}
       <Dialog open={createChannelOpen} onClose={() => setCreateChannelOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>Create Channel</DialogTitle>
+        <DialogTitle>Create channel</DialogTitle>
         <DialogContent>
           <TextField
             autoFocus
             margin="dense"
             label="Channel name"
+            placeholder="e.g. team-updates"
             fullWidth
             variant="outlined"
             value={channelName}
             onChange={(e) => setChannelName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleCreateChannel()}
           />
         </DialogContent>
         <DialogActions>
           <MuiButton onClick={() => setCreateChannelOpen(false)}>Cancel</MuiButton>
-          <MuiButton onClick={handleCreateChannel} variant="contained">Create</MuiButton>
+          <MuiButton
+            onClick={handleCreateChannel}
+            variant="contained"
+            disabled={!channelName.trim() || submitting}
+            startIcon={submitting ? <CircularProgress size={14} color="inherit" /> : null}
+          >
+            Create
+          </MuiButton>
         </DialogActions>
       </Dialog>
 
-      {/* New Message Dialog */}
-      <Dialog open={newMessageOpen} onClose={() => setNewMessageOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>New Message</DialogTitle>
+      {/* Create Workspace Dialog */}
+      <Dialog open={createWorkspaceOpen} onClose={() => setCreateWorkspaceOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Create workspace</DialogTitle>
         <DialogContent>
           <TextField
             autoFocus
             margin="dense"
-            label="To"
-            placeholder="e.g. Mohab Sherif"
+            label="Workspace name"
+            placeholder="e.g. Alex Uni"
             fullWidth
             variant="outlined"
-            value={messageRecipient}
-            onChange={(e) => setMessageRecipient(e.target.value)}
-          />
-          <TextField
-            margin="dense"
-            label="Message"
-            fullWidth
-            variant="outlined"
-            multiline
-            rows={3}
-            value={messageText}
-            onChange={(e) => setMessageText(e.target.value)}
+            value={newWorkspaceName}
+            onChange={(e) => setNewWorkspaceName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleCreateWorkspace()}
           />
         </DialogContent>
         <DialogActions>
-          <MuiButton onClick={() => setNewMessageOpen(false)}>Cancel</MuiButton>
-          <MuiButton onClick={handleSendMessage} variant="contained">Send</MuiButton>
+          <MuiButton onClick={() => setCreateWorkspaceOpen(false)}>Cancel</MuiButton>
+          <MuiButton
+            onClick={handleCreateWorkspace}
+            variant="contained"
+            disabled={!newWorkspaceName.trim() || submitting}
+            startIcon={submitting ? <CircularProgress size={14} color="inherit" /> : null}
+          >
+            Create
+          </MuiButton>
         </DialogActions>
       </Dialog>
     </aside>
@@ -260,7 +329,7 @@ function SectionHeader({ label, onAdd }) {
   )
 }
 
-function NavItem({ icon, label, active, badge, onClick }) {
+function NavItem({ icon, label, active, unread, onClick }) {
   return (
     <li
       className={`flex items-center gap-2.5 h-8 px-2.5 rounded-lg cursor-pointer transition-colors mb-0.5 ${
@@ -269,12 +338,7 @@ function NavItem({ icon, label, active, badge, onClick }) {
       onClick={onClick}
     >
       <span className="text-ink-tertiary w-4 text-center shrink-0">{icon}</span>
-      <span className="text-[13px] font-medium flex-1 truncate">{label}</span>
-      {badge && (
-        <span className="text-[11px] font-semibold bg-amber text-white px-1.5 rounded-full min-w-[18px] text-center">
-          {badge}
-        </span>
-      )}
+      <span className={`text-[13px] flex-1 truncate ${unread ? 'font-bold text-ink' : 'font-medium'}`}>{label}</span>
     </li>
   )
 }

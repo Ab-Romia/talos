@@ -62,8 +62,10 @@ class TestGetChannelMessages:
 
         assert len(data) == 2
         # Verify reverse chronological order (newest first)
-        assert data[0]["content"] == "Message 4"
-        assert data[1]["content"] == "Message 3"
+        assert data[0]["content"] == {
+            'content': [{'content': [{'text': 'Message 4', 'type': 'text'}], 'type': 'paragraph'}], 'type': 'doc'}
+        assert data[1]["content"] == {
+            'content': [{'content': [{'text': 'Message 3', 'type': 'text'}], 'type': 'paragraph'}], 'type': 'doc'}
 
     def test_get_channel_messages_out_of_bounds(self, client, test_channel, auth_token, path):
         """Offset beyond total messages returns an empty list."""
@@ -102,7 +104,8 @@ class TestGetSingleMessage:
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == msg_id
-        assert data["content"] == "Target message"
+        assert data["content"] == {
+            'content': [{'content': [{'text': 'Target message', 'type': 'text'}], 'type': 'paragraph'}], 'type': 'doc'}
         assert data["channel_id"] == str(test_channel.id)
 
     def test_get_single_message_not_found(self, client, test_channel, auth_token, path):

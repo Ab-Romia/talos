@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { useSelector } from 'react-redux'
 import Button from '@mui/material/Button'
 import Chip from '@mui/material/Chip'
 import TextField from '@mui/material/TextField'
@@ -17,16 +18,25 @@ import TableCell from '@mui/material/TableCell'
 import TableContainer from '@mui/material/TableContainer'
 import TableHead from '@mui/material/TableHead'
 import TableRow from '@mui/material/TableRow'
-import { Plus, Search, Upload, Grid3X3, List, FileText, Filter } from 'lucide-react'
+import { Plus, Search, Upload, Grid3X3, List, FileText, Filter, Download } from 'lucide-react'
 import { documentService } from '../../services/documents'
-import { chatService } from '../../services/chat'
+import { usePermissions } from '../../contexts/PermissionsContext'
 
 const typeColors = { PDF: '#C4462A', DOCX: '#2E6FC4', TXT: '#6B6966', MD: '#3D8C5C' }
-const statusMap = { indexed: 'success', processing: 'warning', error: 'error' }
+
+// Backend FileStatus: pending | uploaded | processed | indexed | processing_failed
+const statusMap = { ready: 'success', pending: 'default', failed: 'error' }
+const statusLabel = (s) => ({ ready: 'Ready', pending: 'Pending', failed: 'Failed' }[s] || s)
+function mapStatus(fileStatus) {
+  if (fileStatus === 'processing_failed') return 'failed'
+  if (fileStatus === 'pending') return 'pending'
+  return 'ready' // uploaded / processed / indexed → available
+}
+
 const filterOptions = ['All types', 'PDF', 'DOCX', 'TXT', 'MD']
 
 function getFileExtension(fileName) {
-  const ext = fileName.split('.').pop().toUpperCase()
+  const ext = (fileName || '').split('.').pop().toUpperCase()
   if (['PDF', 'DOCX', 'TXT', 'MD'].includes(ext)) return ext
   return 'TXT'
 }
@@ -46,72 +56,84 @@ export default function DocumentsPage() {
   const [selectedDoc, setSelectedDoc] = useState(null)
   const [snackbar, setSnackbar] = useState({ open: false, message: '' })
   const [dragOver, setDragOver] = useState(false)
-  const [workspaceId, setWorkspaceId] = useState(null)
   const fileInputRef = useRef(null)
+  const loadGenRef = useRef(0)
+  const lastWorkspaceIdRef = useRef(null)
 
-  // Load workspace and files on mount
-  useEffect(() => {
-    async function init() {
-      try {
-        let workspaces = await chatService.getWorkspaces()
-        let ws = workspaces[0]
-        if (!ws) ws = await chatService.createWorkspace('My Workspace')
-        setWorkspaceId(ws.id)
+  const { activeWorkspaceId: workspaceId } = useSelector((s) => s.workspace)
+  const { hasPerm, permissionsLoaded } = usePermissions()
+  const canRead = hasPerm('files', 'read')
+  const canCreate = hasPerm('files', 'create')
 
-        const result = await documentService.list(ws.id)
-        const mapped = (result.files || []).map((f) => ({
-          id: f.id,
-          name: f.original_filename,
-          type: getFileExtension(f.original_filename),
-          size: formatFileSize(f.size_bytes),
-          chunks: f.chunk_count,
-          status: f.processing_status === 'indexed' ? 'indexed' : f.processing_status === 'failed' ? 'error' : 'processing',
-        }))
-        setDocs(mapped)
-      } catch (err) {
-        console.error('Documents init failed:', err)
+  const loadDocuments = useCallback(async () => {
+    if (!workspaceId) {
+      setDocs([])
+      lastWorkspaceIdRef.current = null
+      return
+    }
+    if (lastWorkspaceIdRef.current !== workspaceId) {
+      setDocs([])
+      lastWorkspaceIdRef.current = workspaceId
+    }
+    const gen = ++loadGenRef.current
+    try {
+      const result = await documentService.list(workspaceId, { limit: 100 })
+      if (loadGenRef.current !== gen) return
+      const files = result?.files || []
+      const rows = files.map((f) => ({
+        id: f.id,
+        name: f.original_filename,
+        contentType: f.content_type,
+        type: getFileExtension(f.original_filename),
+        size: formatFileSize(f.size_bytes ?? 0),
+        status: mapStatus(f.status),
+        rawStatus: f.status,
+      }))
+      setDocs(rows)
+    } catch (err) {
+      if (loadGenRef.current === gen) {
+        console.error('Documents load failed:', err)
+        setSnackbar({ open: true, message: err?.detail || 'Failed to load documents' })
       }
     }
-    init()
-  }, [])
+  }, [workspaceId])
+
+  useEffect(() => {
+    void loadDocuments()
+  }, [loadDocuments])
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === 'visible' && workspaceId) void loadDocuments()
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [workspaceId, loadDocuments])
 
   const handleFiles = useCallback(async (files) => {
     if (!workspaceId) return
-    setSnackbar({ open: true, message: `Uploading ${files.length} file(s)...` })
-
+    setSnackbar({ open: true, message: `Uploading ${files.length} file(s)…` })
+    let ok = 0
     for (const file of Array.from(files)) {
       try {
-        const result = await documentService.upload(workspaceId, file)
-        const doc = {
-          id: result.file_id,
-          name: result.filename,
-          type: getFileExtension(result.filename),
-          size: formatFileSize(result.size_bytes),
-          chunks: null,
-          status: 'processing',
-        }
-        setDocs((prev) => [...prev, doc])
-
-        // Poll for processing status
-        const poll = setInterval(async () => {
-          try {
-            const status = await documentService.getStatus(workspaceId, result.file_id)
-            if (status.processing_status === 'indexed' || status.processing_status === 'failed') {
-              clearInterval(poll)
-              setDocs((prev) =>
-                prev.map((d) =>
-                  d.id === result.file_id
-                    ? { ...d, status: status.processing_status === 'indexed' ? 'indexed' : 'error', chunks: status.chunk_count }
-                    : d
-                )
-              )
-              setSnackbar({ open: true, message: status.processing_status === 'indexed' ? `${file.name} indexed successfully` : `${file.name} processing failed` })
-            }
-          } catch { clearInterval(poll) }
-        }, 3000)
+        await documentService.upload(workspaceId, file)
+        ok += 1
       } catch (err) {
-        setSnackbar({ open: true, message: `Failed to upload ${file.name}: ${err.detail || 'unknown error'}` })
+        setSnackbar({ open: true, message: err?.detail || `Failed to upload ${file.name}` })
       }
+    }
+    if (ok) {
+      setSnackbar({ open: true, message: `Uploaded ${ok} file(s)` })
+      void loadDocuments()
+    }
+  }, [workspaceId, loadDocuments])
+
+  const handleDownload = useCallback(async (docId, name) => {
+    if (!workspaceId) return
+    try {
+      await documentService.download(workspaceId, docId, name)
+    } catch (err) {
+      setSnackbar({ open: true, message: err?.detail || 'Could not download file' })
     }
   }, [workspaceId])
 
@@ -149,7 +171,7 @@ export default function DocumentsPage() {
       setSelectedDoc(null)
       setSnackbar({ open: true, message: `${docName} deleted` })
     } catch (err) {
-      setSnackbar({ open: true, message: `Failed to delete ${docName}` })
+      setSnackbar({ open: true, message: err?.detail || `Failed to delete ${docName}` })
     }
   }
 
@@ -158,6 +180,19 @@ export default function DocumentsPage() {
     const matchesType = filterType === 'All types' || doc.type === filterType
     return matchesSearch && matchesType
   })
+
+  if (permissionsLoaded && !canRead) {
+    return (
+      <div className="flex flex-col h-full bg-base">
+        <header className="h-14 bg-base border-b border-[rgba(28,27,26,0.10)] flex items-center px-6 shrink-0">
+          <h1 className="text-lg font-semibold text-ink tracking-tight">Documents</h1>
+        </header>
+        <p className="text-center text-sm text-ink-tertiary py-10 px-4">
+          You don't have permission to view documents in this workspace.
+        </p>
+      </div>
+    )
+  }
 
   return (
     <>
@@ -174,6 +209,7 @@ export default function DocumentsPage() {
       {/* Header */}
       <header className="h-14 bg-base border-b border-[rgba(28,27,26,0.10)] flex items-center justify-between px-6 shrink-0">
         <h1 className="text-lg font-semibold text-ink tracking-tight">Documents</h1>
+        {canCreate && (
         <Button
           variant="contained"
           startIcon={<Plus size={16} />}
@@ -182,10 +218,12 @@ export default function DocumentsPage() {
         >
           Upload documents
         </Button>
+        )}
       </header>
 
       <div className="flex-1 overflow-y-auto p-6">
         {/* Drop zone */}
+        {canCreate && (
         <div
           className={`border-2 border-dashed rounded-xl bg-surface-2 p-10 flex flex-col items-center justify-center text-center mb-8 cursor-pointer transition-colors ${
             dragOver
@@ -204,6 +242,7 @@ export default function DocumentsPage() {
           </p>
           <p className="text-[13px] text-ink-tertiary">Supports PDF, DOCX, TXT, MD — up to 50MB</p>
         </div>
+        )}
 
         {/* Toolbar */}
         <div className="flex items-center justify-between mb-5">
@@ -277,17 +316,17 @@ export default function DocumentsPage() {
                 onClick={() => setSelectedDoc(doc)}
                 className="border border-[rgba(28,27,26,0.06)] rounded-lg overflow-hidden cursor-pointer hover:shadow-md hover:border-[rgba(28,27,26,0.10)] transition-all"
               >
-                <div className="h-[140px] bg-surface-2 flex items-center justify-center">
+                <div className="h-[140px] bg-surface-2 flex items-center justify-center overflow-hidden">
                   <FileText size={40} style={{ color: typeColors[doc.type] || '#6B6966' }} />
                 </div>
                 <div className="p-4">
                   <p className="text-sm font-medium text-ink truncate mb-1">{doc.name}</p>
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-ink-tertiary">
-                      {doc.type} · {doc.size}{doc.chunks ? ` · ${doc.chunks} chunks` : ''}
+                      {doc.type} · {doc.size}
                     </span>
                     <Chip
-                      label={doc.status.charAt(0).toUpperCase() + doc.status.slice(1)}
+                      label={statusLabel(doc.status)}
                       color={statusMap[doc.status]}
                       size="small"
                       sx={{ height: 20, fontSize: 11 }}
@@ -308,7 +347,6 @@ export default function DocumentsPage() {
                   <TableCell>Name</TableCell>
                   <TableCell>Type</TableCell>
                   <TableCell>Size</TableCell>
-                  <TableCell>Chunks</TableCell>
                   <TableCell>Status</TableCell>
                 </TableRow>
               </TableHead>
@@ -333,11 +371,8 @@ export default function DocumentsPage() {
                       <span className="text-xs text-ink-tertiary">{doc.size}</span>
                     </TableCell>
                     <TableCell>
-                      <span className="text-xs text-ink-tertiary">{doc.chunks ?? '—'}</span>
-                    </TableCell>
-                    <TableCell>
                       <Chip
-                        label={doc.status.charAt(0).toUpperCase() + doc.status.slice(1)}
+                        label={statusLabel(doc.status)}
                         color={statusMap[doc.status]}
                         size="small"
                         sx={{ height: 20, fontSize: 11 }}
@@ -381,14 +416,10 @@ export default function DocumentsPage() {
                   <span className="text-ink-tertiary">Size</span>
                   <span className="font-medium text-ink">{selectedDoc.size}</span>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-ink-tertiary">Chunks</span>
-                  <span className="font-medium text-ink">{selectedDoc.chunks ?? '—'}</span>
-                </div>
                 <div className="flex justify-between text-sm items-center">
                   <span className="text-ink-tertiary">Status</span>
                   <Chip
-                    label={selectedDoc.status.charAt(0).toUpperCase() + selectedDoc.status.slice(1)}
+                    label={statusLabel(selectedDoc.status)}
                     color={statusMap[selectedDoc.status]}
                     size="small"
                     sx={{ height: 20, fontSize: 11 }}
@@ -402,6 +433,12 @@ export default function DocumentsPage() {
                 onClick={() => handleDeleteDoc(selectedDoc.id)}
               >
                 Delete
+              </Button>
+              <Button
+                startIcon={<Download size={14} />}
+                onClick={() => handleDownload(selectedDoc.id, selectedDoc.name)}
+              >
+                Download
               </Button>
               <Button onClick={() => setSelectedDoc(null)}>Close</Button>
             </DialogActions>

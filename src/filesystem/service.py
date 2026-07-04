@@ -372,19 +372,16 @@ def search_files(
     # then resolve the parent file metadata and apply any additional filters.
     try:
         from rag.vector_store import get_workspace_vectorstore
-        from rag.retrieval.retrievers import get_retriever
     except Exception:
         # If RAG components are not available, return empty result set.
         return [], 0
 
     vectorstore = get_workspace_vectorstore()
-    parts = [f'workspace_id == "{workspace_id}"']
-    search_kwargs = {"expr": " && ".join(parts), "k": limit}
-    retriever = get_retriever(vectorstore=vectorstore, documents=[], search_kwargs=search_kwargs)
-
-    # retriever.invoke returns a list of Document objects with metadata including file_id
+    # Dense search over the workspace's FILE chunks only (chat-memory segments
+    # live in the same collection under source == "chat").
+    expr = f'workspace_id == "{workspace_id}" && source == "file"'
     try:
-        docs = retriever.invoke(text_query)
+        docs = vectorstore.similarity_search(text_query, k=limit, expr=expr)
     except Exception:
         docs = []
 

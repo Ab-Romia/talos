@@ -13,7 +13,7 @@ from config import cfg
 from database import SessionLocal
 from utils.logger import get_logger
 from workspace.model import WorkspaceMember, Channel
-from .model import MessageSchema
+from .model import MessageCreateSchema
 
 mgr = socketio.AsyncRedisManager(cfg().redis.url, channel="sio#")
 sio = socketio.AsyncServer(
@@ -160,7 +160,9 @@ async def disconnect(sid: str, _) -> None:
 async def message(sid: str, data: dict[str, Any]):
     from chat import store_message
 
-    incoming = MessageSchema(**data)
+    # MessageCreateSchema coerces plain-string content into a ProseMirror doc
+    # and validates rich content against chat_schema (rich-msg contract).
+    incoming = MessageCreateSchema(**data)
     sess = await sio.get_session(sid)
 
     message = await store_message(
@@ -175,6 +177,9 @@ async def message(sid: str, data: dict[str, Any]):
         skip_sid=sid,
     )
 
+    from chat.ai import maybe_ai_reply
+    await maybe_ai_reply(message.channel_id, message.content)
+
     # Concurrently fetch sessions of all participants to get their user_ids for the ack response.
     participants = sio.manager.get_participants("/", f"channel:{message.channel_id}")
     sessions = await asyncio.gather(
@@ -188,9 +193,49 @@ async def message(sid: str, data: dict[str, Any]):
         if not isinstance(sess, Exception)
     ]
 
+    from rag.message_text import doc_text
+    asyncio.create_task(_notify_channel_members(
+        channel_id=message.channel_id,
+        sender_id=sess["user_id"],
+        content=doc_text(message.content),
+    ))
+
     return "OK", {  # ack
         "delivered_to": delivered_to,
     },
+
+
+async def _notify_channel_members(channel_id: UUID, sender_id: UUID, content: str):
+    log = get_logger(__name__)
+    try:
+        with SessionLocal() as db:
+            from notifications.service import push_notification
+            from notifications.model import NotificationTag
+
+            channel = db.get(Channel, channel_id)
+            if not channel:
+                log.warning("_notify: channel %s not found", channel_id)
+                return
+
+            members = _get_channel_members(db, channel_id)
+            log.info(f"_notify: channel={channel_id} sender={sender_id} members={members}")
+            recipients = [uid for uid in members if uid != sender_id]
+            log.info(f"_notify: recipients={recipients}")
+
+            if recipients:
+                await push_notification(
+                    db=db,
+                    user_ids=recipients,
+                    title=f"#{channel.name}",
+                    body=content[:200] if content else "",
+                    data={"channel_id": str(channel_id)},
+                    tags=[NotificationTag.SOCIAL],
+                )
+                log.info(f"_notify: push_notification sent to {len(recipients)} users")
+            else:
+                log.info("_notify: no recipients, skipping")
+    except Exception:
+        log.exception("Failed to send channel notifications")
 
 
 @sio.event
@@ -251,6 +296,15 @@ def _channel_perms():
 def _get_accessible_channels(db: orm.Session, user_id: UUID) -> set[UUID]:
     """ Channels visible to a user"""
     from permissions.model import Role, ChannelRoleOverride
+    from workspace.model import Workspace
+
+    # Owners can see all channels in their workspaces (bypass bitfield check).
+    owned = set(db.scalars(
+        select(Channel.id)
+        .join(Workspace, Workspace.id == Channel.workspace_id)
+        .where(Workspace.owner_id == user_id)
+        .where(Channel.deleted_at.is_(None))
+    ))
 
     zero = BitString.from_int(0, cfg().auth.permission_bitstring_length)
     override_deny = func.coalesce(ChannelRoleOverride.deny_mask, zero)
@@ -261,7 +315,7 @@ def _get_accessible_channels(db: orm.Session, user_id: UUID) -> set[UUID]:
     rows = db.scalars(
         select(Channel.id)
         .join(Role, Role.workspace_id == Channel.workspace_id)
-        .join(ChannelRoleOverride, ChannelRoleOverride.role_id == Role.id, isouter=True)
+        .join(ChannelRoleOverride, (ChannelRoleOverride.role_id == Role.id) & (ChannelRoleOverride.channel_id == Channel.id), isouter=True)
         .where(Role.users.any(id=user_id))
         .where(Channel.deleted_at.is_(None))
         .having(  # = (role & ~override.deny | override.allow) & channel_view_perm_mask > 0
@@ -274,24 +328,30 @@ def _get_accessible_channels(db: orm.Session, user_id: UUID) -> set[UUID]:
         )
         .group_by(Channel.id)
     )
-    return set(rows)
+    return owned | set(rows)
 
 
-# TODO:
 def _get_channel_members(db: Session, channel_id: UUID) -> set[UUID]:
-    """All workspace members who share the workspace this channel belongs to."""
+    """All workspace members who can view this channel (owners always included)."""
+    from workspace.model import Workspace
+
+    channel = db.get(Channel, channel_id)
+    if not channel:
+        return set()
+
+    owner_id = db.scalar(
+        select(Workspace.owner_id).where(Workspace.id == channel.workspace_id)
+    )
 
     members = db.scalars(
         select(WorkspaceMember.user_id)
-        .join(Channel, Channel.workspace_id == WorkspaceMember.workspace_id)
-        .where(Channel.id == channel_id)
-        .where(Channel.deleted_at.is_(None))
+        .where(WorkspaceMember.workspace_id == channel.workspace_id)
     )
 
     def has_access(user_id: UUID) -> bool:
-        # noinspection PyUnresolvedReferences
+        if user_id == owner_id:
+            return True
         from permissions import user_perms, ScopedPermission
-
         return ScopedPermission.from_str("channel:view") in user_perms(
             workspace_id=None,
             channel_id=channel_id,

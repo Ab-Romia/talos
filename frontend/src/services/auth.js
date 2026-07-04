@@ -5,8 +5,20 @@ export const authService = {
     return api.postForm('/api/auth/password/', { username, password })
   },
 
-  signup({ username, primary_email, password, name }) {
-    return api.postForm('/api/auth/signup', { username, primary_email, password, name })
+  // Step 1: request email verification. The backend only needs the email here;
+  // it emails a link to /signup/complete?token=... (logged to app stdout in dev).
+  signup(email) {
+    return api.postForm('/api/auth/signup', { email })
+  },
+
+  // Step 2: finish signup using the token from the verification link.
+  completeSignup({ email_token, username, name, password }) {
+    return api.postAllowRedirect('/api/auth/signup/complete', {
+      email_token,
+      username,
+      name,
+      auth_info: [{ auth_type: 'password', password }],
+    })
   },
 
   logout() {
@@ -15,6 +27,73 @@ export const authService = {
 
   me() {
     return api.get('/api/auth/me')
+  },
+
+  sudo(password) {
+    return api.post('/api/auth/sudo', { password })
+  },
+
+  changePassword(newPassword) {
+    return api.putQuery('/api/auth/password/change', { new_password: newPassword })
+  },
+
+  listSessions() {
+    return api.get('/api/auth/sessions')
+  },
+
+  getSession(sessionId) {
+    return api.get(`/api/auth/sessions/${sessionId}`)
+  },
+
+  revokeSession(sessionId) {
+    return api.delete(`/api/auth/session/${sessionId}`)
+  },
+
+  revokeAllSessions() {
+    return api.delete('/api/auth/sessions')
+  },
+
+  totpCreate() {
+    return api.post('/api/auth/totp/create')
+  },
+
+  totpRegister({ otp, jwt_totp_claims }) {
+    return api.postForm('/api/auth/totp', { otp, jwt_totp_claims })
+  },
+
+  totpVerify(totp) {
+    return api.postForm('/api/auth/totp/verify', { totp })
+  },
+
+  totpDelete() {
+    return api.delete('/api/auth/totp')
+  },
+
+  passkeyRegistrationChallenge() {
+    return api.post('/api/auth/passkey/register/challenge')
+  },
+
+  passkeyRegister({ jwt_challenge, credential, name }) {
+    return api.postForm('/api/auth/passkey/register', {
+      jwt_challenge,
+      credential,
+      name,
+    })
+  },
+
+  passkeyAuthChallenge() {
+    return api.post('/api/auth/passkey/challenge')
+  },
+
+  passkeyVerify({ jwt_challenge, credential }) {
+    return api.postForm('/api/auth/passkey/verify', {
+      jwt_challenge,
+      credential,
+    })
+  },
+
+  oauthHandoff(token) {
+    return api.post('/api/auth/oauth/handoff', { token })
   },
 
   googleLogin() {

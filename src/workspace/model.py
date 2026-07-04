@@ -26,7 +26,11 @@ class Workspace(Base):
     name: Mapped[str] = mapped_column(unique=True, index=True)
     description: Mapped[str | None] = mapped_column()
     owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
-    icon_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("files.id", ondelete="SET NULL"), nullable=True)
+    # use_alter breaks the workspaces<->files FK cycle (files.workspace_id points
+    # back at workspaces) so create_all/drop_all can order the tables.
+    icon_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("files.id", ondelete="SET NULL", use_alter=True, name="fk_workspaces_icon_id_files"), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column()
@@ -34,7 +38,7 @@ class Workspace(Base):
     owner = relationship("User")
     channels: Mapped[list[Channel]] = relationship("Channel", back_populates="workspace", cascade="all, delete-orphan")
     members = relationship("User", secondary="workspace_members", back_populates="workspaces")
-    files: Mapped[list[File]] = relationship("File", back_populates="workspace")
+    files: Mapped[list[File]] = relationship("File", back_populates="workspace", foreign_keys="File.workspace_id")
     icon = relationship("File", foreign_keys=[icon_id])
 
     roles: Mapped[list[Role]] = relationship(  # type: ignore[forward-reference]

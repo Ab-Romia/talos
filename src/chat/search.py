@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select, and_, func
+from sqlalchemy import String, select, and_, func
 
 from database import AsyncSessionLocal
 from utils.exceptions import handle_exceptions
@@ -44,8 +44,9 @@ async def search_messages(
         filters = []
 
         if text:
-            # Case-insensitive text search using ILIKE
-            filters.append(Message.content.ilike(f"%{text}%"))
+            # content is a ProseMirror JSONB doc (rich-msg) — cast to text for
+            # a case-insensitive substring match over the serialized doc.
+            filters.append(Message.content.cast(String).ilike(f"%{text}%"))
 
         if author_id:
             filters.append(Message.sender_id == author_id)
