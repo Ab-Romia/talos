@@ -195,6 +195,7 @@ async def message(sid: str, data: dict[str, Any]):
         channel_id=message.channel_id,
         sender_id=sess["user_id"],
         content=message.content,
+        message_id=message.id,
     ))
 
     return "OK", {  # ack
@@ -202,7 +203,7 @@ async def message(sid: str, data: dict[str, Any]):
     },
 
 
-async def _notify_channel_members(channel_id: UUID, sender_id: UUID, content: str):
+async def _notify_channel_members(channel_id: UUID, sender_id: UUID, content: str, message_id: UUID | None = None):
     log = get_logger(__name__)
     try:
         with SessionLocal() as db:
@@ -225,7 +226,10 @@ async def _notify_channel_members(channel_id: UUID, sender_id: UUID, content: st
                     user_ids=recipients,
                     title=f"#{channel.name}",
                     body=content[:200] if content else "",
-                    data={"channel_id": str(channel_id)},
+                    data={
+                        "channel_id": str(channel_id),
+                        **({"message_id": str(message_id)} if message_id else {}),
+                    },
                     tags=[NotificationTag.SOCIAL],
                 )
                 log.info(f"_notify: push_notification sent to {len(recipients)} users")

@@ -23,6 +23,13 @@ export const AUTH_PASSKEY_REGISTER = '/api/auth/passkey/register'
 export const AUTH_PASSKEY_CHALLENGE = '/api/auth/passkey/challenge'
 export const AUTH_PASSKEY_VERIFY = '/api/auth/passkey/verify'
 
+// Password reset
+export const AUTH_FORGOT_PASSWORD = '/api/auth/password/forgot'
+export const AUTH_RESET_PASSWORD = '/api/auth/password/reset'
+
+// Account deletion
+export const AUTH_DELETE_ACCOUNT = '/api/auth/me'
+
 // OAuth
 export const AUTH_OAUTH_HANDOFF = '/api/auth/oauth/handoff'
 export const AUTH_GOOGLE_LOGIN = '/api/auth/oauth/google'

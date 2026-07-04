@@ -79,6 +79,44 @@ export const refreshToken = createAsyncThunk(
   }
 )
 
+export const forgotPassword = createAsyncThunk(
+  'auth/forgotPassword',
+  async ({ email }, { rejectWithValue }) => {
+    try {
+      await authService.forgotPassword(email)
+      return true
+    } catch (err) {
+      return rejectWithValue(err.detail || 'Failed to send reset email')
+    }
+  }
+)
+
+export const resetPassword = createAsyncThunk(
+  'auth/resetPassword',
+  async ({ token, password }, { rejectWithValue }) => {
+    try {
+      await authService.resetPassword(token, password)
+      return true
+    } catch (err) {
+      return rejectWithValue(err.detail || 'Failed to reset password')
+    }
+  }
+)
+
+export const deleteAccount = createAsyncThunk(
+  'auth/deleteAccount',
+  async ({ password }, { rejectWithValue }) => {
+    try {
+      await authService.sudo(password)
+      await authService.deleteAccount()
+      setSessionToken(null)
+      return true
+    } catch (err) {
+      return rejectWithValue(err.detail || 'Failed to delete account')
+    }
+  }
+)
+
 export const changePassword = createAsyncThunk(
   'auth/changePassword',
   async ({ currentPassword, newPassword }, { rejectWithValue }) => {
@@ -448,6 +486,17 @@ const authSlice = createSlice({
       .addCase(loginWithPasskey.rejected, (state, action) => {
         state.loading = false
         state.error = action.payload
+      })
+      .addCase(deleteAccount.fulfilled, (state) => {
+        state.isAuthenticated = false
+        state.user = null
+        state.requiresOtp = false
+        state.sessionChecked = true
+        state.sessions = []
+        localStorage.removeItem('talos_auth')
+      })
+      .addCase(deleteAccount.rejected, (state, action) => {
+        state.settingsError = action.payload
       })
       .addCase(completeOAuthHandoff.rejected, (state, action) => {
         state.error = action.payload

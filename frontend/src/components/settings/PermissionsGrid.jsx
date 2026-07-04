@@ -8,15 +8,30 @@ const PERMISSION_GROUPS = [
     label: 'Workspace',
     permissions: [
       { resource: 'workspace', action: 'view', label: 'View workspace' },
+      { resource: 'workspace', action: 'edit', label: 'Edit workspace' },
+      { resource: 'workspace', action: 'delete', label: 'Delete workspace' },
       { resource: 'workspace.role', action: 'view', label: 'View roles' },
+      { resource: 'workspace.role', action: 'manage', label: 'Manage roles' },
+      { resource: 'workspace.member', action: 'view', label: 'View members' },
+      { resource: 'workspace.member', action: 'manage', label: 'Manage members' },
     ],
   },
   {
-    label: 'Channels',
+    label: 'Channel Management',
+    permissions: [
+      { resource: 'channel', action: 'create', label: 'Create channels' },
+      { resource: 'channel', action: 'edit', label: 'Edit channels' },
+      { resource: 'channel', action: 'delete', label: 'Delete channels' },
+    ],
+  },
+  {
+    label: 'User Permissions',
     permissions: [
       { resource: 'channel', action: 'view', label: 'View channels' },
       { resource: 'channel.message', action: 'send', label: 'Send messages' },
+      { resource: 'channel.message', action: 'view_history', label: 'View message history' },
       { resource: 'channel.member', action: 'view_presence', label: 'View member presence' },
+      { resource: 'channel.member', action: 'manage', label: 'Manage channel members' },
     ],
   },
   {

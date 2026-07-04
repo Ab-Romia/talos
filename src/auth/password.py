@@ -1,3 +1,4 @@
+import os
 import uuid
 from typing import Annotated
 
@@ -70,7 +71,7 @@ class ForgotPasswordClaims(jwt.BaseJWTClaims):
 
 
 @router.post("/forgot")
-def forgot_password_request(email: Annotated[str, Form()], db: DatabaseDep):
+async def forgot_password_request(email: Annotated[str, Form()], db: DatabaseDep):
     identity = db.execute(
         select(IdentityProvider)
         .where(IdentityProvider.issuer == Issuer.password)
@@ -78,7 +79,6 @@ def forgot_password_request(email: Annotated[str, Form()], db: DatabaseDep):
     ).scalar_one_or_none()
 
     if identity is None:
-        # Don't reveal whether the email exists or not
         return
 
     claims = ForgotPasswordClaims(
@@ -94,7 +94,17 @@ def forgot_password_request(email: Annotated[str, Form()], db: DatabaseDep):
 
     token = jwt.create_token(claims)
 
-    send_email(email, "Password Reset {{token}}", token=token)
+    frontend_origin = os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173").rstrip("/")
+    reset_url = f"{frontend_origin}/reset-password?token={token}"
+    await send_email(
+        email,
+        "You requested a password reset for your Talos account.\n\n"
+        "Click the link below to set a new password:\n\n"
+        f"{reset_url}\n\n"
+        "If you didn't request this, you can safely ignore this email.\n"
+        "This link will expire shortly.",
+        subject="Reset your Talos password",
+    )
 
 
 @router.put("/reset")

@@ -225,6 +225,12 @@ export default function LoginPage() {
               sx={{ mb: 3 }}
             />
 
+            <div className="flex justify-end mb-3">
+              <Link to={R.FORGOT_PASSWORD} className="text-sm font-medium text-amber hover:underline">
+                Forgot password?
+              </Link>
+            </div>
+
             <Button
               type="submit"
               variant="contained"

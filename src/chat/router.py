@@ -76,6 +76,7 @@ async def post_message(channel_id: UUID, req: SendRequest, session: SessionDep):
         channel_id=channel_id,
         sender_id=cast(UUID, session.sub),
         content=req.text,
+        message_id=message.id,
     ))
 
     from chat.ai import maybe_ai_reply

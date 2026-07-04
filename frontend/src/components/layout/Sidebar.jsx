@@ -105,6 +105,7 @@ export default function Sidebar() {
     navigate(R.CHAT_PAGE)
   }
 
+
   const navItems = [
     { label: 'Chat', path: R.CHAT_PAGE, icon: MessageSquare },
     { label: 'AI Assistant', path: R.AI, icon: Sparkles },
@@ -253,6 +254,7 @@ export default function Sidebar() {
           </Tooltip>
         </div>
       </div>
+
 
       {/* Create Channel Dialog */}
       <Dialog open={createChannelOpen} onClose={() => setCreateChannelOpen(false)} maxWidth="xs" fullWidth>
