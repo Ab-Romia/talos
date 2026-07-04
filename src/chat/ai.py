@@ -79,7 +79,18 @@ async def _run_ai_reply(channel_id: UUID, question: str) -> None:
                 return
             ai_user_id = get_ai_user_id(db)
 
-        answer = await asyncio.to_thread(_generate, str(workspace_id), question)
+        # Same retrieval stack as /ask: per-channel ai_settings, chat-memory
+        # recall (chatroom_id), and the channel's un-indexed tail as history.
+        from config import global_rag_config
+        from rag.router import _load_unindexed_tail
+        history, tail_ids = await _load_unindexed_tail(
+            channel_id,
+            global_rag_config.chat_context_cap,
+            global_rag_config.chat_context_char_budget,
+        )
+        answer = await asyncio.to_thread(
+            _generate, str(workspace_id), channel_id, question, history, tail_ids
+        )
         message = await store_assistant_message(channel_id, ai_user_id, answer)
         await sio.send(message.model_dump(mode="json"), room=room)
     except Exception:
@@ -88,9 +99,22 @@ async def _run_ai_reply(channel_id: UUID, question: str) -> None:
         await sio.emit("ai_typing", {"channel_id": str(channel_id), "status": "stop"}, room=room)
 
 
-def _generate(workspace_id: str, question: str) -> str:
-    from config import global_rag_config
+def _generate(workspace_id: str, channel_id: UUID, question: str,
+              history: list, tail_ids: set[str]) -> str:
+    from rag.ai_settings import resolve_ai_config
     from rag.rag_chain import RAGChain
+    from rag.vector_store import WORKSPACE_COLLECTION
+    from uuid import UUID as _UUID
 
-    rag = RAGChain(global_rag_config.milvus_collection_name, workspace_id=workspace_id)
+    with SessionLocal() as db:
+        resolved, provenance = resolve_ai_config(_UUID(workspace_id), channel_id, db)
+    rag = RAGChain(
+        WORKSPACE_COLLECTION,
+        config=resolved,
+        config_provenance=provenance,
+        workspace_id=workspace_id,
+        chatroom_id=str(channel_id),
+        chat_history=history,
+        exclude_message_ids=tail_ids,
+    )
     return rag.query(question)

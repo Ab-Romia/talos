@@ -29,7 +29,10 @@ def _build_chain(
     history: list[AiMessage],
 ):
     from langchain_core.messages import AIMessage, HumanMessage
+    from database import SessionLocal
+    from rag.ai_settings import resolve_ai_config
     from rag.rag_chain import RAGChain
+    from rag.vector_store import WORKSPACE_COLLECTION
 
     ids = [str(f) for f in file_ids] if file_ids else None
     chat_history = [
@@ -37,8 +40,13 @@ def _build_chain(
         for m in history
         if m.role in ("user", "assistant")
     ]
+    # Honor per-workspace ai_settings (no channel scope on this endpoint).
+    with SessionLocal() as db:
+        resolved, provenance = resolve_ai_config(workspace_id, None, db)
     return RAGChain(
-        global_rag_config.milvus_collection_name,
+        WORKSPACE_COLLECTION,
+        config=resolved,
+        config_provenance=provenance,
         workspace_id=str(workspace_id),
         file_ids=ids,
         chat_history=chat_history,
