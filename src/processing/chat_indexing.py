@@ -147,6 +147,8 @@ def index_pending_messages(
             messages = db.scalars(
                 select(Message)
                 .where(Message.indexed_at.is_(None))
+                # soft-deleted messages must not enter chat memory
+                .where(Message.is_deleted.is_(False))
                 .where(Message.sent_at < cutoff)
                 .order_by(Message.sent_at.asc())
                 .limit(batch_size)
