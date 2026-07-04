@@ -23,6 +23,7 @@ import { onChatMessage, onAiTyping, getSocket } from '../../services/socket'
 import { ChatMessageContent } from '../../components/chat/ChatMessageContent'
 import { AiTypingIndicator } from '../../components/chat/AiTypingIndicator'
 import { ChatComposerField } from '../../components/chat/ChatComposerField'
+import { docText } from '../../utils/prosemirrorText'
 
 function fmtTime(iso) {
   if (!iso) return ''
@@ -121,7 +122,7 @@ export default function ChatPage() {
         name,
         initials: initialsOf(name),
         time: fmtTime(m.sent_at),
-        body: m.content,
+        body: docText(m.content),
       }
     },
     [displayName, user],
@@ -197,7 +198,7 @@ export default function ChatPage() {
             const senderName = membersMapRef.current.get(String(m.sender_id)) || 'Someone'
             const chName = chatrooms.find((c) => c.id === m.channel_id)?.name
             new Notification(chName ? `${senderName} in #${chName}` : senderName, {
-              body: (m.content || '').slice(0, 200),
+              body: docText(m.content).slice(0, 200),
               icon: '/favicon.svg',
               tag: m.id || `msg-${Date.now()}`,
             })
@@ -216,7 +217,7 @@ export default function ChatPage() {
         if (m.sender_id === user?.id) {
           for (let i = prev.length - 1; i >= 0; i--) {
             const x = prev[i]
-            if (x.mine && !x.serverId && x.body === m.content) {
+            if (x.mine && !x.serverId && x.body === docText(m.content)) {
               const next = [...prev]
               next[i] = { ...x, serverId: m.id, time: fmtTime(m.sent_at) }
               return next

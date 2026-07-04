@@ -6,6 +6,7 @@ import {
   receivedRealtime,
 } from '../store/notificationsSlice'
 import { onNotification, getSocket, onChatMessage } from '../services/socket'
+import { docText } from '../utils/prosemirrorText'
 
 const POLL_INTERVAL_MS = 30_000
 
@@ -46,7 +47,7 @@ export default function useNotificationsSocket() {
       if ('Notification' in window && Notification.permission === 'granted') {
         try {
           new Notification(m.channel_name ? `#${m.channel_name}` : 'New message', {
-            body: (m.content || '').slice(0, 200),
+            body: docText(m.content).slice(0, 200),
             icon: '/favicon.svg',
             tag: m.id || `msg-${Date.now()}`,
           })
