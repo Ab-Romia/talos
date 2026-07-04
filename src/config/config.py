@@ -16,6 +16,8 @@ class CompressionType(str, Enum):
 
 class RagConfig(BaseSettings):
     openai_api_key: SecretStr | None = None
+    # Optional OpenAI-compatible endpoint override (e.g. an OpenRouter proxy).
+    openai_base_url: str | None = None
     openai_model: str = "gpt-4o-mini"
 
     embedding_model: str = "text-embedding-3-small"

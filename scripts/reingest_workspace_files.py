@@ -11,8 +11,8 @@ stack's DB env, e.g.:
   PYTHONPATH=src uv run python scripts/reingest_workspace_files.py [--dry-run]
 
 Quirk handled here: `processing.tasks.process_file` claims a file by atomically
-flipping its status from UPLOADED/PROCESSING_FAILED -> UPLOADED (a no-op status
-reassert used as a claim gate); rowcount==0 short-circuits and SKIPS the file
+flipping its status from UPLOADED/PROCESSING_FAILED -> PROCESSING; rowcount==0
+short-circuits and SKIPS the file
 for any other status, including INDEXED. Files being re-ingested here are
 already INDEXED (they were processed once already), so calling process_file
 on them directly would silently no-op. To make re-ingestion actually run, this

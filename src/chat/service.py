@@ -1,8 +1,6 @@
 from uuid import UUID
 
-from prosemirror.model import Node
-
-from .model import MessageSchema, MessageRole, parse_doc, wrap_plain_text
+from .model import MessageSchema, MessageRole, wrap_plain_text
 from .storage import get_storage
 
 
@@ -24,6 +22,22 @@ async def store_message(channel_id: UUID, user_id: UUID, content: dict | str) ->
         sender_id=user_id,
         role=MessageRole.USER,
         content=raw,
+    )
+    await get_storage().put(msg)
+
+    # Chat-memory indexing happens via the segment-based cron indexer
+    # (processing.chat_tasks), driven by messages.indexed_at — no per-message
+    # enqueue here.
+    return msg
+
+
+async def store_assistant_message(channel_id: UUID, sender_id: UUID, content: str) -> MessageSchema:
+    """Persist an AI assistant message. Not indexed to avoid retrieval feedback loops."""
+    msg = MessageSchema(
+        channel_id=channel_id,
+        sender_id=sender_id,
+        role=MessageRole.ASSISTANT,
+        content=wrap_plain_text(content).to_json(),
     )
     await get_storage().put(msg)
     return msg

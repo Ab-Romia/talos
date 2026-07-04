@@ -1,4 +1,5 @@
 """Authentication-related endpoints."""
+import os
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Annotated, Literal
@@ -37,7 +38,7 @@ class InitSignupClaims(jwt.BaseJWTClaims):
 
 @router.post("/signup",
              status_code=status.HTTP_202_ACCEPTED,
-             dependencies=[Depends(email_ratelimit("signup", "2/2minute"))])
+             dependencies=[Depends(email_ratelimit("signup", "5/10minute"))])
 async def initiate_signup(email: Annotated[str, Form()], db: DatabaseDep):
     # TODO:
     #  - Captcha
@@ -52,7 +53,7 @@ async def initiate_signup(email: Annotated[str, Form()], db: DatabaseDep):
             base_exc=IntegrityError,
             responses={
                 "ix_users_primary_email": HTTPException(status_code=status.HTTP_409_CONFLICT,
-                                                        detail="Email already exists"),
+                                                        detail="An account with this email already exists. Please sign in instead."),
                 "email_format": HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                                               detail="Invalid email format"),
             },
@@ -66,7 +67,16 @@ async def initiate_signup(email: Annotated[str, Form()], db: DatabaseDep):
         email=email
     ))
 
-    await send_email(email, f"http://localhost:8000/signup/complete?token={token}")
+    frontend_origin = os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173").rstrip("/")
+    verify_url = f"{frontend_origin}/signup/complete?token={token}"
+    await send_email(
+        email,
+        "Welcome to Talos!\n\n"
+        "Click the link below to verify your email and finish creating your account:\n\n"
+        f"{verify_url}\n\n"
+        "This link expires in 1 hour.",
+        subject="Verify your Talos account",
+    )
 
     return {"message": "Please check your email to verify your account."}
 
@@ -120,6 +130,7 @@ def complete_signup(
             username=username,
             primary_email=claims.email,
             name=name or username,
+            signup_complete=True,
             # TODO: rest of info
         )
         db.add(user)

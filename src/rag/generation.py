@@ -16,6 +16,9 @@ def get_llm(provider: str = "openai", streaming: bool | None = None,
             temperature=config.llm_temperature,
             streaming=streaming,
             api_key=config.openai_api_key,
+            base_url=config.openai_base_url,
+            timeout=60,
+            max_retries=0,
         )
     else:
         raise ValueError(f"Unknown LLM provider: {provider}")

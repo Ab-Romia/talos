@@ -28,11 +28,6 @@ async def process_file(file_id: uuid.UUID):
         gone — all safe to skip.
         """
         # TODO: consider letting taskiq handle locking.
-        # NOTE: FileStatus has no in-flight PROCESSING member (filesystem
-        # owner's model — reported); re-asserting UPLOADED keeps the rowcount
-        # gate but NOT mutual exclusion. The pre-ingest delete_file_chunks
-        # purge keeps output idempotent, so a rare double-run costs compute,
-        # not correctness.
         result = db.execute(
             sa_update(File)
             .where(
@@ -42,7 +37,7 @@ async def process_file(file_id: uuid.UUID):
                     FileStatus.PROCESSING_FAILED,
                 ])
             )
-            .values(processing_status=FileStatus.UPLOADED)
+            .values(processing_status=FileStatus.PROCESSING)
         )
         db.commit()
 
@@ -87,7 +82,7 @@ async def process_file(file_id: uuid.UUID):
                     f"No processor registered for MIME type {file_record.content_type}"
                 )
 
-            file_record.processing_status = FileStatus.INDEXED  # .status is not a column on this branch
+            file_record.processing_status = FileStatus.INDEXED
             db.commit()
             logger.info("File processing complete", file_id=file_id)
 
@@ -103,7 +98,6 @@ async def process_file(file_id: uuid.UUID):
                 )
                 return
             file_record.processing_status = FileStatus.PROCESSING_FAILED
-            # not a mapped column yet — silently dropped until the filesystem owner adds it (reported)
             file_record.processing_error = str(e)[:2048]
             db.commit()
             raise

@@ -23,6 +23,9 @@ def get_hyde_embeddings(config=global_rag_config):
         temperature=0.0,
         max_completion_tokens=150,
         api_key=config.openai_api_key,
+        base_url=config.openai_base_url,
+        timeout=60,
+        max_retries=0,
     )
     return HypotheticalDocumentEmbedder.from_llm(
         llm=hyde_llm, base_embeddings=base_embeddings, prompt_key="web_search"

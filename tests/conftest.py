@@ -283,7 +283,6 @@ def test_permissions():
         # messaging
         ("channel.member", "view_presence", [*PermissionScope]),
         ("channel.message", "send", [*PermissionScope]),
-        ("channel.message", "view_history", [*PermissionScope]),
     ]
 
 

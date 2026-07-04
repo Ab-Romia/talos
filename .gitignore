@@ -5,6 +5,7 @@ __pycache__/
 .env
 .env.local
 .env.*.local
+.env.bak*
 .pytest_cache/
 node_modules
 CLAUDE.md
@@ -16,3 +17,4 @@ AGENTS.md
 HOW_TO_TEST_ASK.txt
 chat-ui/
 src/graduation_project.egg-info/
+/graphify-out

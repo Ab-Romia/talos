@@ -161,7 +161,7 @@ async def process_document(file_record: File, db: Session, storage: AsyncFileSys
 
         if not chunks:
             logger.warning("No text extracted from document", file_id=str(file_record.id))
-            file_record.chunk_count = 0  # not a mapped column yet — silently dropped (reported to filesystem owner)
+            file_record.chunk_count = 0
             db.commit()
             return
 
@@ -181,7 +181,7 @@ async def process_document(file_record: File, db: Session, storage: AsyncFileSys
         from rag.ingestion import ingest_file_chunks
         ingest_file_chunks(chunks, str(file_record.workspace_id), str(file_record.id))
 
-        file_record.chunk_count = len(chunks)  # not a mapped column yet — silently dropped (reported to filesystem owner)
+        file_record.chunk_count = len(chunks)
         db.commit()
 
         logger.info(

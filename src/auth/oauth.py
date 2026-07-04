@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timezone, timedelta
 from typing import Annotated
 
@@ -47,6 +48,16 @@ class OIDC(BaseModel):
         )
 
 
+def _frontend(path: str) -> str:
+    origin = os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173").rstrip("/")
+    return f"{origin}{path}"
+
+
+def _oauth_failed(reason: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_303_SEE_OTHER,
+                         headers={"Location": _frontend(f"/signup?oauth_error={reason}")})
+
+
 def invalid_provider_exception(provider):
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                          detail=f"Invalid OAuth provider: {provider}")
@@ -69,14 +80,14 @@ async def oauth_login(provider: ProviderParam, request: Request, session: Unveri
     try:
         request.scope["session"] = {}  # authlib expects a session dict in the scope
         res = await client.authorize_redirect(request, redirect_uri)
+        for k in [k for k in session.model_extra if k.startswith("_state_")]:
+            del session.model_extra[k]
         session.model_extra.update(request.session or {})
+        session._modified = True
 
         return res
     except httpx.ConnectError:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Could not connect to {provider} OAuth server"
-        )
+        raise _oauth_failed("unavailable")
 
 
 @router.get("/{provider}/callback")
@@ -86,11 +97,6 @@ async def oauth_callback(provider: ProviderParam,
                          db: DatabaseDep):
     client: StarletteOAuth2App = oauth.create_client(provider)
 
-    fail = HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail=f"{provider.capitalize()} authentication failed",
-    )
-
     try:
         # authlib expects a session dict in the scope
         request.scope["session"] = session.model_extra
@@ -99,8 +105,9 @@ async def oauth_callback(provider: ProviderParam,
 
         session.model_extra.clear()
         session.model_extra.update(request.session)
-    except OAuthError:
-        raise fail
+    except OAuthError as e:
+        logger.warning(f"OAuth {provider} token exchange failed: {e!r}; session_keys={list(session.model_extra.keys())}")
+        raise _oauth_failed("failed")
 
     try:
         match provider:
@@ -111,8 +118,9 @@ async def oauth_callback(provider: ProviderParam,
                 user_info = OIDC.from_github(res.json())
             case _:
                 raise invalid_provider_exception(provider)
-    except ValidationError:
-        raise fail
+    except ValidationError as e:
+        logger.warning(f"OAuth {provider} profile validation failed: {e!r}")
+        raise _oauth_failed("failed")
 
     identity = db.scalar(
         select(IdentityProvider)
@@ -130,10 +138,17 @@ async def oauth_callback(provider: ProviderParam,
         )
 
         if user is None:
+            base = user_info.name.replace(" ", "-").lower() or "user"
+            username = base
+            n = 1
+            while db.scalar(select(User).where(User.username == username)):
+                n += 1
+                username = f"{base}-{n}"
             user = User(
                 primary_email=user_info.email,
                 name=user_info.name,
-                username=user_info.name.replace(" ", "-").lower(),
+                username=username,
+                signup_complete=True,
                 data={"avatar_url": user_info.picture} if user_info.picture else {},
                 roles=[],
             )
@@ -158,10 +173,7 @@ async def oauth_callback(provider: ProviderParam,
 
     _persist_provider_token(db, user.id, provider, token)
 
-    if not user.signup_complete:
-        return RedirectResponse(url="/complete_signup", status_code=status.HTTP_303_SEE_OTHER)
-
-    return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url=_frontend("/?oauth_success=1"), status_code=status.HTTP_303_SEE_OTHER)
 
 
 # TODO: this should be a separate opt-in

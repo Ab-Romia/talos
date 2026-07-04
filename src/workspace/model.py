@@ -34,7 +34,7 @@ class Workspace(Base):
     owner = relationship("User")
     channels: Mapped[list[Channel]] = relationship("Channel", back_populates="workspace", cascade="all, delete-orphan")
     members = relationship("User", secondary="workspace_members", back_populates="workspaces")
-    files: Mapped[list[File]] = relationship("File", back_populates="workspace")
+    files: Mapped[list[File]] = relationship("File", back_populates="workspace", foreign_keys="File.workspace_id")
     icon = relationship("File", foreign_keys=[icon_id])
 
     roles: Mapped[list[Role]] = relationship(  # type: ignore[forward-reference]

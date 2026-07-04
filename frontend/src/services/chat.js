@@ -1,67 +1,56 @@
 import { api } from './api'
 
+// Team-chat REST client against the main backend.
+//   GET  /api/workspaces                      -> [{id, name, owner_id, channels:[{id,name}]}]
+//   GET  /api/channels/{id}/messages          -> [MessageSchema, ...] (newest first)
+//   POST /api/channels/{id}/messages {text}   -> {id, sent_at}
+// Realtime delivery of new messages is handled separately over Socket.IO
+// (see services/socket.js); the backend broadcasts the full MessageSchema dict
+// on the default `message` event to everyone in the channel room.
 export const chatService = {
   getWorkspaces() {
     return api.get('/api/workspaces')
   },
 
   createWorkspace(name) {
+    // → { id, name, owner_id, channels:[{id,name}] } (server provisions base role,
+    //    permissions, membership + default channels).
     return api.post('/api/workspaces', { name })
   },
 
-  getChatrooms(workspaceId) {
-    return api.get(`/api/workspaces/${workspaceId}/chatrooms`)
+  createChannel(workspaceId, name) {
+    return api.post(`/api/workspaces/${workspaceId}/channels`, { name })
   },
 
-  createChatroom(workspaceId, name) {
-    return api.post(`/api/workspaces/${workspaceId}/chatrooms`, { name })
+  getMessages(channelId, options = {}) {
+    const { limit = 50, offset = 0 } = options
+    const q = new URLSearchParams()
+    q.set('limit', String(limit))
+    q.set('offset', String(offset))
+    return api.get(`/api/channels/${channelId}/messages?${q.toString()}`)
   },
 
-  getMessages(workspaceId, chatroomId, limit = 50) {
-    return api.get(`/api/workspaces/${workspaceId}/chatrooms/${chatroomId}/messages?limit=${limit}`)
+  sendMessage(channelId, text) {
+    return api.post(`/api/channels/${channelId}/messages`, { text })
   },
 
-  async sendMessage(workspaceId, chatroomId, content, onChunk, onDone, onError) {
-    const res = await fetch(`/api/workspaces/${workspaceId}/chatrooms/${chatroomId}/messages`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
-    })
+  getOnline(channelId) {
+    return api.get(`/api/channels/${channelId}/online`)
+  },
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: res.statusText }))
-      onError?.(err.detail || 'Failed to send message')
-      return
-    }
+  getMembers(workspaceId) {
+    return api.get(`/api/workspaces/${workspaceId}/members`)
+  },
 
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
+  addMember(workspaceId, identifier) {
+    return api.post(`/api/workspaces/${workspaceId}/members`, { identifier })
+  },
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+  removeMember(workspaceId, memberId) {
+    return api.delete(`/api/workspaces/${workspaceId}/members/${memberId}`)
+  },
 
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop()
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue
-        try {
-          const event = JSON.parse(line.slice(6))
-          if (event.type === 'chunk') {
-            onChunk?.(event.content)
-          } else if (event.type === 'done') {
-            onDone?.(event.sources || [])
-          } else if (event.type === 'error') {
-            onError?.(event.content)
-          }
-        } catch {
-          // ignore parse errors
-        }
-      }
-    }
+  getMyPermissions(workspaceId) {
+    return api.get(`/api/workspaces/${workspaceId}/my_permissions`)
   },
 }

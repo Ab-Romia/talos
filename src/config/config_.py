@@ -33,6 +33,7 @@ class AuthConfig(BaseModel):
     password_reset_token_expiry: timedelta = timedelta(hours=1)
 
     session_cookie_key: str = "user_session"
+    session_cookie_secure: bool = True
 
     permission_bitstring_length: int = 64
 

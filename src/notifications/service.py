@@ -37,12 +37,17 @@ async def push_notification(
     db.add_all(notifications)
     db.commit()
 
-    # Enqueue delivery tasks for each notification
     for n in notifications:
-        # TODO: is online check
-        is_online = False
+        from chat.realtime import sio, is_user_online
 
-        if not is_online:
+        schema = NotificationSchema.model_validate(n)
+        await sio.emit(
+            "notification",
+            schema.model_dump(mode="json"),
+            room=f"user:{n.user_id}",
+        )
+
+        if not is_user_online(n.user_id):
             subscriptions = db.scalars(
                 select(PushSubscription)
                 .where(PushSubscription.user_id == n.user_id)

@@ -20,6 +20,8 @@ class FileStatus(str, enum.Enum):
     PENDING = "pending"
     # File exists in storage (i.e., can be downloaded)
     UPLOADED = "uploaded"
+    # File is being processed (text extraction / indexing in flight)
+    PROCESSING = "processing"
     # File has been processed (e.g., text extracted)
     PROCESSED = "processed"
     # File has been indexed in vector database
@@ -61,16 +63,34 @@ class File(Base):
 
     processing_status: Mapped[FileStatus] = mapped_column(sql.Enum(FileStatus),
                                                           default=FileStatus.PENDING)
+    processing_error: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    chunk_count: Mapped[int] = mapped_column(default=0)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(),
                                                  onupdate=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
 
-    workspace = relationship("Workspace", back_populates="files")
+    workspace = relationship("Workspace", back_populates="files", foreign_keys="File.workspace_id")
     channel = relationship("Channel", back_populates="files", foreign_keys="File.channel_id", passive_deletes="all")
     uploader = relationship("User", back_populates="uploaded_files")
     message = relationship("Message", secondary="message_files", back_populates="files", overlaps="message")
+
+    # --- Aliases so FileMetadata (which uses file_path / original_filename /
+    #     status) can be built from this model via `from_attributes`. Without
+    #     these, FileMetadata.model_validate(file) fails with missing-field
+    #     errors (the ORM columns are uri / filename / processing_status). ---
+    @property
+    def file_path(self) -> str:
+        return self.uri
+
+    @property
+    def original_filename(self) -> str:
+        return self.filename
+
+    @property
+    def status(self) -> "FileStatus":
+        return self.processing_status
 
     @staticmethod
     def set_workspace_id(_mapper, connection, target):
