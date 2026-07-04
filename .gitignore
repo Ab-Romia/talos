@@ -15,3 +15,4 @@ AGENTS.md
 # local /ask test harness (contains session tokens) + throwaway test UI
 HOW_TO_TEST_ASK.txt
 chat-ui/
+src/graduation_project.egg-info/
