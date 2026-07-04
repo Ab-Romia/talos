@@ -124,17 +124,20 @@ async def _persist_exchange(channel_id: UUID, user_id: UUID, question: str,
     a mid-stream failure or client disconnect persists nothing, so the tail
     never grows dangling human turns. asked_at (captured at request start)
     keeps the question ordered before the answer. Uses the ORM directly
-    because MessageSchema requires a non-null sender_id (assistant rows
-    have sender_id NULL)."""
+    because assistant rows have sender_id NULL. Content is wrapped into
+    ProseMirror docs (the rich-msg contract for messages.content)."""
+    from chat.model import wrap_plain_text
     async with AsyncSessionLocal() as db:
         # Clock-source mix: asked_at is the app server's clock (captured at
         # request start), while the answer's sent_at below defaults to the DB
         # server's now(); ordering relies on generation time exceeding any
         # clock skew between the two (same-host deployment).
         q = Message(channel_id=channel_id, sender_id=user_id,
-                    content=question, role=MessageRole.USER, sent_at=asked_at)
+                    content=wrap_plain_text(question).to_json(),
+                    role=MessageRole.USER, sent_at=asked_at)
         a = Message(channel_id=channel_id, sender_id=None,
-                    content=answer, role=MessageRole.ASSISTANT)
+                    content=wrap_plain_text(answer).to_json(),
+                    role=MessageRole.ASSISTANT)
         db.add(q)
         db.add(a)
         await db.commit()

@@ -110,7 +110,8 @@ class MessageSchema(BaseModel):
     """
     id: UUID = Field(default_factory=uuid.uuid7)
     channel_id: UUID
-    sender_id: UUID
+    # NULL for assistant/system rows (ORM column is ondelete=SET NULL too).
+    sender_id: UUID | None = None
     role: MessageRole = MessageRole.USER
     content: dict[str, Any]   # validated ProseMirror JSON (from Node.to_json())
     sent_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -64,7 +64,8 @@ def _messages(channel_id):
     with SessionLocal() as db:
         rows = db.scalars(select(Message).where(Message.channel_id == channel_id)
                           .order_by(Message.sent_at.asc())).all()
-        return [(m.role, m.content, m.sender_id) for m in rows]
+        from rag.message_text import doc_text
+        return [(m.role, doc_text(m.content), m.sender_id) for m in rows]
 
 
 def test_ask_streams_and_persists_exchange(client, test_channel, auth_token, path):
