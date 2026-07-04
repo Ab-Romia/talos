@@ -3,6 +3,7 @@ Workspace and Channel settings endpoints.
 Handles all workspace and channel configuration, member management, etc.
 """
 import uuid
+from datetime import datetime
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, HTTPException, Form, Path
@@ -22,7 +23,7 @@ class WorkspaceSettingsResponse(BaseModel):
     description: Optional[str] = None
     icon_id: Optional[uuid.UUID] = None
     owner_id: uuid.UUID
-    created_at: str
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -36,7 +37,7 @@ class ChannelSettingsResponse(BaseModel):
     is_public: bool
     is_muted: bool
     is_archived: bool
-    created_at: str
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 

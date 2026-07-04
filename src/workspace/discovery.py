@@ -18,7 +18,7 @@ router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 STANDARD_PERMS = [
     ("workspace", "view"), ("workspace.role", "view"), ("workspace.role", "manage"),
     ("channel", "view"),
-    ("channel.message", "send"),
+    ("channel.message", "send"), ("channel.message", "view_history"),
     ("channel.member", "view_presence"),
     ("files", "read"), ("files", "write"), ("files", "create"),
 ]

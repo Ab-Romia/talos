@@ -106,18 +106,6 @@ async def get_channel_messages(
 
 
 @channel.get(
-    "/messages/{message_id}",
-    summary="Get a single message by ID",
-    dependencies=[require("channel:view")]
-)
-async def get_single_message(channel_id: UUID, message_id: UUID):
-    msg = await get_message_by_id(message_id)
-    if msg is None:
-        raise HTTPException(status_code=404, detail="Message not found")
-    return msg
-
-
-@channel.get(
     "/online",
     summary="List users currently online in a channel",
     dependencies=[require("channel:view", "channel.member:view_presence")]
@@ -190,3 +178,14 @@ async def search_channel_messages(
     )
 
 
+# Registered after /messages/search: the static path must match first.
+@channel.get(
+    "/messages/{message_id}",
+    summary="Get a single message by ID",
+    dependencies=[require("channel:view")]
+)
+async def get_single_message(channel_id: UUID, message_id: UUID):
+    msg = await get_message_by_id(message_id)
+    if msg is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return msg
