@@ -264,7 +264,7 @@ class GDriveFile(AbstractAsyncStreamedFile):
         self._uploaded_bytes: int = 0
         if not self.path.startswith("id:"):
             raise ValueError(f"Invalid Drive ID path: {self.path !r}")
-        self._gdrive_id: str | None = self.path.rstrip(ID_PREFIX)
+        self._gdrive_id: str | None = self.path.removeprefix(ID_PREFIX)
 
     async def _fetch_range(self, start: int, end: int) -> bytes:
         """Random-access byte range read (used by fsspec base read())."""
@@ -281,13 +281,15 @@ class GDriveFile(AbstractAsyncStreamedFile):
     async def stream(self, start: int = 0, end: int | None = None) -> AsyncIterator[bytes]:
         """Sequential streaming read for StreamingResponse (avoids full buffer)."""
         token = await self.fs.access_token
-        range_hdr = f"bytes {start}-{end - 1}" if end else f"bytes {start}/*"
+        headers = {"Authorization": f"Bearer {token}"}
+        if start or end is not None:
+            headers["Range"] = f"bytes={start}-{end - 1 if end is not None else ''}"
         async with httpx.AsyncClient() as c:
             async with c.stream(
                     "GET",
                     f"{DRIVE_FILES_URL}/{self._gdrive_id}",
                     params={"alt": "media"},
-                    headers={"Authorization": f"Bearer {token}", "Content-Range": range_hdr},
+                    headers=headers,
                     timeout=None,
             ) as resp:
                 resp.raise_for_status()

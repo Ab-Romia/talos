@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useSelector } from 'react-redux'
+import { useSearchParams } from 'react-router-dom'
 import Button from '@mui/material/Button'
 import Chip from '@mui/material/Chip'
 import TextField from '@mui/material/TextField'
@@ -18,8 +19,9 @@ import TableCell from '@mui/material/TableCell'
 import TableContainer from '@mui/material/TableContainer'
 import TableHead from '@mui/material/TableHead'
 import TableRow from '@mui/material/TableRow'
-import { Plus, Search, Upload, Grid3X3, List, FileText, Filter, Download } from 'lucide-react'
+import { Plus, Search, Upload, Grid3X3, List, FileText, Filter, Download, Cloud } from 'lucide-react'
 import { documentService } from '../../services/documents'
+import { DriveImportDialog } from '../../components/documents/DriveImportDialog'
 import { usePermissions } from '../../contexts/PermissionsContext'
 
 const typeColors = { PDF: '#C4462A', DOCX: '#2E6FC4', TXT: '#6B6966', MD: '#3D8C5C' }
@@ -56,7 +58,18 @@ export default function DocumentsPage() {
   const [selectedDoc, setSelectedDoc] = useState(null)
   const [snackbar, setSnackbar] = useState({ open: false, message: '' })
   const [dragOver, setDragOver] = useState(false)
+  const [driveOpen, setDriveOpen] = useState(false)
+  const [searchParams, setSearchParams] = useSearchParams()
   const fileInputRef = useRef(null)
+
+  // Coming back from the Google consent screen — reopen the Drive picker.
+  useEffect(() => {
+    if (!searchParams.get('drive_connected')) return
+    setDriveOpen(true)
+    const next = new URLSearchParams(searchParams)
+    next.delete('drive_connected')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
   const loadGenRef = useRef(0)
   const lastWorkspaceIdRef = useRef(null)
 
@@ -210,16 +223,36 @@ export default function DocumentsPage() {
       <header className="h-14 bg-base border-b border-[rgba(28,27,26,0.10)] flex items-center justify-between px-6 shrink-0">
         <h1 className="text-lg font-semibold text-ink tracking-tight">Documents</h1>
         {canCreate && (
-        <Button
-          variant="contained"
-          startIcon={<Plus size={16} />}
-          size="medium"
-          onClick={() => fileInputRef.current?.click()}
-        >
-          Upload documents
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outlined"
+            startIcon={<Cloud size={16} />}
+            size="medium"
+            onClick={() => setDriveOpen(true)}
+          >
+            Import from Drive
+          </Button>
+          <Button
+            variant="contained"
+            startIcon={<Plus size={16} />}
+            size="medium"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            Upload documents
+          </Button>
+        </div>
         )}
       </header>
+
+      <DriveImportDialog
+        workspaceId={workspaceId}
+        open={driveOpen}
+        onClose={() => setDriveOpen(false)}
+        onImported={(n) => {
+          setSnackbar({ open: true, message: `Importing ${n} file(s) from Google Drive…` })
+          void loadDocuments()
+        }}
+      />
 
       <div className="flex-1 overflow-y-auto p-6">
         {/* Drop zone */}

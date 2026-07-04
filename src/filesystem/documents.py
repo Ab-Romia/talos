@@ -5,6 +5,7 @@ import os
 import uuid
 
 from fastapi import APIRouter, UploadFile, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from starlette.responses import Response
 
@@ -15,6 +16,10 @@ from workspace import require_perms
 from .model import File, FileStatus, FileMetadata
 
 router = APIRouter(prefix="/workspaces/{workspace_id}", tags=["documents"])
+
+
+class GDriveImportRequest(BaseModel):
+    file_ids: list[str]
 
 
 @functools.cache
@@ -104,3 +109,65 @@ async def download_document(workspace_id: uuid.UUID, file_id: uuid.UUID, db: Dat
         media_type=file.content_type or "application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename="{file.filename}"'},
     )
+
+
+@router.get(
+    "/gdrive/files",
+    dependencies=[require_perms("files:read")],
+)
+async def list_gdrive_files(
+    workspace_id: uuid.UUID, user: UserDep, db: DatabaseDep, folder_id: str | None = None
+):
+    """List the current user's Google Drive files and folders for importing."""
+    from filesystem.gdrive import google_token_for, make_gdrive_fs, list_drive_entries
+
+    token = google_token_for(db, user.id)
+    if token is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Google Drive is not connected for this account.",
+        )
+    fs = await make_gdrive_fs(db, token)
+    return await list_drive_entries(fs, folder_id)
+
+
+@router.post(
+    "/documents/gdrive",
+    dependencies=[require_perms("files:write", "files:create")],
+    status_code=status.HTTP_201_CREATED,
+)
+async def import_gdrive_documents(
+    workspace_id: uuid.UUID, req: GDriveImportRequest, user: UserDep, db: DatabaseDep
+):
+    """Import selected Google Drive files into the workspace and index them for RAG."""
+    from filesystem.gdrive import google_token_for, make_gdrive_fs
+    from processing.tasks import process_file
+
+    token = google_token_for(db, user.id)
+    if token is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Google Drive is not connected for this account.",
+        )
+    fs = await make_gdrive_fs(db, token)
+
+    created = []
+    for drive_id in req.file_ids:
+        info = await fs._info(f"id:{drive_id}")
+        db_file = File(
+            workspace_id=workspace_id,
+            uploader_id=user.id,
+            filename=info["name"],
+            content_type=info.get("content_type") or "application/octet-stream",
+            size_bytes=int(info.get("size") or 0),
+            sha256checksum=info.get("checksum") or "",
+            processing_status=FileStatus.UPLOADED,
+            uri=f"gdrive://id:{drive_id}",
+        )
+        db.add(db_file)
+        db.commit()
+        db.refresh(db_file)
+        await process_file.kiq(db_file.id)
+        created.append(FileMetadata.model_validate(db_file))
+
+    return created

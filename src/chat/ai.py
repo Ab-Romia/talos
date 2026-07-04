@@ -50,17 +50,17 @@ def _strip_trigger(content: str) -> str:
     return stripped
 
 
-async def maybe_ai_reply(channel_id: UUID, content: str) -> None:
+async def maybe_ai_reply(channel_id: UUID, content: str, user_id: UUID) -> None:
     """If the message addresses the AI, generate and broadcast an assistant reply out-of-band."""
     if not is_ai_trigger(content):
         return
     question = _strip_trigger(content)
     if not question:
         return
-    asyncio.create_task(_run_ai_reply(channel_id, question))
+    asyncio.create_task(_run_ai_reply(channel_id, question, user_id))
 
 
-async def _run_ai_reply(channel_id: UUID, question: str) -> None:
+async def _run_ai_reply(channel_id: UUID, question: str, user_id: UUID) -> None:
     from chat.realtime import sio
     from chat.service import store_assistant_message
     from workspace.model import Channel
@@ -74,7 +74,7 @@ async def _run_ai_reply(channel_id: UUID, question: str) -> None:
                 return
             ai_user_id = get_ai_user_id(db)
 
-        answer = await asyncio.to_thread(_generate, str(workspace_id), question)
+        answer = await asyncio.to_thread(_generate, workspace_id, question, user_id)
         message = await store_assistant_message(channel_id, ai_user_id, answer)
         await sio.send(message.model_dump(mode="json"), room=room)
     except Exception:
@@ -83,9 +83,19 @@ async def _run_ai_reply(channel_id: UUID, question: str) -> None:
         await sio.emit("ai_typing", {"channel_id": str(channel_id), "status": "stop"}, room=room)
 
 
-def _generate(workspace_id: str, question: str) -> str:
+def _generate(workspace_id: UUID, question: str, user_id: UUID) -> str:
     from config import global_rag_config
     from rag.rag_chain import RAGChain
+    from rag.access import accessible_file_ids, accessible_channel_ids
 
-    rag = RAGChain(global_rag_config.milvus_collection_name, workspace_id=workspace_id)
+    with SessionLocal() as db:
+        allowed_files = accessible_file_ids(db, user_id, workspace_id)
+        allowed_channels = accessible_channel_ids(db, user_id, workspace_id)
+
+    rag = RAGChain(
+        global_rag_config.milvus_collection_name,
+        workspace_id=str(workspace_id),
+        file_ids=[str(f) for f in allowed_files],
+        channel_ids=[str(c) for c in allowed_channels],
+    )
     return rag.query(question)

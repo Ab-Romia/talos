@@ -176,7 +176,7 @@ async def message(sid: str, data: dict[str, Any]):
     )
 
     from chat.ai import maybe_ai_reply
-    await maybe_ai_reply(message.channel_id, message.content)
+    await maybe_ai_reply(message.channel_id, message.content, sess["user_id"])
 
     # Concurrently fetch sessions of all participants to get their user_ids for the ack response.
     participants = sio.manager.get_participants("/", f"channel:{message.channel_id}")

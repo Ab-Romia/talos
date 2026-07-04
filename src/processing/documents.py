@@ -24,8 +24,11 @@ async def process_document(file_record: File, db: Session, storage):
         tmp_path = tmp.name
 
     try:
-        key = file_record.uri.removeprefix("minio://")
-        data = await asyncio.to_thread(storage.cat_file, key)
+        if file_record.uri.startswith("gdrive://"):
+            data = await _download_gdrive(file_record, db)
+        else:
+            key = file_record.uri.removeprefix("minio://")
+            data = await asyncio.to_thread(storage.cat_file, key)
         with open(tmp_path, "wb") as f:
             f.write(data)
         logger.info("Downloaded file for processing", file_id=str(file_record.id), path=tmp_path)
@@ -49,10 +52,11 @@ async def process_document(file_record: File, db: Session, storage):
         ]
 
         if not docs:
-            logger.warning("No text extracted from document", file_id=str(file_record.id))
-            file_record.chunk_count = 0
-            db.commit()
-            return
+            raise ValueError(
+                f"No extractable text found in '{file_record.filename}' "
+                f"(content_type={file_record.content_type}). The file may be empty, "
+                f"image-only/scanned, or an unsupported format."
+            )
 
         # Chunk
         splitter = RecursiveCharacterTextSplitter(
@@ -93,39 +97,64 @@ async def process_document(file_record: File, db: Session, storage):
             os.unlink(tmp_path)
 
 
+async def _download_gdrive(file_record: File, db: Session) -> bytes:
+    from filesystem.gdrive import google_token_for, make_gdrive_fs, download_drive_bytes
+
+    token = google_token_for(db, file_record.uploader_id)
+    if token is None:
+        raise ValueError("No connected Google Drive account for the uploader of this file")
+
+    fs = await make_gdrive_fs(db, token)
+    drive_id = file_record.uri.removeprefix("gdrive://").removeprefix("id:")
+    return await download_drive_bytes(fs, drive_id)
+
+
 def _extract_text(file_path: str, content_type: str) -> list[tuple[str, dict]]:
-    """Extract text from a file. Returns a list of (text, metadata) tuples.
+    ext = os.path.splitext(file_path)[1].lower()
 
-    Tries unstructured first, falls back to plain text reading for txt/md.
-    """
-    try:
-        from unstructured.partition.auto import partition
-        elements = partition(filename=file_path, strategy="fast")
-        return [
-            (
-                el.text,
-                {
-                    "page_number": getattr(el.metadata, "page_number", 0) if hasattr(el, "metadata") else 0,
-                },
-            )
-            for el in elements
-            if hasattr(el, "text") and el.text
-        ]
-    except ImportError:
-        logger.warning("unstructured not installed, using fallback text extraction")
-        return _fallback_extract(file_path, content_type)
+    if content_type == "application/pdf" or ext == ".pdf":
+        return _extract_pdf(file_path)
+
+    if (
+        content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        or ext == ".docx"
+    ):
+        return _extract_docx(file_path)
+
+    return _extract_plaintext(file_path)
 
 
-def _fallback_extract(file_path: str, content_type: str) -> list[tuple[str, dict]]:
-    """Fallback text extraction for when unstructured is not available."""
-    if content_type in ("text/plain", "text/markdown"):
-        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            text = f.read()
-        return [(text, {"page_number": 0})]
+def _extract_pdf(file_path: str) -> list[tuple[str, dict]]:
+    from pdfminer.high_level import extract_pages
+    from pdfminer.layout import LTTextContainer
 
-    logger.warning(
-        "Cannot extract text without unstructured library",
-        content_type=content_type,
-        file_path=file_path,
-    )
-    return []
+    results: list[tuple[str, dict]] = []
+    for page_number, layout in enumerate(extract_pages(file_path), start=1):
+        parts = [el.get_text() for el in layout if isinstance(el, LTTextContainer)]
+        text = "".join(parts).strip()
+        if text:
+            results.append((text, {"page_number": page_number}))
+    return results
+
+
+def _extract_docx(file_path: str) -> list[tuple[str, dict]]:
+    import html
+    import re
+    import zipfile
+
+    with zipfile.ZipFile(file_path) as archive:
+        xml = archive.read("word/document.xml").decode("utf-8", errors="replace")
+
+    xml = re.sub(r"</w:p>", "\n", xml)
+    text = re.sub(r"<[^>]+>", "", xml)
+    text = html.unescape(text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+
+    return [(text, {"page_number": 0})] if text else []
+
+
+def _extract_plaintext(file_path: str) -> list[tuple[str, dict]]:
+    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    return [(text, {"page_number": 0})] if text.strip() else []

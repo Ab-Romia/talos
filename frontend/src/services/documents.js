@@ -25,6 +25,17 @@ export const documentService = {
     return api.upload(`/api/workspaces/${workspaceId}/documents`, formData)
   },
 
+  listDrive(workspaceId, folderId = null) {
+    const params = new URLSearchParams()
+    if (folderId) params.set('folder_id', folderId)
+    const qs = params.toString()
+    return api.get(`/api/workspaces/${workspaceId}/gdrive/files${qs ? `?${qs}` : ''}`)
+  },
+
+  importDrive(workspaceId, fileIds) {
+    return api.post(`/api/workspaces/${workspaceId}/documents/gdrive`, { file_ids: fileIds })
+  },
+
   async download(workspaceId, fileId, filename) {
     const res = await fetch(`/api/workspaces/${workspaceId}/documents/${fileId}`, {
       credentials: 'include',

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useSelector } from 'react-redux'
 import { Sparkles, Send, SquarePen } from 'lucide-react'
 import { ChatMessageContent } from '../../components/chat/ChatMessageContent'
-import { streamAiQuery } from '../../services/ai'
+import { streamAiQuery, getAiHistory, clearAiHistory } from '../../services/ai'
 
 const SUGGESTIONS = [
   'Summarize the key points across my documents.',
@@ -21,6 +21,7 @@ export default function AIChatPage() {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(false)
 
   const scrollRef = useRef(null)
   const abortRef = useRef(null)
@@ -30,6 +31,31 @@ export default function AIChatPage() {
   }, [messages])
 
   useEffect(() => () => abortRef.current?.abort(), [])
+
+  // Load the saved per-user conversation for this workspace.
+  useEffect(() => {
+    abortRef.current?.abort()
+    setStreaming(false)
+    setMessages([])
+    setInput('')
+    if (!workspaceId) return
+    let cancelled = false
+    setHistoryLoading(true)
+    ;(async () => {
+      try {
+        const saved = await getAiHistory(workspaceId)
+        if (cancelled || !Array.isArray(saved)) return
+        setMessages(saved.map((m) => ({ id: m.id || nextId(), role: m.role, content: m.content })))
+      } catch {
+        // no saved history (or transient error) — start empty
+      } finally {
+        if (!cancelled) setHistoryLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId])
 
   const send = async (text) => {
     const question = text.trim()
@@ -81,6 +107,7 @@ export default function AIChatPage() {
     setStreaming(false)
     setMessages([])
     setInput('')
+    if (workspaceId) clearAiHistory(workspaceId).catch(() => {})
   }
 
   const lastId = messages.length ? messages[messages.length - 1].id : null
@@ -114,7 +141,7 @@ export default function AIChatPage() {
       <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0">
         <div className="max-w-[760px] mx-auto px-5 py-6">
           {messages.length === 0 ? (
-            <EmptyState onPick={send} disabled={!workspaceId} />
+            historyLoading ? null : <EmptyState onPick={send} disabled={!workspaceId} />
           ) : (
             <div className="flex flex-col gap-5">
               {messages.map((m) =>

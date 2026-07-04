@@ -1,4 +1,5 @@
 import os
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Annotated
 
@@ -11,7 +12,10 @@ from sqlalchemy import select
 from starlette.responses import RedirectResponse
 
 from auth.model import IdentityProvider, Issuer, User, ProviderToken
-from auth.utils.session import UnverifiedSessionDep, NewSessionDep
+from auth.utils import jwt
+from auth.utils.jwt import BaseJWTClaims
+from auth.utils.session import UnverifiedSessionDep, NewSessionDep, SessionDep
+from utils.types import UUID as UUIDType
 from config import cfg
 from database import DatabaseDep
 from utils.logger import get_logger
@@ -72,17 +76,60 @@ def check_provider(provider: str):
 ProviderParam = Annotated[str, AfterValidator(check_provider)]
 
 
+class ConnectClaims(BaseJWTClaims):
+    """Short-lived ticket authorizing a provider connection for a logged-in user."""
+    user_id: UUIDType
+    provider: str
+
+
+@router.post("/{provider}/connect")
+async def oauth_connect_ticket(provider: ProviderParam, session: SessionDep):
+    """
+    Mint a ticket the SPA passes to the OAuth redirect so the resulting provider
+    token is attached to the CURRENT account instead of switching identities.
+    Needed because the SPA authenticates with a Bearer token while the OAuth
+    browser flow only carries the cookie session (which may be a different user).
+    """
+    claims = ConnectClaims(
+        user_id=session.sub,
+        provider=provider,
+        exp=jwt.now() + timedelta(minutes=5),
+    )
+    return {"ticket": claims.encode()}
+
+
 @router.get("/{provider}")
-async def oauth_login(provider: ProviderParam, request: Request, session: UnverifiedSessionDep):
+async def oauth_login(provider: ProviderParam, request: Request, session: UnverifiedSessionDep,
+                      connect: str | None = None):
     client = oauth.create_client(provider)
+
+    connect_uid: uuid.UUID | None = None
+    if connect:
+        try:
+            ticket = ConnectClaims.decode(connect)
+            if ticket.provider != provider:
+                raise ValueError("Ticket provider mismatch")
+            connect_uid = ticket.user_id
+        except Exception as e:
+            logger.warning(f"OAuth {provider} connect ticket rejected: {e!r}")
+            raise _oauth_failed("failed")
+
+    extra_params = {}
+    if provider == "google":
+        # Ask for a refresh token so API access (Drive) survives token expiry.
+        extra_params["access_type"] = "offline"
+        if connect_uid is not None:
+            extra_params["prompt"] = "consent"
 
     redirect_uri = request.url_for("oauth_callback", provider=provider)
     try:
         request.scope["session"] = {}  # authlib expects a session dict in the scope
-        res = await client.authorize_redirect(request, redirect_uri)
+        res = await client.authorize_redirect(request, redirect_uri, **extra_params)
         for k in [k for k in session.model_extra if k.startswith("_state_")]:
             del session.model_extra[k]
         session.model_extra.update(request.session or {})
+        if connect_uid is not None:
+            session.model_extra["_connect_uid"] = str(connect_uid)
         session._modified = True
 
         return res
@@ -97,6 +144,8 @@ async def oauth_callback(provider: ProviderParam,
                          db: DatabaseDep):
     client: StarletteOAuth2App = oauth.create_client(provider)
 
+    raw_connect_uid = session.model_extra.pop("_connect_uid", None)
+
     try:
         # authlib expects a session dict in the scope
         request.scope["session"] = session.model_extra
@@ -108,6 +157,15 @@ async def oauth_callback(provider: ProviderParam,
     except OAuthError as e:
         logger.warning(f"OAuth {provider} token exchange failed: {e!r}; session_keys={list(session.model_extra.keys())}")
         raise _oauth_failed("failed")
+
+    if raw_connect_uid is not None:
+        # Connect flow: attach the provider token to the account that minted the
+        # ticket. No identity creation, no account switching.
+        connect_uid = uuid.UUID(raw_connect_uid)
+        session.sub = connect_uid
+        _persist_provider_token(db, connect_uid, provider, token)
+        return RedirectResponse(url=_frontend("/documents?drive_connected=1"),
+                                status_code=status.HTTP_303_SEE_OTHER)
 
     try:
         match provider:
@@ -188,8 +246,6 @@ def _persist_provider_token(db, user_id, provider: str, token: dict):
     """
     if provider != "google":
         return
-    # TODO: remove
-    print(token)
 
     access_token: str | None = token.get("access_token")
     if not access_token:
@@ -216,12 +272,12 @@ def _persist_provider_token(db, user_id, provider: str, token: dict):
             access_token=access_token,
             refresh_token=refresh_token,
             expires_at=expires_at,
-            scope=token.get("scope"),
+            scopes=token.get("scope"),
         ))
     else:
         existing.access_token = access_token
         existing.refresh_token = refresh_token
         if expires_at is not None:
             existing.expires_at = expires_at
-        existing.scope = token.get("scope") or existing.scope
+        existing.scopes = token.get("scope") or existing.scopes
     db.commit()

@@ -1,4 +1,13 @@
-import { getSessionToken } from './api'
+import { api, getSessionToken } from './api'
+
+// Saved per-user AI conversation for a workspace.
+export function getAiHistory(workspaceId) {
+  return api.get(`/api/workspaces/${workspaceId}/ai/messages`)
+}
+
+export function clearAiHistory(workspaceId) {
+  return api.delete(`/api/workspaces/${workspaceId}/ai/messages`)
+}
 
 // Streams a RAG answer from the workspace AI endpoint. The backend responds with
 // a plain-text token stream (answer followed by a "Sources:" trailer). `onChunk`

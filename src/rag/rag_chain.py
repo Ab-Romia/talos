@@ -22,6 +22,7 @@ class RAGChain:
         config: RagConfig = global_rag_config,
         workspace_id: str | None = None,
         file_ids: list[str] | None = None,
+        channel_ids: list[str] | None = None,
     ):
         from rag import (
             get_query_rewriter,
@@ -37,6 +38,7 @@ class RAGChain:
         self.collection_name = collection_name
         self.workspace_id = workspace_id
         self.file_ids = file_ids
+        self.channel_ids = channel_ids
         self.retrieved_docs: list[Document] = []
 
         self.last_query_info = {}
@@ -47,9 +49,18 @@ class RAGChain:
         if workspace_id:
             self.vectorstore = get_workspace_vectorstore(embeddings=self.hyde)
             parts = [f'workspace_id == "{workspace_id}"']
-            if file_ids:
-                ids_csv = ", ".join(f'"{fid}"' for fid in file_ids)
-                parts.append(f"file_id in [{ids_csv}]")
+            if file_ids is not None or channel_ids is not None:
+                clauses = []
+                if file_ids:
+                    ids_csv = ", ".join(f'"{fid}"' for fid in file_ids)
+                    clauses.append(f"file_id in [{ids_csv}]")
+                if channel_ids:
+                    ch_csv = ", ".join(f'"{cid}"' for cid in channel_ids)
+                    clauses.append(f"channel_id in [{ch_csv}]")
+                if clauses:
+                    parts.append("(" + " || ".join(clauses) + ")")
+                else:
+                    parts.append('file_id in ["__no_access__"]')
             extra_search_kwargs = {"expr": " && ".join(parts)}
         else:
             self.vectorstore = get_vectorstore(collection_name, embeddings=self.hyde)
@@ -108,7 +119,13 @@ class RAGChain:
     # TODO: use prompt template
     @staticmethod
     def _format_docs(docs):
-        return "\n\n".join(doc.page_content for doc in docs)
+        parts = []
+        for doc in docs:
+            label = doc.metadata.get("filename") or doc.metadata.get("source") or "document"
+            page = doc.metadata.get("page_number")
+            header = f"[from: {label}" + (f", page {page}" if page else "") + "]"
+            parts.append(f"{header}\n{doc.page_content}")
+        return "\n\n".join(parts)
 
     def query(self, question: str, include_citations: bool = True) -> str:
         full_response = ""
