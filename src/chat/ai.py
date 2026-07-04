@@ -37,8 +37,9 @@ def get_ai_user_id(db) -> UUID:
     return _ai_user_id
 
 
-def is_ai_trigger(content: str) -> bool:
-    stripped = content.strip().lower()
+def is_ai_trigger(content) -> bool:
+    from rag.message_text import doc_text
+    stripped = doc_text(content).strip().lower()
     return any(stripped.startswith(t) for t in _TRIGGERS)
 
 
@@ -50,11 +51,15 @@ def _strip_trigger(content: str) -> str:
     return stripped
 
 
-async def maybe_ai_reply(channel_id: UUID, content: str) -> None:
-    """If the message addresses the AI, generate and broadcast an assistant reply out-of-band."""
+async def maybe_ai_reply(channel_id: UUID, content) -> None:
+    """If the message addresses the AI, generate and broadcast an assistant reply out-of-band.
+
+    `content` may be a plain string or a ProseMirror doc dict (rich-msg).
+    """
+    from rag.message_text import doc_text
     if not is_ai_trigger(content):
         return
-    question = _strip_trigger(content)
+    question = _strip_trigger(doc_text(content))
     if not question:
         return
     asyncio.create_task(_run_ai_reply(channel_id, question))

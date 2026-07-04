@@ -23,27 +23,32 @@ class AiQueryRequest(BaseModel):
     file_ids: list[uuid.UUID] | None = None
 
 
-def _build_chain(workspace_id: uuid.UUID, file_ids: list[uuid.UUID] | None):
+def _build_chain(
+    workspace_id: uuid.UUID,
+    file_ids: list[uuid.UUID] | None,
+    history: list[AiMessage],
+):
+    from langchain_core.messages import AIMessage, HumanMessage
     from rag.rag_chain import RAGChain
 
     ids = [str(f) for f in file_ids] if file_ids else None
+    chat_history = [
+        HumanMessage(content=m.content) if m.role == "user" else AIMessage(content=m.content)
+        for m in history
+        if m.role in ("user", "assistant")
+    ]
     return RAGChain(
         global_rag_config.milvus_collection_name,
         workspace_id=str(workspace_id),
         file_ids=ids,
+        chat_history=chat_history,
     )
 
 
 @router.post("/query", dependencies=[require_perms("files:read")])
 async def query(workspace_id: uuid.UUID, req: AiQueryRequest):
     """Stream a RAG answer grounded in the workspace's documents and chat history."""
-    rag = await asyncio.to_thread(_build_chain, workspace_id, req.file_ids)
-
-    for m in req.history:
-        if m.role == "user":
-            rag.memory.add_user_message(m.content)
-        elif m.role == "assistant":
-            rag.memory.add_ai_message(m.content)
+    rag = await asyncio.to_thread(_build_chain, workspace_id, req.file_ids, req.history)
 
     def sync_gen():
         try:

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import cast
+from typing import Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
@@ -33,7 +33,8 @@ class ChatMessageResponse(BaseModel):
     channel_id: UUID
     sender_id: UUID | None
     role: str
-    content: str
+    # ProseMirror doc dict (rich-msg contract — same shape the socket delivers).
+    content: dict[str, Any]
     sent_at: datetime
 
     model_config = {"from_attributes": True}
