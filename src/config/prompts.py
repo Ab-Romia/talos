@@ -31,18 +31,3 @@ Context:
         ("human", "{question}"),
     ]
 )
-
-RAG_PROMPT_WITHOUT_MEMORY = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            """You are a helpful AI assistant. Use the following context to answer the question.
-
-If you cannot answer based on the context provided, say so clearly.
-
-Context:
-{context}""",
-        ),
-        ("human", "{question}"),
-    ]
-)

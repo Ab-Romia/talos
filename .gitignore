@@ -14,3 +14,7 @@ CLAUDE.md
 AGENTS.md
 
 /graphify-out
+
+# local /ask test harness (contains session tokens) + throwaway test UI
+HOW_TO_TEST_ASK.txt
+chat-ui/

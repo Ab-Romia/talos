@@ -48,6 +48,10 @@ class Message(Base):
     role: Mapped[MessageRole] = mapped_column(default=MessageRole.USER)
 
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
+    # NULL until the chat-memory indexer has embedded this message into Milvus.
+    # Added for the chat-memory-indexing feature (partitions the un-indexed tail
+    # injected as context from the indexed body recalled via retrieval).
+    indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
 
     channel: Mapped[Channel] = relationship("Channel", back_populates="messages")
     files: Mapped[list[File]] = relationship("File", secondary="message_files", back_populates="message")

@@ -74,7 +74,7 @@ async def _run_ai_reply(channel_id: UUID, question: str, user_id: UUID) -> None:
                 return
             ai_user_id = get_ai_user_id(db)
 
-        answer = await asyncio.to_thread(_generate, workspace_id, question, user_id)
+        answer = await asyncio.to_thread(_generate, workspace_id, question, user_id, channel_id)
         message = await store_assistant_message(channel_id, ai_user_id, answer)
         await sio.send(message.model_dump(mode="json"), room=room)
     except Exception:
@@ -83,19 +83,18 @@ async def _run_ai_reply(channel_id: UUID, question: str, user_id: UUID) -> None:
         await sio.emit("ai_typing", {"channel_id": str(channel_id), "status": "stop"}, room=room)
 
 
-def _generate(workspace_id: UUID, question: str, user_id: UUID) -> str:
+def _generate(workspace_id: UUID, question: str, user_id: UUID, channel_id: UUID) -> str:
     from config import global_rag_config
     from rag.rag_chain import RAGChain
-    from rag.access import accessible_file_ids, accessible_channel_ids
+    from rag.access import accessible_file_ids
 
     with SessionLocal() as db:
         allowed_files = accessible_file_ids(db, user_id, workspace_id)
-        allowed_channels = accessible_channel_ids(db, user_id, workspace_id)
 
     rag = RAGChain(
         global_rag_config.milvus_collection_name,
         workspace_id=str(workspace_id),
         file_ids=[str(f) for f in allowed_files],
-        channel_ids=[str(c) for c in allowed_channels],
+        chatroom_id=str(channel_id),
     )
     return rag.query(question)

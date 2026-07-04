@@ -1,7 +1,6 @@
 from uuid import UUID
 
 from utils.logger import get_logger
-from .ai import is_ai_trigger
 from .model import MessageSchema, MessageRole
 from .storage import get_storage
 
@@ -17,14 +16,6 @@ async def store_message(channel_id: UUID, user_id: UUID, content: str) -> Messag
         content=content,
     )
     await get_storage().put(msg)
-
-    stripped = content.strip()
-    if len(stripped) >= 20 and not is_ai_trigger(stripped):
-        try:
-            from processing.tasks import index_message
-            await index_message.kiq(msg.id, channel_id, content)
-        except Exception:
-            logger.warning("Failed to enqueue message indexing", message_id=str(msg.id))
 
     return msg
 

@@ -24,7 +24,13 @@ class AiQueryRequest(BaseModel):
     file_ids: list[uuid.UUID] | None = None
 
 
-def _build_chain(workspace_id: uuid.UUID, user_id: uuid.UUID, requested_file_ids: list[uuid.UUID] | None):
+def _build_chain(
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    requested_file_ids: list[uuid.UUID] | None,
+    history: list["AiMessage"],
+):
+    from langchain_core.messages import AIMessage, HumanMessage
     from rag.rag_chain import RAGChain
     from rag.access import accessible_file_ids, accessible_channel_ids
     from database import SessionLocal
@@ -37,11 +43,18 @@ def _build_chain(workspace_id: uuid.UUID, user_id: uuid.UUID, requested_file_ids
         allowed_files = allowed_files & set(requested_file_ids)
         allowed_channels = set()
 
+    chat_history = [
+        AIMessage(content=m.content) if m.role == "assistant" else HumanMessage(content=m.content)
+        for m in history
+        if m.content
+    ]
+
     return RAGChain(
         global_rag_config.milvus_collection_name,
         workspace_id=str(workspace_id),
         file_ids=[str(f) for f in allowed_files],
         channel_ids=[str(c) for c in allowed_channels],
+        chat_history=chat_history,
     )
 
 
@@ -102,13 +115,7 @@ async def clear_ai_messages(workspace_id: uuid.UUID, user_id: UserIdDep):
 @router.post("/query", dependencies=[require_perms("files:read")])
 async def query(workspace_id: uuid.UUID, req: AiQueryRequest, user_id: UserIdDep):
     """Stream a RAG answer grounded in the workspace's documents and chat history."""
-    rag = await asyncio.to_thread(_build_chain, workspace_id, user_id, req.file_ids)
-
-    for m in req.history:
-        if m.role == "user":
-            rag.memory.add_user_message(m.content)
-        elif m.role == "assistant":
-            rag.memory.add_ai_message(m.content)
+    rag = await asyncio.to_thread(_build_chain, workspace_id, user_id, req.file_ids, req.history)
 
     await asyncio.to_thread(_save_message, workspace_id, user_id, "user", req.question)
 

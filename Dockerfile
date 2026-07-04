@@ -1,9 +1,13 @@
 # ── Base stage: shared Python + deps ──
 FROM python:3.13-slim AS base
 
-# System deps for python-magic
+# System deps: python-magic, unstructured's PDF stack (cv2 needs libgl/libglib/libxcb),
+# and tesseract for OCR of scanned documents
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends libmagic1 && \
+    apt-get install -y --no-install-recommends \
+        libmagic1 \
+        libgl1 libglib2.0-0 libxcb1 \
+        tesseract-ocr && \
     rm -rf /var/lib/apt/lists/*
 
 # Install uv
@@ -16,6 +20,9 @@ COPY pyproject.toml uv.lock ./
 
 # Install dependencies (frozen lockfile, no dev deps, system python)
 RUN uv sync --frozen --no-dev --no-install-project
+
+# OCR extras (kept out of the lockfile: pure additions, no version interplay)
+RUN uv pip install --no-cache pytesseract pypdfium2
 
 # Copy source code
 COPY app.py ./

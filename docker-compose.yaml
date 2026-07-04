@@ -40,7 +40,30 @@ services:
       HF_HOME: /models/hf
     volumes:
       - hf_cache:/models
-    command: [ "taskiq", "worker", "broker:broker", "notifications.tasks", "processing.tasks", "--app-dir=src" ]
+    command: [ "taskiq", "worker", "broker:broker", "notifications.tasks", "processing.tasks", "processing.chat_tasks", "--app-dir=src" ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  scheduler:
+    profiles: ["async"]   # periodic chat-memory indexing ticks (runs tasks via the worker)
+    build:
+      context: .
+      target: worker
+    hostname: talos-scheduler
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-talos_app}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-talos}
+      MILVUS_HOST: milvus-standalone
+      REDIS__URL: redis://redis:6379
+      HF_HOME: /models/hf
+    volumes:
+      - hf_cache:/models
+    command: [ "taskiq", "scheduler", "scheduler:scheduler", "processing.chat_tasks", "--app-dir=src" ]
     depends_on:
       postgres:
         condition: service_healthy
