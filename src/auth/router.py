@@ -37,7 +37,7 @@ class InitSignupClaims(jwt.BaseJWTClaims):
 
 @router.post("/signup",
              status_code=status.HTTP_202_ACCEPTED,
-             dependencies=[Depends(email_ratelimit("signup", "1/2minute"))])
+             dependencies=[Depends(email_ratelimit("signup", "2/2minute"))])
 async def initiate_signup(email: Annotated[str, Form()], db: DatabaseDep):
     # TODO:
     #  - Captcha
