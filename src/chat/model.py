@@ -126,6 +126,8 @@ class MessageSchema(BaseModel):
     mentioned_user_ids: list[UUID] = Field(default_factory=list)
     is_mentioned: bool = False  # ephemeral, per-recipient; set True before emitting to a mentioned user
     sent_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # NULL means this is a root (top-level) message.
+    parent_id: UUID | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -156,6 +158,8 @@ class MessageCreateSchema(BaseModel):
     content: dict[str, Any] | str
     mentioned_user_ids: list[UUID] = Field(default_factory=list)
     role: MessageRole = MessageRole.USER
+    # NULL means the message is a new root conversation; provide a UUID to reply.
+    parent_id: UUID | None = None
 
     @model_validator(mode="after")
     def coerce_and_validate(self) -> "MessageCreateSchema":
@@ -193,6 +197,23 @@ class Message(Base):
     )
     sender_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # --- threading -----------------------------------------------------------
+    # NULL  → root (top-level) message.
+    # Non-NULL → this message is a reply; any message can be a parent (unlimited depth).
+    # SET NULL on delete so the reply is not cascade-deleted when the parent is hard-deleted.
+    # [OPEN] Replies to soft-deleted parents are currently permitted — enforce if needed.
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True,
+        default=None,
+    )
+    parent: Mapped["Message | None"] = relationship(
+        "Message", foreign_keys=[parent_id], back_populates="replies", remote_side="Message.id"
+    )
+    replies: Mapped[list["Message"]] = relationship(
+        "Message", foreign_keys=[parent_id], back_populates="parent"
     )
 
     # --- rich-text content ---------------------------------------------------
@@ -236,6 +257,7 @@ class Message(Base):
     # --- indexes -------------------------------------------------------------
     __table_args__ = (
         Index("ix_messages_channel_sent_at", "channel_id", "sent_at"),
+        Index("ix_messages_parent_id", "parent_id"),
         Index(
             "ix_messages_mentioned_user_ids_gin",
             "mentioned_user_ids",

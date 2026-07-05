@@ -6,7 +6,7 @@ from chat.router import post_message, get_channel_messages, get_single_message, 
 class TestPostMessage:
     def test_post_message_success(self, client, test_channel, test_user, auth_token, path):
         """Successfully send a message to a channel."""
-        payload = {"text": "Hello, world!"}
+        payload = {"content": "Hello, world!"}
 
         response = client.post(
             path(post_message, channel_id=test_channel.id),
@@ -46,7 +46,7 @@ class TestGetChannelMessages:
         for i in range(5):
             client.post(
                 path(post_message, channel_id=test_channel.id),
-                json={"text": f"Message {i}"},
+                json={"content": f"Message {i}"},
                 headers={"Authorization": f"Bearer {auth_token}"},
             )
 
@@ -71,7 +71,7 @@ class TestGetChannelMessages:
         """Offset beyond total messages returns an empty list."""
         client.post(
             path(post_message, channel_id=test_channel.id),
-            json={"text": "Only message"},
+            json={"content": "Only message"},
             headers={"Authorization": f"Bearer {auth_token}"},
         )
 
@@ -91,7 +91,7 @@ class TestGetSingleMessage:
         # Seed a message to retrieve
         post_response = client.post(
             path(post_message, channel_id=test_channel.id),
-            json={"text": "Target message"},
+            json={"content": "Target message"},
             headers={"Authorization": f"Bearer {auth_token}"},
         )
         msg_id = post_response.json()["id"]

@@ -75,7 +75,7 @@ def require_perms(*required_permissions: str):
                         workspace_id=workspace_id,
                         db=db,
                     )
-                checker(user_permissions, False, db)
+                    checker(user_permissions, False, db)
                 return await handler(sid, data)
             except errors.Forbidden as e:
                 return {"error": e.detail}
@@ -169,6 +169,7 @@ async def message(sid: str, data: dict[str, Any]):
         user_id=sender_id,
         content=incoming.content,
         mentioned_user_ids=incoming.mentioned_user_ids,
+        parent_id=incoming.parent_id,  # None → root message, UUID → reply
     )
 
     # Two payloads — same shape, differ only in is_mentioned.
