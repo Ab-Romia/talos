@@ -13,7 +13,7 @@ from config import cfg
 from database import SessionLocal
 from utils.logger import get_logger
 from workspace.model import WorkspaceMember, Channel
-from .model import MessageSchema
+from .model import MessageCreateSchema
 
 mgr = socketio.AsyncRedisManager(cfg().redis.url, channel="sio#")
 sio = socketio.AsyncServer(
@@ -160,17 +160,24 @@ async def disconnect(sid: str, _) -> None:
 async def message(sid: str, data: dict[str, Any]):
     from chat import store_message
 
-    incoming = MessageSchema(**data)
+    incoming = MessageCreateSchema(**data)
     sess = await sio.get_session(sid)
+    sender_id: UUID = sess["user_id"]
 
     message = await store_message(
         channel_id=incoming.channel_id,
-        user_id=sess["user_id"],
+        user_id=sender_id,
         content=incoming.content,
+        mentioned_user_ids=incoming.mentioned_user_ids,
     )
 
-    await sio.send(
-        message.model_dump(mode="json"),
+    # Two payloads — same shape, differ only in is_mentioned.
+    # Build both up front so we're not re-dumping inside the gather loop.
+    base_payload = message.model_dump(mode="json", exclude={"is_mentioned"})
+
+    await sio.emit(
+        "message",
+        base_payload,
         room=f"channel:{message.channel_id}",
         skip_sid=sid,
     )

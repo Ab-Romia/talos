@@ -107,12 +107,24 @@ class MessageSchema(BaseModel):
     `content` is stored as a plain dict (the JSON form of the ProseMirror doc)
     so Pydantic can serialise it without custom encoders.
     Use `parse_doc(msg.content)` anywhere you need a live Node object.
+
+    `mentioned_user_ids` is populated from the DB column on read (via
+    model_validate) and from the frontend-supplied list on write.  The
+    authoritative copy for persistence is always the AST-derived value written
+    by set_content(); this field is used for in-process fanout only.
+
+    `is_mentioned` is ephemeral — never stored, never read from the DB.
+    It is set to True immediately before emitting to a mentioned user's
+    personal room so the client can apply per-user notification preferences
+    without a separate event type.
     """
     id: UUID = Field(default_factory=uuid.uuid7)
     channel_id: UUID
     sender_id: UUID
     role: MessageRole = MessageRole.USER
     content: dict[str, Any]   # validated ProseMirror JSON (from Node.to_json())
+    mentioned_user_ids: list[UUID] = Field(default_factory=list)
+    is_mentioned: bool = False  # ephemeral, per-recipient; set True before emitting to a mentioned user
     sent_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     model_config = ConfigDict(from_attributes=True)
@@ -134,9 +146,15 @@ class MessageCreateSchema(BaseModel):
       - a plain string                (bots, legacy API consumers)
 
     Plain strings are auto-wrapped into a minimal paragraph doc.
+
+    `mentioned_user_ids` is provided by the frontend as a denormalised UUID[]
+    extracted from the editor's mention nodes.  The backend trusts this list
+    for real-time fanout; the authoritative DB copy is always re-derived from
+    the AST by set_content() at persist time.
     """
     channel_id: UUID
     content: dict[str, Any] | str
+    mentioned_user_ids: list[UUID] = Field(default_factory=list)
     role: MessageRole = MessageRole.USER
 
     @model_validator(mode="after")

@@ -36,7 +36,6 @@ dependencies = [
     "minio>=7.2.20",
     "pillow>=12.2.0",
     "langchain-text-splitters>=1.1.1",
-    "python-magic>=0.4.27",
     "python-dotenv>=1.2.1",
     "sentence-transformers>=5.4.1",
     "torch>=2.11.0",
@@ -54,6 +53,7 @@ dependencies = [
     "pyrefly>=0.45.0",
     "httpx>=0.28.1",
     "prosemirror>=0.6.1",
+    "python-magic-bin>=0.4.14",
 ]
 
 [dependency-groups]
