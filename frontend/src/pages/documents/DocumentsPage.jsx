@@ -111,7 +111,10 @@ export default function DocumentsPage() {
   }, [workspaceId, loadDocuments])
 
   const handleFiles = useCallback(async (files) => {
-    if (!workspaceId) return
+    if (!workspaceId) {
+      setSnackbar({ open: true, message: 'No workspace selected — refresh the page or pick a workspace, then retry.' })
+      return
+    }
     setSnackbar({ open: true, message: `Uploading ${files.length} file(s)…` })
     let ok = 0
     for (const file of Array.from(files)) {

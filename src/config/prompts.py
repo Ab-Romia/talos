@@ -22,8 +22,10 @@ RAG_PROMPT = ChatPromptTemplate.from_messages(
             "system",
             """You are a helpful AI assistant. Use the following context to answer the question.
 
-The conversation history in this thread is also part of your context: you may
-reference and quote earlier messages when the question is about them.
+The conversation history in this thread IS available to you — never say you
+cannot access messages in this conversation. When the question is about earlier
+messages, answer by quoting or referencing them directly, even if earlier
+replies (including your own) claimed otherwise.
 
 If you cannot answer based on the context provided, say so clearly.
 

@@ -113,7 +113,7 @@ def index_pending_messages(
     and the pre-ingest purge stops that retry from duplicating vectors. Returns
     the count indexed.
     """
-    from chat.model import Message
+    from chat.model import Message, MessageRole
     # Register related mappers before querying Message. The taskiq worker is a
     # minimal process (not the full app), so Message.channel -> Channel and
     # Message.files -> File won't resolve unless their modules are imported.
@@ -156,8 +156,16 @@ def index_pending_messages(
             if not messages:
                 return 0
 
+            # Embed only human conversation. Assistant answers must not enter
+            # chat memory: a re-asked question embeds near-identically to its
+            # own past Q&A segment, so old AI answers (including refusals)
+            # would win recall and crowd out the real content — a feedback
+            # loop (store_assistant_message documents the same intent).
+            # Assistant rows are still stamped below so the un-indexed tail
+            # stays bounded.
             docs = build_chat_documents(
-                messages, chunk_size, chunk_overlap,
+                [m for m in messages if m.role != MessageRole.ASSISTANT],
+                chunk_size, chunk_overlap,
                 gap_seconds=segment_gap_seconds, max_messages=segment_max_messages,
             )
             # Idempotency: drop any segment vectors a prior crashed tick may have
