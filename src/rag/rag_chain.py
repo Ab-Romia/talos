@@ -111,7 +111,10 @@ class RAGChain:
                     # scoping resolved to no accessible files) — match nothing
                     # rather than falling open to the whole workspace.
                     parts.append('file_id in ["__no_access__"]')
-                extra_search_kwargs = {"expr": " && ".join(parts)}
+                # Kept for filename-directed refinement in _rewrite_and_retrieve
+                # (same workspace + permission scope, narrowed to named files).
+                self._file_expr = " && ".join(parts)
+                extra_search_kwargs = {"expr": self._file_expr}
 
                 # Per-channel long-term memory over this channel's indexed
                 # messages. Uses BASE embeddings (not HyDE): hypothetical-document
@@ -142,6 +145,23 @@ class RAGChain:
 
         self.llm = llm if llm is not None else get_llm(config=config)
 
+    @staticmethod
+    def _files_named_in(question: str, docs) -> list[str]:
+        """Filenames the question explicitly refers to, drawn from the retrieved
+        docs' metadata. Full-name matches always count; extension-less stems only
+        when long enough to be unambiguous (so a doc named test.pdf doesn't
+        hijack every question containing the word 'test')."""
+        q = question.lower()
+        named: list[str] = []
+        for d in docs:
+            fn = (d.metadata.get("filename") or "").strip()
+            if not fn or fn in named:
+                continue
+            stem = fn.rsplit(".", 1)[0]
+            if fn.lower() in q or (len(stem) >= 5 and stem.lower() in q):
+                named.append(fn)
+        return named
+
     def _rewrite_and_retrieve(self, question: str):
         if self.query_rewriter is not None:
             result = self.query_rewriter.invoke({"query": question})
@@ -153,6 +173,24 @@ class RAGChain:
         self.last_query_info["rewritten_query"] = rewritten
 
         docs = self.retriever.invoke(rewritten)
+
+        # Filename-directed questions ("tell me about lab03.pdf") get retrieval
+        # narrowed to the named file(s): the semantic top-k otherwise pads the
+        # context — and the citations — with chunks from unrelated documents.
+        named = self._files_named_in(question, docs)
+        if named and getattr(self, "_file_expr", None) and self.vectorstore is not None:
+            try:
+                names_csv = ", ".join(f'"{n}"' for n in named)
+                scoped_expr = f"{self._file_expr} && filename in [{names_csv}]"
+                scoped = self.vectorstore.similarity_search(
+                    rewritten, k=self.config.retrieval_top_k, expr=scoped_expr
+                )
+                if scoped:
+                    docs = scoped
+            except Exception:
+                logger.warning("filename-scoped retrieval failed; keeping broad results",
+                               named=named, exc_info=True)
+
         self.retrieved_docs = docs  # files only -> drives citations
         chat_docs = self._retrieve_chat(rewritten)
         self.last_chat_docs = chat_docs  # captured for debug

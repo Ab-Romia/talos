@@ -183,6 +183,17 @@ const notificationsSlice = createSlice({
         state.pushLoading = false
         state.pushError = action.payload
       })
+      // Per-account data must not survive an account switch (push settings are
+      // browser-level and stay).
+      .addMatcher(
+        (action) => ['auth/logout/fulfilled', 'auth/logout/rejected', 'auth/login/fulfilled'].includes(action.type),
+        (state) => {
+          state.items = []
+          state.unreadCount = 0
+          state.loading = false
+          state.error = null
+        },
+      )
   },
 })
 

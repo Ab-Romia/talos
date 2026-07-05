@@ -24,6 +24,8 @@ RAG_PROMPT = ChatPromptTemplate.from_messages(
 
 If you cannot answer based on the context provided, say so clearly.
 
+Do not write a "Sources" or citations section yourself; one is appended automatically after your answer.
+
 Context:
 {context}""",
         ),

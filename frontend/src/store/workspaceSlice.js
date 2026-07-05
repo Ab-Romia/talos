@@ -1,9 +1,26 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit'
 import { chatService } from '../services/chat'
 import { reconnectSocket } from '../services/socket'
+import { login, logout } from './authSlice'
 
 const ACTIVE_WS_KEY = 'talos:activeWorkspaceId'
 const ACTIVE_CR_KEY = 'talos:activeChatroomId'
+
+// Everything here is per-account state; carrying it across an account switch
+// leaves the next user "in" a workspace they may not belong to.
+function resetToInitial(state) {
+  state.workspaces = []
+  state.chatrooms = []
+  state.activeWorkspaceId = null
+  state.activeChatroomId = null
+  state.unreadChannels = []
+  state.loading = false
+  state.error = null
+  try {
+    localStorage.removeItem(ACTIVE_WS_KEY)
+    localStorage.removeItem(ACTIVE_CR_KEY)
+  } catch {}
+}
 
 export const bootstrapWorkspaces = createAsyncThunk(
   'workspace/bootstrap',
@@ -179,6 +196,13 @@ const workspaceSlice = createSlice({
       .addCase(createChatroom.rejected, (state, action) => {
         state.error = action.payload
       })
+      // Account switches: clear on logout (fulfilled OR rejected — the UI
+      // treats both as logged out) and on a fresh login, so bootstrap always
+      // refetches the NEW account's workspaces instead of reusing the old
+      // account's list (which caused "Not a member of this workspace").
+      .addCase(logout.fulfilled, resetToInitial)
+      .addCase(logout.rejected, resetToInitial)
+      .addCase(login.fulfilled, resetToInitial)
   },
 })
 

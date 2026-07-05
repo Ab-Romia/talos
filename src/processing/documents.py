@@ -128,10 +128,13 @@ async def process_document(file_record: File, db: Session, storage: AsyncFileSys
             from s3fs import S3FileSystem
             from config import cfg
             _m = cfg().minio
+            _endpoint = str(_m.internal_endpoint)
+            if not _endpoint.startswith("http"):
+                _endpoint = f"{'https' if _m.secure else 'http'}://{_endpoint}"
             raw_fs = S3FileSystem(
                 key=_m.access_key,
                 secret=_m.secret_key.get_secret_value(),
-                endpoint_url=_m.internal_endpoint,
+                endpoint_url=_endpoint,
                 use_ssl=_m.secure,
                 asynchronous=True,
                 # fsspec caches instances by params; a cached client is bound to a

@@ -43,8 +43,11 @@ def _build_chain(
         allowed_files = allowed_files & set(requested_file_ids)
         allowed_channels = set()
 
+    def _strip_citations(text: str) -> str:
+        return text.split("\n\nSources:", 1)[0].strip()
+
     chat_history = [
-        AIMessage(content=m.content) if m.role == "assistant" else HumanMessage(content=m.content)
+        AIMessage(content=_strip_citations(m.content)) if m.role == "assistant" else HumanMessage(content=m.content)
         for m in history
         if m.content
     ]
