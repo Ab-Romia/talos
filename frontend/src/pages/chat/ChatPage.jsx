@@ -12,7 +12,7 @@ import ListItem from '@mui/material/ListItem'
 import ListItemAvatar from '@mui/material/ListItemAvatar'
 import ListItemText from '@mui/material/ListItemText'
 import {
-  Search, Users, Bold, Code, ArrowUp, X, Sparkles,
+  Search, Users, Bold, Code, ArrowUp, X, Sparkles, Bug,
 } from 'lucide-react'
 
 import { useSelector, useDispatch as useReduxDispatch } from 'react-redux'
@@ -21,6 +21,8 @@ import { usePermissions } from '../../contexts/PermissionsContext'
 import { chatService } from '../../services/chat'
 import { onChatMessage, onAiTyping, getSocket } from '../../services/socket'
 import { ChatMessageContent } from '../../components/chat/ChatMessageContent'
+import { RagTracePanel } from '../../components/chat/RagTracePanel'
+import { askService } from '../../services/ask'
 import { AiTypingIndicator } from '../../components/chat/AiTypingIndicator'
 import { ChatComposerField } from '../../components/chat/ChatComposerField'
 import { docText } from '../../utils/prosemirrorText'
@@ -66,6 +68,7 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false)
   const [chatroomName, setChatroomName] = useState('')
   const [aiThinking, setAiThinking] = useState(false)
+  const [debugTrace, setDebugTrace] = useState(false)
 
   const user = useSelector((state) => state.auth.user)
   const {
@@ -319,11 +322,55 @@ export default function ChatPage() {
 
   const handleSend = useCallback(() => sendText(input), [sendText, input])
 
-  const handleAskAI = useCallback(() => {
+  const handleAskAI = useCallback(async () => {
     const t = input.trim()
     if (!t) return
-    sendText(t.toLowerCase().startsWith('@talos') ? t : `@talos ${t}`)
-  }, [sendText, input])
+    if (!debugTrace) {
+      sendText(t.toLowerCase().startsWith('@talos') ? t : `@talos ${t}`)
+      return
+    }
+    // Debug mode: go through /ask (persists + answers) and render the full
+    // RAG trace under the reply. The question is shown locally right away.
+    const question = t.replace(/^@talos\s*/i, '')
+    setInput('')
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: nextIdRef.current++,
+        senderId: user?.id,
+        role: 'user',
+        isAI: false,
+        mine: true,
+        name: user?.name || 'You',
+        initials: initialsOf(user?.name || 'You'),
+        time: fmtTime(new Date().toISOString()),
+        body: question,
+      },
+    ])
+    setAiThinking(true)
+    try {
+      const { answer, trace } = await askService.askWithDebug(chatroomId, question)
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: nextIdRef.current++,
+          senderId: null,
+          role: 'assistant',
+          isAI: true,
+          mine: false,
+          name: 'Talos AI',
+          initials: 'AI',
+          time: fmtTime(new Date().toISOString()),
+          body: answer,
+          trace,
+        },
+      ])
+    } catch (err) {
+      showSnackbar(err?.detail || 'Ask failed')
+    } finally {
+      setAiThinking(false)
+    }
+  }, [sendText, input, debugTrace, chatroomId, user, showSnackbar])
 
   const handleKeyDown = useCallback(
     (e) => {
@@ -609,6 +656,7 @@ export default function ChatPage() {
                     <span className="text-[12px] text-ink-muted">{msg.time}</span>
                   </div>
                   <ChatMessageContent content={msg.body || ''} renderCursor={false} />
+                  {msg.trace && <RagTracePanel trace={msg.trace} />}
                 </div>
               </div>
             )
@@ -638,12 +686,21 @@ export default function ChatPage() {
                   ))}
                   <div className="flex-1" />
                   <button
+                    onClick={() => setDebugTrace((v) => !v)}
+                    className={`flex items-center gap-1 h-7 px-2 rounded-lg text-[12px] font-medium transition-colors ${
+                      debugTrace ? 'text-amber bg-amber-subtle' : 'text-ink-muted hover:text-ink-secondary'
+                    }`}
+                    title="Debug mode: show the full RAG trace with the answer"
+                  >
+                    <Bug size={13} />
+                  </button>
+                  <button
                     onClick={handleAskAI}
                     disabled={!input.trim() || !chatroomId || sending}
                     className="flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-[12px] font-medium text-amber hover:bg-amber-subtle transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     title="Ask the AI in this channel (everyone can see the reply)"
                   >
-                    <Sparkles size={13} /> Ask AI
+                    <Sparkles size={13} /> Ask AI{debugTrace ? ' (debug)' : ''}
                   </button>
                 </div>
                 <ChatComposerField
