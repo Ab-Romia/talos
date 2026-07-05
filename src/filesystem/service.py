@@ -321,6 +321,14 @@ def soft_delete(
         logger.exception("soft_delete commit failed", file_id=str(file_id))
         raise
 
+    # A deleted file must stop being retrievable immediately — purge its
+    # chunks from the vector store (storage objects are cleaned up async).
+    try:
+        from rag.vector_store import delete_file_chunks
+        delete_file_chunks(str(file_id), workspace_id=str(workspace_id))
+    except Exception:
+        logger.exception("failed to purge vector chunks for deleted file", file_id=str(file_id))
+
     logger.info("File soft-deleted", file_id=str(file_id))
     return file
 
