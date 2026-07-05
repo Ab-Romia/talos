@@ -96,8 +96,11 @@ const workspaceSlice = createSlice({
   initialState: {
     workspaces: [],
     chatrooms: [],
-    activeWorkspaceId: null,
-    activeChatroomId: null,
+    // Hydrate from localStorage so a failed/blocked bootstrap fetch (e.g. the
+    // backend restarting) doesn't leave the app with no active workspace —
+    // which silently broke document upload and any workspace-scoped action.
+    activeWorkspaceId: (() => { try { return localStorage.getItem(ACTIVE_WS_KEY) } catch { return null } })(),
+    activeChatroomId: (() => { try { return localStorage.getItem(ACTIVE_CR_KEY) } catch { return null } })(),
     unreadChannels: [],
     loading: false,
     error: null,

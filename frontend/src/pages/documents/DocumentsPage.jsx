@@ -111,7 +111,11 @@ export default function DocumentsPage() {
   }, [workspaceId, loadDocuments])
 
   const handleFiles = useCallback(async (files) => {
-    if (!workspaceId) {
+    // Fall back to the persisted id if the store hasn't hydrated yet — a
+    // stale tab (e.g. after the backend restarted) can have a null store
+    // value while localStorage still holds the active workspace.
+    const wsId = workspaceId || localStorage.getItem('talos:activeWorkspaceId')
+    if (!wsId) {
       setSnackbar({ open: true, message: 'No workspace selected — refresh the page or pick a workspace, then retry.' })
       return
     }
@@ -119,7 +123,7 @@ export default function DocumentsPage() {
     let ok = 0
     for (const file of Array.from(files)) {
       try {
-        await documentService.upload(workspaceId, file)
+        await documentService.upload(wsId, file)
         ok += 1
       } catch (err) {
         setSnackbar({ open: true, message: err?.detail || `Failed to upload ${file.name}` })
