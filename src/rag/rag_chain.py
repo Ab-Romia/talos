@@ -173,7 +173,6 @@ class RAGChain:
         self.last_query_info["rewritten_query"] = rewritten
 
         docs = self.retriever.invoke(rewritten)
-
         # Filename-directed questions ("tell me about lab03.pdf") get retrieval
         # narrowed to the named file(s): the semantic top-k otherwise pads the
         # context — and the citations — with chunks from unrelated documents.
@@ -190,7 +189,6 @@ class RAGChain:
             except Exception:
                 logger.warning("filename-scoped retrieval failed; keeping broad results",
                                named=named, exc_info=True)
-
         self.retrieved_docs = docs  # files only -> drives citations
         chat_docs = self._retrieve_chat(rewritten)
         self.last_chat_docs = chat_docs  # captured for debug

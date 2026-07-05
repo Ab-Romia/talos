@@ -28,14 +28,20 @@ def _build_chain(
     workspace_id: uuid.UUID,
     user_id: uuid.UUID,
     requested_file_ids: list[uuid.UUID] | None,
-    history: list["AiMessage"],
+    history: list[AiMessage],
 ):
     from langchain_core.messages import AIMessage, HumanMessage
-    from rag.rag_chain import RAGChain
-    from rag.access import accessible_file_ids, accessible_channel_ids
     from database import SessionLocal
+    from rag.access import accessible_file_ids, accessible_channel_ids
+    from rag.ai_settings import resolve_ai_config
+    from rag.rag_chain import RAGChain
+    from rag.vector_store import WORKSPACE_COLLECTION
 
+    # Honor per-workspace ai_settings AND scope retrieval to what the caller
+    # may actually access (files:read on channel-restricted files, channel:view
+    # for chat recall).
     with SessionLocal() as db:
+        resolved, provenance = resolve_ai_config(workspace_id, None, db)
         allowed_files = accessible_file_ids(db, user_id, workspace_id)
         allowed_channels = accessible_channel_ids(db, user_id, workspace_id)
 
@@ -49,11 +55,13 @@ def _build_chain(
     chat_history = [
         AIMessage(content=_strip_citations(m.content)) if m.role == "assistant" else HumanMessage(content=m.content)
         for m in history
-        if m.content
+        if m.content and m.role in ("user", "assistant")
     ]
 
     return RAGChain(
-        global_rag_config.milvus_collection_name,
+        WORKSPACE_COLLECTION,
+        config=resolved,
+        config_provenance=provenance,
         workspace_id=str(workspace_id),
         file_ids=[str(f) for f in allowed_files],
         channel_ids=[str(c) for c in allowed_channels],

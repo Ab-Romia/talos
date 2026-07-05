@@ -22,6 +22,8 @@ database:
   host: localhost
   port: 5432
 minio:
-  public_endpoint: http://172.20.0.4:9000
-  internal_endpoint: http://172.20.0.4:9000
+  # Host-run dev endpoints (published ports). Containerized runs override via
+  # MINIO__INTERNAL_ENDPOINT / MINIO__PUBLIC_ENDPOINT env (env > yaml).
+  public_endpoint: http://localhost:9000
+  internal_endpoint: http://localhost:9000
   bucket_name: talos

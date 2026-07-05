@@ -5,6 +5,7 @@ import remarkBreaks from 'remark-breaks'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { docText } from '../../utils/prosemirrorText'
 
 const rehypeSanitizeSchema = {
   ...defaultSchema,
@@ -27,6 +28,10 @@ export function ChatMessageContent({
   )
 
   if (content == null) return null
+
+  // Message content arrives as a ProseMirror JSON doc from the backend;
+  // react-markdown needs a string.
+  content = docText(content)
 
   const hasText = String(content).trim().length > 0
   const streamingWithNoTextYet = renderCursor && !hasText

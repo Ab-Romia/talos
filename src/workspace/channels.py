@@ -3,6 +3,7 @@ Channels management endpoints at the workspace level.
 Handles channel creation, listing, and deletion from workspace perspective.
 """
 import uuid
+from datetime import datetime
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, HTTPException, Form, Path
@@ -22,7 +23,7 @@ class ChannelListResponse(BaseModel):
     is_public: bool
     is_muted: bool
     is_archived: bool
-    created_at: str
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -34,7 +35,7 @@ class ChannelCreateResponse(BaseModel):
     description: Optional[str] = None
     workspace_id: uuid.UUID
     is_public: bool
-    created_at: str
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -69,7 +70,7 @@ def list_workspace_channels(
         skip = 0
 
     try:
-        channels_list = WorkspaceService.get_workspace_channels(db, workspace_id)
+        channels_list = ChannelService.get_workspace_channels(db, workspace_id)
         return channels_list[skip:skip + limit]
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

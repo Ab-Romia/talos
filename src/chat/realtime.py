@@ -13,7 +13,7 @@ from config import cfg
 from database import SessionLocal
 from utils.logger import get_logger
 from workspace.model import WorkspaceMember, Channel
-from .model import MessageSchema
+from .model import MessageCreateSchema
 
 mgr = socketio.AsyncRedisManager(cfg().redis.url, channel="sio#")
 sio = socketio.AsyncServer(
@@ -160,7 +160,9 @@ async def disconnect(sid: str, _) -> None:
 async def message(sid: str, data: dict[str, Any]):
     from chat import store_message
 
-    incoming = MessageSchema(**data)
+    # MessageCreateSchema coerces plain-string content into a ProseMirror doc
+    # and validates rich content against chat_schema (rich-msg contract).
+    incoming = MessageCreateSchema(**data)
     sess = await sio.get_session(sid)
 
     message = await store_message(
@@ -191,10 +193,11 @@ async def message(sid: str, data: dict[str, Any]):
         if not isinstance(sess, Exception)
     ]
 
+    from rag.message_text import doc_text
     asyncio.create_task(_notify_channel_members(
         channel_id=message.channel_id,
         sender_id=sess["user_id"],
-        content=message.content,
+        content=doc_text(message.content),
     ))
 
     return "OK", {  # ack

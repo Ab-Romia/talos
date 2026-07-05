@@ -189,7 +189,6 @@ async def process_document(file_record: File, db: Session, storage: AsyncFileSys
                 f"(content_type={file_record.content_type}), even after OCR. "
                 f"The file may be empty or an unsupported format."
             )
-
         # Add chunk index to metadata
         for i, chunk in enumerate(chunks):
             chunk.metadata["chunk_index"] = i

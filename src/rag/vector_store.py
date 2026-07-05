@@ -7,7 +7,7 @@ from langchain_core.vectorstores import VectorStore
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_milvus import Milvus
 from langchain_openai import OpenAIEmbeddings
-from pymilvus import connections, Collection, utility, MilvusClient
+from pymilvus import connections, Collection, utility
 
 from config import global_rag_config
 
@@ -75,7 +75,8 @@ def _ensure_milvus_connection():
     if not _milvus_connected:
         connections.connect(
             alias="default",
-            uri=f"http://{global_rag_config.milvus_host}:{global_rag_config.milvus_port}",
+            host=global_rag_config.milvus_host,
+            port=global_rag_config.milvus_port,
         )
         _milvus_connected = True
 
@@ -156,9 +157,6 @@ def get_vectorstore(
         collection_name=collection_name,
         auto_id=True,
         enable_dynamic_field=True,
-        connection_args={
-            "uri": f"http://{global_rag_config.milvus_host}:{global_rag_config.milvus_port}",
-        },
     )
 
 
@@ -217,7 +215,8 @@ def get_workspace_vectorstore(
         auto_id=True,
         enable_dynamic_field=True,
         connection_args={
-            "uri": f"http://{global_rag_config.milvus_host}:{global_rag_config.milvus_port}",
+            "host": global_rag_config.milvus_host,
+            "port": global_rag_config.milvus_port,
         },
     )
 

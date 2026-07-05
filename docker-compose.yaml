@@ -48,7 +48,7 @@ services:
         condition: service_healthy
 
   scheduler:
-    profiles: ["async"]   # periodic chat-memory indexing ticks (runs tasks via the worker)
+    profiles: ["async"]   # cron source for chat-memory indexing; pairs with the worker
     build:
       context: .
       target: worker
