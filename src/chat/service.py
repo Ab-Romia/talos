@@ -1,11 +1,36 @@
 from uuid import UUID
 
+from sqlalchemy import select
+
+from database import AsyncSessionLocal
 from .model import MessageSchema, MessageRole, wrap_plain_text
 from .storage import get_storage
 
 
+async def _resolve_attachments(channel_id: UUID, attachment_ids: list[UUID]) -> list[dict]:
+    """Attachment metadata for ids that really live in THIS channel — an id
+    from another channel (or another user's DM) is silently dropped."""
+    from filesystem.model import File
+
+    if not attachment_ids:
+        return []
+    async with AsyncSessionLocal() as db:
+        rows = (await db.scalars(
+            select(File).where(
+                File.id.in_(attachment_ids),
+                File.channel_id == channel_id,
+                File.deleted_at.is_(None),
+            )
+        )).all()
+    return [
+        {"id": str(f.id), "filename": f.filename, "content_type": f.content_type, "size_bytes": f.size_bytes}
+        for f in rows
+    ]
+
+
 async def store_message(channel_id: UUID, user_id: UUID, content: dict | str,
-                        reply_to_id: UUID | None = None) -> MessageSchema:
+                        reply_to_id: UUID | None = None,
+                        attachment_ids: list[UUID] | None = None) -> MessageSchema:
     """
     Persist a user message to storage.
 
@@ -24,6 +49,7 @@ async def store_message(channel_id: UUID, user_id: UUID, content: dict | str,
         role=MessageRole.USER,
         content=raw,
         reply_to_id=reply_to_id,
+        attachments=await _resolve_attachments(channel_id, attachment_ids or []),
     )
     await get_storage().put(msg)
 

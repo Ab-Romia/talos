@@ -170,6 +170,7 @@ async def message(sid: str, data: dict[str, Any]):
         user_id=sess["user_id"],
         content=incoming.content,
         reply_to_id=incoming.reply_to_id,
+        attachment_ids=incoming.attachment_ids,
     )
 
     await sio.send(

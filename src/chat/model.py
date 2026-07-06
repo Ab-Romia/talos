@@ -124,6 +124,8 @@ class MessageSchema(BaseModel):
     content: dict[str, Any]   # validated ProseMirror JSON (from Node.to_json())
     # Slack-style reply: points at the message this one responds to.
     reply_to_id: UUID | None = None
+    # Attached files: [{id, filename, content_type, size_bytes}]. Never indexed.
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
     sent_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     model_config = ConfigDict(from_attributes=True)
@@ -150,6 +152,7 @@ class MessageCreateSchema(BaseModel):
     content: dict[str, Any] | str
     role: MessageRole = MessageRole.USER
     reply_to_id: UUID | None = None
+    attachment_ids: list[UUID] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def coerce_and_validate(self) -> "MessageCreateSchema":
@@ -271,6 +274,19 @@ class Message(Base):
     def to_doc(self) -> Node:
         """Deserialise the stored JSONB back into a validated prosemirror-py Node."""
         return parse_doc(self.content)
+
+    @property
+    def attachments(self) -> list[dict[str, Any]]:
+        """Serialisable attachment metadata (requires .files eager-loaded)."""
+        return [
+            {
+                "id": str(f.id),
+                "filename": f.filename,
+                "content_type": f.content_type,
+                "size_bytes": f.size_bytes,
+            }
+            for f in self.files
+        ]
 
     def __repr__(self) -> str:
         return (

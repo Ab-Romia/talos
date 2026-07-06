@@ -12,7 +12,7 @@ import ListItem from '@mui/material/ListItem'
 import ListItemAvatar from '@mui/material/ListItemAvatar'
 import ListItemText from '@mui/material/ListItemText'
 import {
-  Search, Users, Bold, Code, ArrowUp, X, Sparkles, Bug, Reply,
+  Search, Users, Bold, Code, ArrowUp, X, Sparkles, Bug, Reply, Paperclip, FileText,
 } from 'lucide-react'
 
 import { useSelector, useDispatch as useReduxDispatch } from 'react-redux'
@@ -27,6 +27,7 @@ import { AiTypingIndicator } from '../../components/chat/AiTypingIndicator'
 import { ChatComposerField } from '../../components/chat/ChatComposerField'
 import { MentionPicker } from '../../components/chat/MentionPicker'
 import { RichMessageBody } from '../../components/chat/RichMessageBody'
+import { AttachmentView } from '../../components/chat/AttachmentView'
 import { docText } from '../../utils/prosemirrorText'
 import { buildMessageDoc, activeMentions } from '../../utils/mentionDoc'
 
@@ -76,7 +77,10 @@ export default function ChatPage() {
   const [mentionQuery, setMentionQuery] = useState(null) // { start, query } while typing @…
   const [mentionIndex, setMentionIndex] = useState(0)
   const [replyTo, setReplyTo] = useState(null) // { serverId, uiId, name, snippet }
+  const [pendingAttachments, setPendingAttachments] = useState([]) // uploaded, not yet sent
+  const [uploadingCount, setUploadingCount] = useState(0)
   const trackedMentionsRef = useRef([]) // [{ label, user_id }] inserted via the picker
+  const attachInputRef = useRef(null)
 
   const user = useSelector((state) => state.auth.user)
   const {
@@ -142,6 +146,7 @@ export default function ChatPage() {
         body: docText(m.content),
         content: m.content,
         replyToId: m.reply_to_id || null,
+        attachments: m.attachments || [],
       }
     },
     [displayName, user],
@@ -372,9 +377,26 @@ export default function ChatPage() {
     }, 0)
   }, [mentionQuery, input])
 
+  const handleAttachFiles = useCallback(async (fileList) => {
+    const files = Array.from(fileList || [])
+    if (!files.length || !chatroomId) return
+    setUploadingCount((n) => n + files.length)
+    for (const file of files) {
+      try {
+        const meta = await chatService.uploadAttachment(chatroomId, file)
+        setPendingAttachments((prev) => [...prev, meta])
+      } catch (err) {
+        showSnackbar(err?.detail || `Could not attach ${file.name}`)
+      } finally {
+        setUploadingCount((n) => n - 1)
+      }
+    }
+  }, [chatroomId, showSnackbar])
+
   const sendText = useCallback(async (rawText) => {
     const text = (rawText ?? '').trim()
-    if (!text || sending || !chatroomId) return
+    const attachments = pendingAttachments
+    if ((!text && !attachments.length) || sending || !chatroomId) return
 
     const mentions = activeMentions(text, trackedMentionsRef.current)
     const reply = replyTo
@@ -391,19 +413,23 @@ export default function ChatPage() {
       body: text,
       content: rich ? buildMessageDoc(text, mentions) : null,
       replyToId: reply?.serverId || null,
+      attachments,
     }
     setMessages((prev) => [...prev, optimistic])
     setInput('')
     setReplyTo(null)
     setMentionQuery(null)
+    setPendingAttachments([])
     trackedMentionsRef.current = []
     setSending(true)
     try {
       const res = await chatService.sendMessage(
         chatroomId,
-        rich
-          ? { content: buildMessageDoc(text, mentions), replyToId: reply?.serverId || null }
-          : text,
+        {
+          ...(rich ? { content: buildMessageDoc(text, mentions) } : { text }),
+          replyToId: reply?.serverId || null,
+          attachmentIds: attachments.map((a) => a.id),
+        },
       )
       // Attach the real server id (if the socket echo didn't already adopt it).
       if (res?.id) {
@@ -421,11 +447,12 @@ export default function ChatPage() {
       setInput(text)
       if (mentions.length) trackedMentionsRef.current = mentions
       if (reply) setReplyTo(reply)
+      if (attachments.length) setPendingAttachments(attachments)
       showSnackbar(err?.detail || 'Failed to send message')
     } finally {
       setSending(false)
     }
-  }, [sending, chatroomId, user, showSnackbar, replyTo])
+  }, [sending, chatroomId, user, showSnackbar, replyTo, pendingAttachments])
 
   const handleSend = useCallback(() => sendText(input), [sendText, input])
 
@@ -822,6 +849,7 @@ export default function ChatPage() {
                     </button>
                   )}
                   <RichMessageBody content={msg.content} fallbackText={msg.body || ''} />
+                  <AttachmentView channelId={chatroomId} attachments={msg.attachments} />
                   {msg.trace && <RagTracePanel trace={msg.trace} />}
                 </div>
                 <div className="absolute -top-2.5 right-0 hidden group-hover:flex items-center bg-base border border-[rgba(28,27,26,0.10)] rounded-lg shadow-sm">
@@ -869,6 +897,31 @@ export default function ChatPage() {
                 </IconButton>
               </div>
             )}
+            {(pendingAttachments.length > 0 || uploadingCount > 0) && (
+              <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                {pendingAttachments.map((a) => (
+                  <span
+                    key={a.id}
+                    className="inline-flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-lg bg-surface-2 border border-[rgba(28,27,26,0.10)] text-[12px] text-ink-secondary max-w-[220px]"
+                  >
+                    <FileText size={12} className="text-amber shrink-0" />
+                    <span className="truncate">{a.filename}</span>
+                    <IconButton
+                      size="small"
+                      onClick={() => setPendingAttachments((prev) => prev.filter((x) => x.id !== a.id))}
+                      sx={{ width: 18, height: 18 }}
+                    >
+                      <X size={11} />
+                    </IconButton>
+                  </span>
+                ))}
+                {uploadingCount > 0 && (
+                  <span className="text-[12px] text-ink-tertiary px-1.5">
+                    Uploading {uploadingCount} file{uploadingCount === 1 ? '' : 's'}…
+                  </span>
+                )}
+              </div>
+            )}
             <div className="flex items-end gap-3 min-w-0">
               <div className="flex-1 flex flex-col min-w-0">
                 <div className="flex items-center gap-1 pb-2 mb-2 border-b border-[rgba(28,27,26,0.06)]">
@@ -882,6 +935,25 @@ export default function ChatPage() {
                       <Icon size={15} />
                     </IconButton>
                   ))}
+                  <IconButton
+                    size="small"
+                    onClick={() => attachInputRef.current?.click()}
+                    title="Attach files (documents, images, videos)"
+                    sx={{ width: 28, height: 28, color: 'text.disabled', '&:hover': { color: 'text.secondary' } }}
+                  >
+                    <Paperclip size={15} />
+                  </IconButton>
+                  <input
+                    ref={attachInputRef}
+                    type="file"
+                    multiple
+                    accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime,video/ogg,.pdf,.docx,.txt,.md"
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      handleAttachFiles(e.target.files)
+                      e.target.value = ''
+                    }}
+                  />
                   <div className="flex-1" />
                   <button
                     onClick={() => setDebugTrace((v) => !v)}
@@ -912,11 +984,11 @@ export default function ChatPage() {
               <button
                 onClick={handleSend}
                 className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-all ${
-                  input.trim() && chatroomId
+                  (input.trim() || pendingAttachments.length) && chatroomId
                     ? 'bg-amber text-white shadow-sm hover:bg-amber-hover hover:shadow-md'
                     : 'bg-surface-3 text-ink-muted cursor-default'
                 }`}
-                disabled={!input.trim() || !chatroomId || sending}
+                disabled={(!input.trim() && !pendingAttachments.length) || !chatroomId || sending || uploadingCount > 0}
               >
                 <ArrowUp size={16} strokeWidth={2.5} />
               </button>

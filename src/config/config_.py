@@ -81,6 +81,16 @@ class FilesConfig(BaseModel):
         "image/webp",
     }
 
+    video_mime_types: set[str] = {
+        "video/mp4",
+        "video/webm",
+        "video/quicktime",
+        "video/ogg",
+    }
+
+    # Chat attachments: documents + images + videos; never RAG-indexed.
+    attachment_max_size: int = 200 * 1024 * 1024  # 200 MiB (videos)
+
     thumbnail_size: tuple[int, int] = (300, 300)
 
 

@@ -28,6 +28,7 @@ class SendRequest(BaseModel):
     text: str | None = None
     content: dict[str, Any] | None = None
     reply_to_id: UUID | None = None
+    attachment_ids: list[UUID] = []
 
 
 class ChatMessageResponse(BaseModel):
@@ -67,13 +68,17 @@ async def post_message(channel_id: UUID, req: SendRequest, session: SessionDep):
 
     payload = req.content if req.content is not None else req.text
     if payload is None or (isinstance(payload, str) and not payload.strip()):
-        raise HTTPException(status_code=400, detail="Message is empty")
+        if req.attachment_ids:
+            payload = ""  # attachment-only message: empty body is fine
+        else:
+            raise HTTPException(status_code=400, detail="Message is empty")
 
     message = await store_message(
         channel_id=channel_id,
         user_id=cast(UUID, session.sub),
         content=payload,
         reply_to_id=req.reply_to_id,
+        attachment_ids=req.attachment_ids,
     )
 
     # Broadcast to everyone in the channel room. NOTE: this MUST be awaited — sio.send on

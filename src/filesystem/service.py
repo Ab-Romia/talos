@@ -206,6 +206,10 @@ def list_files(
 
     if channel_id is not None:
         q = q.where(File.channel_id == channel_id)
+    else:
+        # Workspace scope = the Documents library. Chat attachments are
+        # channel-bound (incl. DMs) and must not surface here.
+        q = q.where(File.channel_id.is_(None))
 
     if content_type is not None:
         # Support prefix match: "image/" matches "image/png", "image/jpeg", etc.

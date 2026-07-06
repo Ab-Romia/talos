@@ -31,13 +31,14 @@ export const chatService = {
   },
 
   // Accepts a plain string (legacy) or an options object:
-  //   { text?, content? (ProseMirror doc), replyToId? }
+  //   { text?, content? (ProseMirror doc), replyToId?, attachmentIds? }
   sendMessage(channelId, message) {
     const opts = typeof message === 'string' ? { text: message } : (message || {})
     return api.post(`/api/channels/${channelId}/messages`, {
       text: opts.text ?? null,
       content: opts.content ?? null,
       reply_to_id: opts.replyToId ?? null,
+      attachment_ids: opts.attachmentIds ?? [],
     })
   },
 
@@ -68,5 +69,17 @@ export const chatService = {
 
   openDm(workspaceId, userId) {
     return api.post(`/api/workspaces/${workspaceId}/dms`, { user_id: userId })
+  },
+
+  // Chat attachments (docs / images / videos) — stored, never RAG-indexed.
+  uploadAttachment(channelId, file) {
+    const formData = new FormData()
+    formData.append('file', file)
+    return api.upload(`/api/channels/${channelId}/attachments`, formData)
+  },
+
+  // → { url } short-lived signed streaming URL (media tags can't send auth headers)
+  getAttachmentUrl(channelId, fileId) {
+    return api.get(`/api/channels/${channelId}/attachments/${fileId}/url`)
   },
 }

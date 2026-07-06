@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from chat.attachments import attachments as channel_attachments_router
 from chat.router import channel as channel_chat_router
 from filesystem.router import workspace as workspace_files_router, channel as channel_files_router
 from permissions.router import (
@@ -34,4 +35,5 @@ workspace.include_router(workspace_ai_router)
 channel.include_router(channel_ai_router)
 channel.include_router(channel_settings)
 channel.include_router(channel_members)
+channel.include_router(channel_attachments_router)
 workspace.include_router(dms_router)

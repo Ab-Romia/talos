@@ -64,6 +64,9 @@ app.include_router(workspace_router, prefix="/api")
 app.include_router(channel_router, prefix="/api")
 app.include_router(gdrive_proxy_router, prefix="/api/storage", tags=["gdrive-proxy"])
 
+from chat.attachments import media as media_router
+app.include_router(media_router, prefix="/api")
+
 # TODO: replace with reverse proxy
 app.add_middleware(
     CORSMiddleware,
