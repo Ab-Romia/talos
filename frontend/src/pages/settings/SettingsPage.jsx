@@ -14,9 +14,10 @@ import Dialog from '@mui/material/Dialog'
 import DialogTitle from '@mui/material/DialogTitle'
 import DialogContent from '@mui/material/DialogContent'
 import DialogActions from '@mui/material/DialogActions'
-import { KeyRound, Trash2 } from 'lucide-react'
+import { KeyRound, Trash2, Hash, Pencil, AlertTriangle, LogOut } from 'lucide-react'
 import {
   changePassword,
+  deleteAccount,
   revokeSession,
   revokeAllSessions,
   clearSettingsError,
@@ -32,6 +33,7 @@ import { authService } from '../../services/auth'
 import { chatService } from '../../services/chat'
 import { permissionsService } from '../../services/permissions'
 import PermissionsManager from '../../components/settings/PermissionsManager'
+import ChannelSettingsDialog from '../../components/settings/ChannelSettingsDialog'
 import NotificationsSettingsTab from './NotificationsSettingsTab'
 import SidebarToggle from '../../components/layout/SidebarToggle'
 
@@ -113,6 +115,14 @@ export default function SettingsPage() {
   const [showAccessTab, setShowAccessTab] = useState(false)
   const [memberRolesMap, setMemberRolesMap] = useState({})
 
+  const [channels, setChannels] = useState([])
+  const [channelsLoading, setChannelsLoading] = useState(false)
+  const [channelEditOpen, setChannelEditOpen] = useState(false)
+  const [channelEditTarget, setChannelEditTarget] = useState(null)
+  const [deleteChannelDialog, setDeleteChannelDialog] = useState(false)
+  const [deleteChannelTarget, setDeleteChannelTarget] = useState(null)
+  const [deletingChannel, setDeletingChannel] = useState(false)
+
   const [twoFaOn, setTwoFaOn] = useState(false)
   const [totpDialogOpen, setTotpDialogOpen] = useState(false)
   const [totpPassword, setTotpPassword] = useState('')
@@ -127,9 +137,123 @@ export default function SettingsPage() {
   const [connectingProvider, setConnectingProvider] = useState(null)
   const [focusConnections, setFocusConnections] = useState(false)
 
+  const [wsName, setWsName] = useState('')
+  const [wsDescription, setWsDescription] = useState('')
+  const [wsSettingsLoading, setWsSettingsLoading] = useState(false)
+  const [wsSaving, setWsSaving] = useState(false)
+  const [leaveDialogOpen, setLeaveDialogOpen] = useState(false)
+  const [leaving, setLeaving] = useState(false)
+  const [deleteWsDialogOpen, setDeleteWsDialogOpen] = useState(false)
+  const [deleteWsConfirm, setDeleteWsConfirm] = useState('')
+  const [deletingWs, setDeletingWs] = useState(false)
+
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deletePassword, setDeletePassword] = useState('')
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
+  const [deleting, setDeleting] = useState(false)
+
   const getInitials = () => {
     const name = user?.name || user?.username || 'U'
     return name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()
+  }
+
+  const loadWorkspaceSettings = useCallback(async () => {
+    if (!activeWorkspaceId) return
+    setWsSettingsLoading(true)
+    try {
+      const ws = await chatService.getWorkspaceSettings(activeWorkspaceId)
+      setWsName(ws.name || '')
+      setWsDescription(ws.description || '')
+    } catch {
+      // fallback to what we already have
+      setWsName(activeWorkspace?.name || '')
+      setWsDescription('')
+    } finally {
+      setWsSettingsLoading(false)
+    }
+  }, [activeWorkspaceId, activeWorkspace?.name])
+
+  const handleSaveWorkspace = async () => {
+    if (!activeWorkspaceId) return
+    setWsSaving(true)
+    try {
+      const updates = []
+      if (wsName.trim() && wsName.trim() !== activeWorkspace?.name) {
+        updates.push(chatService.renameWorkspace(activeWorkspaceId, wsName.trim()))
+      }
+      if (wsDescription !== (activeWorkspace?.description || '')) {
+        updates.push(chatService.updateWorkspaceDescription(activeWorkspaceId, wsDescription))
+      }
+      if (updates.length) {
+        await Promise.all(updates)
+        showSnackbar('Workspace updated')
+      }
+    } catch (err) {
+      showSnackbar(err?.detail || 'Failed to update workspace')
+    } finally {
+      setWsSaving(false)
+    }
+  }
+
+  const handleLeaveWorkspace = async () => {
+    if (!activeWorkspaceId) return
+    setLeaving(true)
+    try {
+      await chatService.leaveWorkspace(activeWorkspaceId)
+      setLeaveDialogOpen(false)
+      showSnackbar('You left the workspace')
+      window.location.reload()
+    } catch (err) {
+      showSnackbar(err?.detail || 'Failed to leave workspace')
+    } finally {
+      setLeaving(false)
+    }
+  }
+
+  const handleDeleteWorkspace = async () => {
+    if (!activeWorkspaceId) return
+    setDeletingWs(true)
+    try {
+      await chatService.deleteWorkspace(activeWorkspaceId)
+      setDeleteWsDialogOpen(false)
+      showSnackbar('Workspace deleted')
+      window.location.reload()
+    } catch (err) {
+      showSnackbar(err?.detail || 'Failed to delete workspace')
+    } finally {
+      setDeletingWs(false)
+    }
+  }
+
+  const loadChannels = useCallback(async () => {
+    if (!activeWorkspaceId) { setChannels([]); return }
+    setChannelsLoading(true)
+    try {
+      const list = await chatService.listChannels(activeWorkspaceId)
+      setChannels(Array.isArray(list) ? list : [])
+    } catch (err) {
+      showSnackbar(err?.detail || 'Could not load channels')
+    } finally {
+      setChannelsLoading(false)
+    }
+  }, [activeWorkspaceId])
+
+
+
+  const handleDeleteChannel = async () => {
+    if (!deleteChannelTarget || !activeWorkspaceId) return
+    setDeletingChannel(true)
+    try {
+      await chatService.deleteChannel(activeWorkspaceId, deleteChannelTarget.id)
+      setDeleteChannelDialog(false)
+      setDeleteChannelTarget(null)
+      showSnackbar('Channel deleted')
+      loadChannels()
+    } catch (err) {
+      showSnackbar(err?.detail || 'Failed to delete channel')
+    } finally {
+      setDeletingChannel(false)
+    }
   }
 
   const loadMembers = useCallback(async () => {
@@ -245,10 +369,12 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (tab === 1) {
+      loadWorkspaceSettings()
       loadMembers()
       loadMemberRoles()
+      loadChannels()
     }
-  }, [tab, loadMembers, loadMemberRoles, membersVersion])
+  }, [tab, loadWorkspaceSettings, loadMembers, loadMemberRoles, loadChannels, membersVersion])
 
   const handleInviteSend = async () => {
     const identifier = inviteIdentifier.trim()
@@ -395,6 +521,16 @@ export default function SettingsPage() {
     dispatch(clearTotpSetup())
   }
 
+  const handleDeleteAccount = async () => {
+    setDeleting(true)
+    dispatch(clearSettingsError())
+    const result = await dispatch(deleteAccount({ password: deletePassword }))
+    setDeleting(false)
+    if (deleteAccount.fulfilled.match(result)) {
+      setDeleteDialogOpen(false)
+    }
+  }
+
   const handleAddPasskey = async () => {
     dispatch(clearPasskeyError())
     const result = await dispatch(
@@ -461,19 +597,132 @@ export default function SettingsPage() {
                 Update password
               </Button>
             </div>
+
+            <div className="mt-10">
+              <div className="flex items-center gap-2 mb-3">
+                <AlertTriangle size={15} className="text-red-500" />
+                <h3 className="text-[15px] font-semibold text-red-600">Danger zone</h3>
+              </div>
+              <div className="border border-red-200 rounded-xl overflow-hidden">
+                <div className="flex items-center justify-between gap-4 px-4 py-4 bg-red-50/40">
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center shrink-0 mt-0.5">
+                      <Trash2 size={15} className="text-red-500" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-ink">Delete account</p>
+                      <p className="text-[12px] text-ink-tertiary mt-0.5 max-w-md">
+                        Permanently delete your account and all associated data. This action cannot be undone.
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="outlined"
+                    color="error"
+                    size="small"
+                    sx={{ flexShrink: 0 }}
+                    onClick={() => { setDeletePassword(''); setDeleteConfirmText(''); setDeleteDialogOpen(true); dispatch(clearSettingsError()) }}
+                  >
+                    Delete account
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)} maxWidth="xs" fullWidth>
+              <DialogTitle sx={{ color: 'error.main' }}>Delete your account</DialogTitle>
+              <DialogContent>
+                <Alert severity="warning" sx={{ mb: 3 }}>
+                  This will permanently delete your account, remove you from all workspaces, and revoke all sessions. This cannot be undone.
+                </Alert>
+                {settingsError && (
+                  <Alert severity="error" sx={{ mb: 2 }} onClose={() => dispatch(clearSettingsError())}>{settingsError}</Alert>
+                )}
+                <TextField
+                  autoFocus
+                  label="Current password"
+                  type="password"
+                  fullWidth
+                  variant="outlined"
+                  value={deletePassword}
+                  onChange={(e) => setDeletePassword(e.target.value)}
+                  sx={{ mb: 2 }}
+                />
+                <TextField
+                  label='Type "delete my account" to confirm'
+                  fullWidth
+                  variant="outlined"
+                  value={deleteConfirmText}
+                  onChange={(e) => setDeleteConfirmText(e.target.value)}
+                />
+              </DialogContent>
+              <DialogActions>
+                <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+                <Button
+                  variant="contained"
+                  color="error"
+                  disabled={!deletePassword || deleteConfirmText !== 'delete my account' || deleting}
+                  startIcon={deleting ? <CircularProgress size={14} color="inherit" /> : <Trash2 size={14} />}
+                  onClick={handleDeleteAccount}
+                >
+                  Delete permanently
+                </Button>
+              </DialogActions>
+            </Dialog>
           </TabPanel>
 
           {/* Workspace Tab */}
           <TabPanel value={activeKey} index="workspace">
             {!activeWorkspaceId ? (
-              <Alert severity="info">Create or select a workspace to manage its members.</Alert>
+              <Alert severity="info">Create or select a workspace to manage its settings.</Alert>
             ) : (
               <>
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-[15px] font-semibold text-ink">
-                    Members{members.length ? ` (${members.length})` : ''}
-                    {activeWorkspace?.name ? <span className="text-ink-tertiary font-normal"> · {activeWorkspace.name}</span> : null}
-                  </h3>
+                {/* Workspace info */}
+                <h3 className="text-[15px] font-semibold text-ink mb-4">Workspace settings</h3>
+                {wsSettingsLoading ? (
+                  <div className="flex justify-center py-6"><CircularProgress size={20} /></div>
+                ) : (
+                  <div className="mb-8">
+                    <div className="grid grid-cols-1 gap-4 mb-4">
+                      <TextField
+                        label="Workspace name"
+                        fullWidth
+                        variant="outlined"
+                        value={wsName}
+                        onChange={(e) => setWsName(e.target.value)}
+                      />
+                      <TextField
+                        label="Description"
+                        fullWidth
+                        variant="outlined"
+                        multiline
+                        minRows={2}
+                        placeholder="What is this workspace for?"
+                        value={wsDescription}
+                        onChange={(e) => setWsDescription(e.target.value)}
+                      />
+                    </div>
+                    {isOwner && (
+                      <div className="flex justify-end">
+                        <Button
+                          variant="contained"
+                          size="small"
+                          disabled={wsSaving || !wsName.trim()}
+                          startIcon={wsSaving ? <CircularProgress size={14} color="inherit" /> : null}
+                          onClick={handleSaveWorkspace}
+                        >
+                          Save changes
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="border-t border-[rgba(28,27,26,0.06)] pt-6 mb-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-[15px] font-semibold text-ink">
+                      Members{members.length ? ` (${members.length})` : ''}
+                    </h3>
                   {isOwner && (
                     <Button variant="contained" size="small" onClick={() => { setInviteError(''); setInviteOpen(true) }}>
                       Add member
@@ -525,6 +774,7 @@ export default function SettingsPage() {
                 {!isOwner && (
                   <p className="text-[12px] text-ink-tertiary">Only the workspace owner can add or remove members.</p>
                 )}
+                </div>
 
                 <Dialog open={inviteOpen} onClose={() => setInviteOpen(false)} maxWidth="xs" fullWidth>
                   <DialogTitle>Add member</DialogTitle>
@@ -548,6 +798,192 @@ export default function SettingsPage() {
                       onClick={handleInviteSend}
                     >
                       Add
+                    </Button>
+                  </DialogActions>
+                </Dialog>
+
+                {/* Channels management */}
+                <div className="mt-10 pt-6 border-t border-[rgba(28,27,26,0.06)]">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-[15px] font-semibold text-ink">
+                      Channels{channels.length ? ` (${channels.length})` : ''}
+                    </h3>
+                  </div>
+
+                  {channelsLoading && channels.length === 0 ? (
+                    <div className="flex justify-center py-10"><CircularProgress size={22} /></div>
+                  ) : channels.length === 0 ? (
+                    <p className="text-[13px] text-ink-tertiary mb-4">No channels yet.</p>
+                  ) : (
+                    <div className="border border-[rgba(28,27,26,0.06)] rounded-lg overflow-hidden mb-4">
+                      {channels.map((ch, i) => (
+                        <div key={ch.id} className={`flex items-center p-3 px-4 ${i < channels.length - 1 ? 'border-b border-[rgba(28,27,26,0.06)]' : ''}`}>
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                            <div className="w-8 h-8 rounded-lg bg-surface-1 flex items-center justify-center text-ink-tertiary shrink-0">
+                              <Hash size={14} />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-ink truncate">{ch.name}</p>
+                              {ch.description && (
+                                <p className="text-xs text-ink-tertiary truncate">{ch.description}</p>
+                              )}
+                            </div>
+                          </div>
+                          {isOwner && (
+                            <div className="flex items-center gap-0.5">
+                              <button
+                                className="w-7 h-7 flex items-center justify-center rounded text-ink-tertiary hover:bg-surface-1 hover:text-ink-secondary"
+                                onClick={() => { setChannelEditTarget(ch); setChannelEditOpen(true) }}
+                              >
+                                <Pencil size={13} />
+                              </button>
+                              <button
+                                className="w-7 h-7 flex items-center justify-center rounded text-ink-tertiary hover:bg-red-50 hover:text-red-500"
+                                onClick={() => { setDeleteChannelTarget(ch); setDeleteChannelDialog(true) }}
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+
+                <ChannelSettingsDialog
+                  open={channelEditOpen}
+                  channel={channelEditTarget}
+                  onClose={() => { setChannelEditOpen(false); setChannelEditTarget(null) }}
+                  onUpdated={loadChannels}
+                />
+
+                <Dialog open={deleteChannelDialog} onClose={() => setDeleteChannelDialog(false)} maxWidth="xs" fullWidth>
+                  <DialogTitle sx={{ color: 'error.main' }}>Delete channel</DialogTitle>
+                  <DialogContent>
+                    <Alert severity="warning" sx={{ mb: 2 }}>
+                      This will permanently delete <strong>#{deleteChannelTarget?.name}</strong> and all its messages. This cannot be undone.
+                    </Alert>
+                  </DialogContent>
+                  <DialogActions>
+                    <Button onClick={() => setDeleteChannelDialog(false)}>Cancel</Button>
+                    <Button
+                      variant="contained"
+                      color="error"
+                      disabled={deletingChannel}
+                      startIcon={deletingChannel ? <CircularProgress size={14} color="inherit" /> : <Trash2 size={14} />}
+                      onClick={handleDeleteChannel}
+                    >
+                      Delete permanently
+                    </Button>
+                  </DialogActions>
+                </Dialog>
+
+                {/* Leave / Delete workspace */}
+                <div className="mt-10">
+                  <div className="flex items-center gap-2 mb-3">
+                    <AlertTriangle size={15} className="text-red-500" />
+                    <h3 className="text-[15px] font-semibold text-red-600">Danger zone</h3>
+                  </div>
+                  <div className="border border-red-200 rounded-xl overflow-hidden divide-y divide-red-100">
+                    {!isOwner && (
+                      <div className="flex items-center justify-between gap-4 px-4 py-4 bg-red-50/40">
+                        <div className="flex items-start gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center shrink-0 mt-0.5">
+                            <LogOut size={15} className="text-red-500" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-ink">Leave workspace</p>
+                            <p className="text-[12px] text-ink-tertiary mt-0.5 max-w-md">
+                              You will lose access to all channels and messages.
+                            </p>
+                          </div>
+                        </div>
+                        <Button
+                          variant="outlined"
+                          color="error"
+                          size="small"
+                          sx={{ flexShrink: 0 }}
+                          onClick={() => setLeaveDialogOpen(true)}
+                        >
+                          Leave
+                        </Button>
+                      </div>
+                    )}
+                    {isOwner && (
+                      <div className="flex items-center justify-between gap-4 px-4 py-4 bg-red-50/40">
+                        <div className="flex items-start gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center shrink-0 mt-0.5">
+                            <Trash2 size={15} className="text-red-500" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-ink">Delete workspace</p>
+                            <p className="text-[12px] text-ink-tertiary mt-0.5 max-w-md">
+                              Permanently delete this workspace and all its data.
+                            </p>
+                          </div>
+                        </div>
+                        <Button
+                          variant="outlined"
+                          color="error"
+                          size="small"
+                          sx={{ flexShrink: 0 }}
+                          onClick={() => { setDeleteWsConfirm(''); setDeleteWsDialogOpen(true) }}
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <Dialog open={leaveDialogOpen} onClose={() => setLeaveDialogOpen(false)} maxWidth="xs" fullWidth>
+                  <DialogTitle>Leave workspace</DialogTitle>
+                  <DialogContent>
+                    <Alert severity="warning">
+                      You will lose access to <strong>{activeWorkspace?.name}</strong> and all its channels. You can only rejoin if an admin re-invites you.
+                    </Alert>
+                  </DialogContent>
+                  <DialogActions>
+                    <Button onClick={() => setLeaveDialogOpen(false)}>Cancel</Button>
+                    <Button
+                      variant="contained"
+                      color="error"
+                      disabled={leaving}
+                      startIcon={leaving ? <CircularProgress size={14} color="inherit" /> : null}
+                      onClick={handleLeaveWorkspace}
+                    >
+                      Leave workspace
+                    </Button>
+                  </DialogActions>
+                </Dialog>
+
+                <Dialog open={deleteWsDialogOpen} onClose={() => setDeleteWsDialogOpen(false)} maxWidth="xs" fullWidth>
+                  <DialogTitle sx={{ color: 'error.main' }}>Delete workspace</DialogTitle>
+                  <DialogContent>
+                    <Alert severity="warning" sx={{ mb: 2 }}>
+                      This will permanently delete <strong>{activeWorkspace?.name}</strong>, all channels, messages, files, and roles. This cannot be undone.
+                    </Alert>
+                    <TextField
+                      autoFocus
+                      label={`Type "${activeWorkspace?.name}" to confirm`}
+                      fullWidth
+                      variant="outlined"
+                      value={deleteWsConfirm}
+                      onChange={(e) => setDeleteWsConfirm(e.target.value)}
+                    />
+                  </DialogContent>
+                  <DialogActions>
+                    <Button onClick={() => setDeleteWsDialogOpen(false)}>Cancel</Button>
+                    <Button
+                      variant="contained"
+                      color="error"
+                      disabled={deleteWsConfirm !== activeWorkspace?.name || deletingWs}
+                      startIcon={deletingWs ? <CircularProgress size={14} color="inherit" /> : <Trash2 size={14} />}
+                      onClick={handleDeleteWorkspace}
+                    >
+                      Delete permanently
                     </Button>
                   </DialogActions>
                 </Dialog>

@@ -11,6 +11,8 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
+from sqlalchemy import select, or_
+
 from config import cfg
 from database import DatabaseDep
 from utils.email import send_email
@@ -257,3 +259,23 @@ def get_current_user(user: UserDep):
 def delete_current_user(user: UserDep, db: DatabaseDep):
     user.deleted_at = datetime.now(timezone.utc)
     s.revoke_by_uid(user.id, db)
+
+
+@router.get("/users/search")
+def search_users(q: str, user: UserDep, db: DatabaseDep):
+    """Search users by username or email prefix. Returns up to 10 matches, excluding the caller."""
+    q = q.strip()
+    if len(q) < 2:
+        return []
+    pattern = f"{q}%"
+    rows = db.scalars(
+        select(User)
+        .where(User.deleted_at.is_(None), User.signup_complete.is_(True), User.id != user.id)
+        .where(or_(User.username.ilike(pattern), User.primary_email.ilike(pattern)))
+        .order_by(User.username)
+        .limit(10)
+    ).all()
+    return [
+        {"id": str(u.id), "username": u.username, "name": u.name or u.username, "email": u.primary_email}
+        for u in rows
+    ]

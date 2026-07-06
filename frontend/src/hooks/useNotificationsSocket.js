@@ -7,6 +7,7 @@ import {
 } from '../store/notificationsSlice'
 import { onNotification, getSocket, onChatMessage } from '../services/socket'
 import { docText } from '../utils/prosemirrorText'
+
 const POLL_INTERVAL_MS = 30_000
 
 export default function useNotificationsSocket() {

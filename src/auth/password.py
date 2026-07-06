@@ -96,7 +96,6 @@ async def forgot_password_request(email: Annotated[str, Form()], db: DatabaseDep
     ).scalar_one_or_none()
 
     if identity is None:
-        # Don't reveal whether the email exists or not
         return
 
     claims = ForgotPasswordClaims(
@@ -116,10 +115,11 @@ async def forgot_password_request(email: Annotated[str, Form()], db: DatabaseDep
     reset_url = f"{frontend_origin}/reset-password?token={token}"
     await send_email(
         email,
-        "We received a request to reset your Talos password.\n\n"
-        "Use the link below to choose a new password:\n\n"
+        "You requested a password reset for your Talos account.\n\n"
+        "Click the link below to set a new password:\n\n"
         f"{reset_url}\n\n"
-        "If you didn't request this, you can safely ignore this email.",
+        "If you didn't request this, you can safely ignore this email.\n"
+        "This link will expire shortly.",
         subject="Reset your Talos password",
     )
 

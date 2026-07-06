@@ -176,6 +176,7 @@ export default function Sidebar({ onNavigate } = {}) {
     go(R.CHAT_PAGE)
   }
 
+
   const navItems = [
     { label: 'Talos AI', path: R.AI, icon: Sparkles },
     { label: 'Documents', path: R.DOCUMENTS, icon: FileText },
@@ -437,6 +438,7 @@ export default function Sidebar({ onNavigate } = {}) {
           </Tooltip>
         </div>
       </div>
+
 
       {/* Create Channel Dialog */}
       <Dialog open={createChannelOpen} onClose={() => setCreateChannelOpen(false)} maxWidth="xs" fullWidth>

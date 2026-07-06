@@ -87,7 +87,6 @@ export const bootstrapWorkspaces = createAsyncThunk(
   'workspace/bootstrap',
   async (_, { rejectWithValue }) => {
     try {
-      // GET /api/workspaces returns each workspace with its channels inline.
       const workspaces = await chatService.getWorkspaces()
       if (!workspaces.length) {
         return {
@@ -99,7 +98,10 @@ export const bootstrapWorkspaces = createAsyncThunk(
       }
       const savedWs = localStorage.getItem(ACTIVE_WS_KEY)
       const activeWs = workspaces.find((w) => w.id === savedWs) || workspaces[0]
-      const chatrooms = activeWs.channels || []
+      let chatrooms = activeWs.channels || []
+      try {
+        chatrooms = await chatService.listChannels(activeWs.id)
+      } catch {}
       const savedCr = localStorage.getItem(ACTIVE_CR_KEY)
       const activeCr = chatrooms.find((c) => c.id === savedCr) || chatrooms[0] || null
       return {
@@ -129,7 +131,10 @@ export const switchWorkspace = createAsyncThunk(
     try {
       const { workspace } = getState()
       const ws = workspace.workspaces.find((w) => w.id === workspaceId)
-      const chatrooms = ws?.channels || []
+      let chatrooms = ws?.channels || []
+      try {
+        chatrooms = await chatService.listChannels(workspaceId)
+      } catch {}
       const activeCr = chatrooms[0] || null
       return {
         workspaceId,
@@ -144,9 +149,11 @@ export const switchWorkspace = createAsyncThunk(
 
 export const createWorkspace = createAsyncThunk(
   'workspace/create',
-  async (name, { rejectWithValue }) => {
+  // Accepts a plain name string (quick create) or { name, channels, members }.
+  async (arg, { rejectWithValue }) => {
     try {
-      const ws = await chatService.createWorkspace(name)
+      const { name, channels, members } = typeof arg === 'string' ? { name: arg } : arg
+      const ws = await chatService.createWorkspace(name, { channels, members })
       // New channel rooms are only joined by the socket at connect time.
       reconnectSocket()
       return ws // { id, name, owner_id, channels:[{id,name}] }

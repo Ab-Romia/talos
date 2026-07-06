@@ -39,6 +39,18 @@ export const authService = {
     return api.putQuery('/api/auth/password/change', { new_password: newPassword })
   },
 
+  forgotPassword(email) {
+    return api.postForm('/api/auth/password/forgot', { email })
+  },
+
+  resetPassword(resetToken, newPassword) {
+    return api.putForm('/api/auth/password/reset', { reset_token: resetToken, reset_password: newPassword })
+  },
+
+  deleteAccount() {
+    return api.delete('/api/auth/me')
+  },
+
   listSessions() {
     return api.get('/api/auth/sessions')
   },

@@ -8,6 +8,8 @@ import * as R from './constants/Routes'
 const LoginPage = lazy(() => import('./pages/auth/LoginPage'))
 const SignupPage = lazy(() => import('./pages/auth/SignupPage'))
 const CompleteSignupPage = lazy(() => import('./pages/auth/CompleteSignupPage'))
+const ForgotPasswordPage = lazy(() => import('./pages/auth/ForgotPasswordPage'))
+const ResetPasswordPage = lazy(() => import('./pages/auth/ResetPasswordPage'))
 const OnboardingPage = lazy(() => import('./pages/onboarding/OnboardingPage'))
 const ChatPage = lazy(() => import('./pages/chat/ChatPage'))
 const AIChatPage = lazy(() => import('./pages/ai/AIChatPage'))
@@ -88,6 +90,8 @@ export default function App() {
     <Routes>
       <Route path={R.LOGIN} element={<GuestRoute><LoginPage /></GuestRoute>} />
       <Route path={R.SIGNUP} element={<GuestRoute><SignupPage /></GuestRoute>} />
+      <Route path={R.FORGOT_PASSWORD} element={<GuestRoute><ForgotPasswordPage /></GuestRoute>} />
+      <Route path={R.RESET_PASSWORD} element={<GuestRoute><ResetPasswordPage /></GuestRoute>} />
       {/* Not a GuestRoute: completion logs the user in, then redirects to onboarding. */}
       <Route path={R.SIGNUP_COMPLETE} element={<CompleteSignupPage />} />
       <Route path={R.ONBOARDING} element={<ProtectedRoute><OnboardingPage /></ProtectedRoute>} />

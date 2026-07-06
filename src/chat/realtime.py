@@ -202,6 +202,7 @@ async def message(sid: str, data: dict[str, Any]):
         sender_id=sess["user_id"],
         content=doc_text(message.content),
         mentioned_user_ids=extract_mentioned_user_ids_from_raw(message.content),
+        message_id=message.id,
     ))
 
     return "OK", {  # ack
@@ -210,7 +211,8 @@ async def message(sid: str, data: dict[str, Any]):
 
 
 async def _notify_channel_members(channel_id: UUID, sender_id: UUID, content: str,
-                                  mentioned_user_ids: list[UUID] | None = None):
+                                  mentioned_user_ids: list[UUID] | None = None,
+                                  message_id: UUID | None = None):
     log = get_logger(__name__)
     try:
         with SessionLocal() as db:
@@ -245,7 +247,12 @@ async def _notify_channel_members(channel_id: UUID, sender_id: UUID, content: st
                     user_ids=list(mentioned),
                     title=where,
                     body=body,
-                    data={"channel_id": str(channel_id), "mention": True, "direct": channel.is_direct},
+                    data={
+                        "channel_id": str(channel_id),
+                        "mention": True,
+                        "direct": channel.is_direct,
+                        **({"message_id": str(message_id)} if message_id else {}),
+                    },
                     tags=[NotificationTag.SOCIAL],
                 )
 
@@ -261,7 +268,11 @@ async def _notify_channel_members(channel_id: UUID, sender_id: UUID, content: st
                     user_ids=recipients,
                     title=title,
                     body=body,
-                    data={"channel_id": str(channel_id), "direct": channel.is_direct},
+                    data={
+                        "channel_id": str(channel_id),
+                        "direct": channel.is_direct,
+                        **({"message_id": str(message_id)} if message_id else {}),
+                    },
                     tags=[NotificationTag.SOCIAL],
                 )
                 log.info(f"_notify: push_notification sent to {len(recipients)} users")

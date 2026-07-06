@@ -10,6 +10,7 @@ import {
   markAllRead,
   clearNotificationsError,
 } from '../../store/notificationsSlice'
+import { setActiveChatroom } from '../../store/workspaceSlice'
 import NotificationItem from '../notifications/NotificationItem'
 
 export default function NotificationsDropdown({ anchorEl, open, onClose }) {
@@ -28,10 +29,13 @@ export default function NotificationsDropdown({ anchorEl, open, onClose }) {
 
   const handleItemClick = (n) => {
     if (!n.is_read) dispatch(markRead(n.id))
-    const url = n.data?.url
-    if (url) {
-      onClose?.()
-      navigate(url)
+    onClose?.()
+    if (n.data?.channel_id) {
+      dispatch(setActiveChatroom(n.data.channel_id))
+      const msgParam = n.data.message_id ? `?msg=${n.data.message_id}` : ''
+      navigate(`/chat${msgParam}`)
+    } else if (n.data?.url) {
+      navigate(n.data.url)
     }
   }
 

@@ -15,8 +15,9 @@ import {
   Search, Users, Bold, Code, ArrowUp, X, Sparkles, Bug, Reply, Paperclip, FileText, FolderOpen,
 } from 'lucide-react'
 
+import { useSearchParams } from 'react-router-dom'
 import { useSelector, useDispatch as useReduxDispatch } from 'react-redux'
-import { markChannelUnread, loadDms } from '../../store/workspaceSlice'
+import { markChannelUnread, loadDms, setActiveChatroom } from '../../store/workspaceSlice'
 import { usePermissions } from '../../contexts/PermissionsContext'
 import { chatService } from '../../services/chat'
 import { getBotIdentity } from '../../services/ai'
@@ -53,15 +54,11 @@ function initialsOf(name) {
     .toUpperCase()
 }
 
-function messageMatchesQuery(msg, rawQuery) {
-  const s = rawQuery.trim().toLowerCase()
-  if (!s) return true
-  if ((msg.body || '').toLowerCase().includes(s)) return true
-  return false
-}
 
 export default function ChatPage() {
   const reduxDispatch = useReduxDispatch()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const pendingMsgId = searchParams.get('msg')
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState([])
   const [snackbar, setSnackbar] = useState({ open: false, message: '' })
@@ -178,12 +175,48 @@ export default function ChatPage() {
     return pool.filter((c) => c.label && c.label.toLowerCase().includes(q)).slice(0, 8)
   }, [mentionQuery, bot, members, user])
 
-  const searchResults = useMemo(() => {
-    if (!searchOpen) return []
-    const q = searchQuery.trim()
-    if (!q) return []
-    return messages.filter((m) => messageMatchesQuery(m, q))
-  }, [messages, searchQuery, searchOpen])
+  const [searchResults, setSearchResults] = useState([])
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchTotal, setSearchTotal] = useState(0)
+  const searchAbort = useRef(null)
+
+  useEffect(() => {
+    if (!searchOpen || !searchQuery.trim() || !chatroomId) {
+      setSearchResults([])
+      setSearchTotal(0)
+      return
+    }
+    const timer = setTimeout(async () => {
+      if (searchAbort.current) searchAbort.current.abort = true
+      const token = { abort: false }
+      searchAbort.current = token
+      setSearchLoading(true)
+      try {
+        const res = await chatService.searchMessages(chatroomId, {
+          text: searchQuery.trim(),
+          pageSize: 30,
+        })
+        if (token.abort) return
+        const msgs = (res.messages || []).map((m) => ({
+          id: m.id,
+          serverId: m.id,
+          senderId: m.sender_id,
+          mine: m.sender_id === user?.id,
+          name: displayName(m.sender_id),
+          initials: initialsOf(displayName(m.sender_id)),
+          time: fmtTime(m.sent_at),
+          body: docText(m.content),
+        }))
+        setSearchResults(msgs)
+        setSearchTotal(res.total || msgs.length)
+      } catch {
+        if (!token.abort) setSearchResults([])
+      } finally {
+        if (!token.abort) setSearchLoading(false)
+      }
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [searchQuery, searchOpen, chatroomId, user, displayName])
 
   const highlightedMessageId = useRef(null)
 
@@ -235,6 +268,34 @@ export default function ChatPage() {
     }
   }, [chatroomId, toUiMessage])
 
+  // Deep-link: if ?msg=UUID is present, scroll to that message (fetch it if not loaded).
+  useEffect(() => {
+    if (!pendingMsgId || !chatroomId || messages.length === 0) return
+    const already = messages.find((m) => m.serverId === pendingMsgId)
+    if (already) {
+      requestAnimationFrame(() => scrollToMessage(pendingMsgId))
+      setSearchParams((prev) => { prev.delete('msg'); return prev }, { replace: true })
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const msg = await chatService.getMessage(chatroomId, pendingMsgId)
+        if (cancelled || !msg) return
+        const uiMsg = toUiMessage(msg)
+        setMessages((prev) => {
+          if (prev.some((m) => m.serverId === pendingMsgId)) return prev
+          return [uiMsg, ...prev]
+        })
+        requestAnimationFrame(() => scrollToMessage(pendingMsgId))
+      } catch { /* message may not exist */ }
+      if (!cancelled) {
+        setSearchParams((prev) => { prev.delete('msg'); return prev }, { replace: true })
+      }
+    })()
+    return () => { cancelled = true }
+  }, [pendingMsgId, chatroomId, messages, toUiMessage, scrollToMessage, setSearchParams])
+
   // Realtime: subscribe to broadcast `message` events for the active channel.
   useEffect(() => {
     if (!chatroomId) return
@@ -265,11 +326,16 @@ export default function ChatPage() {
           try {
             const senderName = membersMapRef.current.get(String(m.sender_id)) || 'Someone'
             const chName = chatrooms.find((c) => c.id === m.channel_id)?.name
-            new Notification(chName ? `${senderName} in #${chName}` : senderName, {
+            const notif = new Notification(chName ? `${senderName} in #${chName}` : senderName, {
               body: docText(m.content).slice(0, 200),
               icon: '/favicon.svg',
               tag: m.id || `msg-${Date.now()}`,
             })
+            notif.onclick = () => {
+              window.focus()
+              reduxDispatch(setActiveChatroom(m.channel_id))
+              if (m.id) setSearchParams({ msg: m.id }, { replace: true })
+            }
           } catch { /* ignore */ }
         }
       }
@@ -690,7 +756,7 @@ export default function ChatPage() {
         <div className="relative bg-surface-1 border-b border-[rgba(28,27,26,0.08)] px-5 py-2 flex items-center gap-2 shrink-0">
           <TextField
             size="small"
-            placeholder="Search this conversation…"
+            placeholder="Search all messages in this channel…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -704,10 +770,8 @@ export default function ChatPage() {
             sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
           />
           {searchQuery.trim() ? (
-            <span className="text-xs text-ink-tertiary tabular-nums shrink-0 w-[4.5rem] text-right">
-              {searchResults.length}
-              {' '}
-              {searchResults.length === 1 ? 'match' : 'matches'}
+            <span className="text-xs text-ink-tertiary tabular-nums shrink-0 min-w-[4.5rem] text-right">
+              {searchLoading ? 'Searching…' : `${searchTotal} ${searchTotal === 1 ? 'match' : 'matches'}`}
             </span>
           ) : null}
           <IconButton
@@ -725,7 +789,12 @@ export default function ChatPage() {
           {/* Search results overlay */}
           {searchQuery.trim() && (
             <div className="absolute top-full left-0 right-0 z-50 mx-5 mt-1 bg-base border border-[rgba(28,27,26,0.10)] rounded-xl shadow-lg max-h-[360px] overflow-y-auto">
-              {searchResults.length === 0 ? (
+              {searchLoading ? (
+                <div className="flex items-center justify-center py-6 gap-2">
+                  <div className="w-4 h-4 border-2 border-amber border-t-transparent rounded-full animate-spin" />
+                  <span className="text-sm text-ink-tertiary">Searching…</span>
+                </div>
+              ) : searchResults.length === 0 ? (
                 <p className="text-sm text-ink-tertiary text-center py-6 px-4">
                   No messages match your search.
                 </p>
@@ -751,9 +820,19 @@ export default function ChatPage() {
                       key={msg.id}
                       className="w-full text-left px-4 py-3 hover:bg-surface-2 transition-colors border-b border-[rgba(28,27,26,0.04)] last:border-b-0 flex gap-3 items-start"
                       onClick={() => {
-                        scrollToMessage(msg.id)
+                        const sid = msg.serverId || msg.id
                         setSearchOpen(false)
                         setSearchQuery('')
+                        const el = document.querySelector(`[data-msg-id="${sid}"]`)
+                        if (el) {
+                          scrollToMessage(sid)
+                        } else {
+                          setMessages((prev) => {
+                            if (prev.some((m) => m.serverId === sid)) return prev
+                            return [msg, ...prev]
+                          })
+                          requestAnimationFrame(() => scrollToMessage(sid))
+                        }
                       }}
                     >
                       <Avatar
@@ -815,7 +894,7 @@ export default function ChatPage() {
               return (
                 <div
                   key={msg.id}
-                  data-msg-id={msg.id}
+                  data-msg-id={msg.serverId || msg.id}
                   className="flex justify-center mb-4"
                 >
                   <span className="text-[12px] text-ink-tertiary italic">{msg.body}</span>

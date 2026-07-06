@@ -12,10 +12,14 @@ export const chatService = {
     return api.get('/api/workspaces')
   },
 
-  createWorkspace(name) {
-    // → { id, name, owner_id, channels:[{id,name}] } (server provisions base role,
-    //    permissions, membership + default channels).
-    return api.post('/api/workspaces', { name })
+  createWorkspace(name, { channels, members } = {}) {
+    // → { id, name, owner_id, channels:[{id,name}], skipped_members:[...] }
+    //   (server provisions base role, permissions, membership + channels;
+    //    channels/members are optional — server falls back to defaults).
+    const body = { name }
+    if (channels?.length) body.channels = channels
+    if (members?.length) body.members = members
+    return api.post('/api/workspaces', body)
   },
 
   createChannel(workspaceId, name) {
@@ -56,6 +60,21 @@ export const chatService = {
 
   removeMember(workspaceId, memberId) {
     return api.delete(`/api/workspaces/${workspaceId}/members/${memberId}`)
+  },
+
+  getMessage(channelId, messageId) {
+    return api.get(`/api/channels/${channelId}/messages/${messageId}`)
+  },
+
+  searchMessages(channelId, { text, authorId, startDate, endDate, page = 1, pageSize = 20 } = {}) {
+    const q = new URLSearchParams()
+    if (text) q.set('text', text)
+    if (authorId) q.set('author_id', authorId)
+    if (startDate) q.set('start_date', startDate)
+    if (endDate) q.set('end_date', endDate)
+    q.set('page', String(page))
+    q.set('page_size', String(pageSize))
+    return api.get(`/api/channels/${channelId}/messages/search?${q.toString()}`)
   },
 
   getMyPermissions(workspaceId) {
@@ -101,5 +120,55 @@ export const chatService = {
   // Each item already includes a signed `url`.
   getSharedFiles(channelId) {
     return api.get(`/api/channels/${channelId}/attachments`)
+  },
+
+  listChannels(workspaceId, { skip = 0, limit = 50 } = {}) {
+    const q = new URLSearchParams({ skip: String(skip), limit: String(limit) })
+    return api.get(`/api/workspaces/${workspaceId}/channels?${q.toString()}`)
+  },
+
+  deleteChannel(workspaceId, channelId) {
+    return api.delete(`/api/workspaces/${workspaceId}/channels/${channelId}`)
+  },
+
+  getChannelSettings(channelId) {
+    return api.get(`/api/channels/${channelId}/settings`)
+  },
+
+  renameChannel(channelId, name) {
+    return api.putForm(`/api/channels/${channelId}/settings/name`, { name })
+  },
+
+  updateChannelDescription(channelId, description) {
+    return api.putForm(`/api/channels/${channelId}/settings/description`, { description: description || '' })
+  },
+
+
+  getWorkspaceSettings(workspaceId) {
+    return api.get(`/api/workspaces/${workspaceId}/settings`)
+  },
+
+  renameWorkspace(workspaceId, name) {
+    return api.putForm(`/api/workspaces/${workspaceId}/settings/name`, { name })
+  },
+
+  updateWorkspaceDescription(workspaceId, description) {
+    return api.putForm(`/api/workspaces/${workspaceId}/settings/description`, { description: description || '' })
+  },
+
+  updateWorkspaceIcon(workspaceId, iconId) {
+    return api.putForm(`/api/workspaces/${workspaceId}/settings/icon`, { icon_id: iconId || '' })
+  },
+
+  leaveWorkspace(workspaceId) {
+    return api.post(`/api/workspaces/${workspaceId}/settings/leave`)
+  },
+
+  deleteWorkspace(workspaceId) {
+    return api.delete(`/api/workspaces/${workspaceId}/settings`)
+  },
+
+  searchUsers(query) {
+    return api.get(`/api/auth/users/search?q=${encodeURIComponent(query)}`)
   },
 }
