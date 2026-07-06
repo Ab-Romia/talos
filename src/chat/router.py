@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import cast
+from typing import Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
@@ -33,7 +33,8 @@ class ChatMessageResponse(BaseModel):
     channel_id: UUID
     sender_id: UUID | None
     role: str
-    content: str
+    # ProseMirror doc dict (rich-msg contract — same shape the socket delivers).
+    content: dict[str, Any]
     sent_at: datetime
 
     model_config = {"from_attributes": True}
@@ -103,18 +104,6 @@ async def get_channel_messages(
     Messages are returned in reverse chronological order (newest first)
     """
     return await get_messages(channel_id, limit=limit, offset=offset)
-
-
-@channel.get(
-    "/messages/{message_id}",
-    summary="Get a single message by ID",
-    dependencies=[require("channel:view")]
-)
-async def get_single_message(channel_id: UUID, message_id: UUID):
-    msg = await get_message_by_id(message_id)
-    if msg is None:
-        raise HTTPException(status_code=404, detail="Message not found")
-    return msg
 
 
 @channel.get(
@@ -190,3 +179,14 @@ async def search_channel_messages(
     )
 
 
+# Registered after /messages/search: the static path must match first.
+@channel.get(
+    "/messages/{message_id}",
+    summary="Get a single message by ID",
+    dependencies=[require("channel:view")]
+)
+async def get_single_message(channel_id: UUID, message_id: UUID):
+    msg = await get_message_by_id(message_id)
+    if msg is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return msg

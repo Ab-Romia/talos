@@ -1,0 +1,1014 @@
+[
+  {
+    "question": "What are the three global rules enforced throughout the interview guide?",
+    "reference_answer": "The guide enforces three global rules: (1) No use of em-dashes. (2) Constructed estimates require confirmation or a phrase like \"on the order of X\" if asked. (3) Every code block must end with comments on time and space complexity.",
+    "gold_pages": [
+      1
+    ],
+    "source_window": [
+      1,
+      8
+    ],
+    "id": "q001"
+  },
+  {
+    "question": "How should you allocate your time if you have only 48 hours to prepare for an interview?",
+    "reference_answer": "In the 48-hour preparation window, allocate: 1-4 hours for platform format, 5-8 hours for coding patterns, 9-14 hours for Zaylon and follow-ups, 15-18 hours for behavioral stories, 19-22 hours for system design (if needed), and 23-30 hours for sleep. Skip anti-spiral protocol, deep RLHF math, Java concurrency depth, Kubernetes details, and advanced graph algorithms.",
+    "gold_pages": [
+      2
+    ],
+    "source_window": [
+      1,
+      8
+    ],
+    "id": "q002"
+  },
+  {
+    "question": "What is the suggested preparation strategy for the WeCP platform?",
+    "reference_answer": "For WeCP, focus on numerical and logical reasoning sections, dedicating 4-6 hours over two days. Use IndiaBix.com for practice, focusing on percentages, ratios, sequences, and syllogisms. Maintain a 60-second rule per question to maximize efficiency.",
+    "gold_pages": [
+      5,
+      6
+    ],
+    "source_window": [
+      1,
+      8
+    ],
+    "id": "q003"
+  },
+  {
+    "question": "What is the recording practice protocol suggested by the guide?",
+    "reference_answer": "The protocol involves recording a 2-minute verbal walkthrough for each solved DSA problem, restating the problem, brute force approach, optimized solution, and time-space complexity. For behavioral stories, record at 90 seconds, 2 minutes, and 4 minutes, adding specific details and trade-offs in the longest version.",
+    "gold_pages": [
+      4
+    ],
+    "source_window": [
+      1,
+      8
+    ],
+    "id": "q004"
+  },
+  {
+    "question": "What are the readiness signals to measure interview preparation effectiveness?",
+    "reference_answer": "The five readiness signals are: solving DSA without hints under 30 minutes, recalling canonical system designs from memory, reimplementing a tiny GPT cold, answering Zaylon's \"why X over Y\" questions without fumbling, and achieving a mock interview score of 3.0+ on interviewing.io.",
+    "gold_pages": [
+      4
+    ],
+    "source_window": [
+      1,
+      8
+    ],
+    "id": "q005"
+  },
+  {
+    "question": "What is the suggested approach for Mercor's 72-hour take-home assignment?",
+    "reference_answer": "For Mercor's take-home, spend the first 30 minutes defining the problem, stating assumptions about use case, scale, and metrics. Build a simple baseline, improve it concerning your defined axis, and write a README summarizing your process. Focus on a clear problem definition over complexity.",
+    "gold_pages": [
+      8
+    ],
+    "source_window": [
+      1,
+      8
+    ],
+    "id": "q006"
+  },
+  {
+    "question": "What techniques are interviewers using in 2026 to assess a candidate's code understanding?",
+    "reference_answer": "Interviewers use six techniques: 1) \"Walk me through this file\" to test detailed comprehension, 2) \"Why this and not that\" to check decision-making, 3) \"Change one requirement\" to evaluate adaptability, 4) Intentional bug insertion to assess code review skills, 5) Whiteboard coding to test code knowledge without tools, and 6) \"Trace the request\" to ensure understanding of system interactions.",
+    "gold_pages": [
+      10,
+      11
+    ],
+    "source_window": [
+      9,
+      16
+    ],
+    "id": "q007"
+  },
+  {
+    "question": "How should you respond if asked about AI-assisted development during an interview?",
+    "reference_answer": "Be honest and proactive. Acknowledge AI assistance and specify your contributions. Emphasize your role in architecture, design, and code review. Highlight that AI-assisted coding is future-oriented and focus on your ability to defend the entire codebase.",
+    "gold_pages": [
+      12
+    ],
+    "source_window": [
+      9,
+      16
+    ],
+    "id": "q008"
+  },
+  {
+    "question": "What preparation is necessary to defend your codebase in interviews?",
+    "reference_answer": "Complete a four-session Codebase Comprehension Protocol: 1) Map every file's purpose, 2) Deep-dive into flagged files, 3) Memorize LangGraph's structure, and 4) Analyze failure modes of major components.",
+    "gold_pages": [
+      13
+    ],
+    "source_window": [
+      9,
+      16
+    ],
+    "id": "q009"
+  },
+  {
+    "question": "Can you summarize the Anti-Spiral Protocol and its purpose?",
+    "reference_answer": "The Anti-Spiral Protocol consists of eight rules to combat execution paralysis: 1) Work in 90-minute blocks, 2) Limit research to one-page, 3) Track progress by metrics, 4) Apply by week 6, 5) Daily self-accountability, 6) Break spirals with small tasks, 7) Reframe AI-related anxiety, and 8) Weekly honest reviews. Its purpose is to prevent planning without action.",
+    "gold_pages": [
+      15,
+      16
+    ],
+    "source_window": [
+      9,
+      16
+    ],
+    "id": "q010"
+  },
+  {
+    "question": "How should you structure your answer when comparing technologies during an interview?",
+    "reference_answer": "Use a three-part structure: 1) Explain specific reasons for your choice, 2) Admit not benchmarking all alternatives, and 3) State conditions to reconsider choices. This approach signals seniority and understanding of trade-offs.",
+    "gold_pages": [
+      14
+    ],
+    "source_window": [
+      9,
+      16
+    ],
+    "id": "q011"
+  },
+  {
+    "question": "What is the recommended way to practice for interviews without relying on IDE features?",
+    "reference_answer": "Solve at least 20 problems without autocomplete or syntax highlighting. Disable quick suggestions and trigger characters in your IDE settings. Focus on learning import paths, method signatures, and syntax details cold.",
+    "gold_pages": [
+      11
+    ],
+    "source_window": [
+      9,
+      16
+    ],
+    "id": "q012"
+  },
+  {
+    "question": "What is the Three-Part Answer Formula mentioned in the guide, and how is it applied in interviews?",
+    "reference_answer": "The Three-Part Answer Formula consists of \"WHAT\" (naming the concept), \"WHY\" (explaining the mechanism), and \"TRADE-OFF\" (stating sacrifices made). It helps interviewees provide comprehensive answers, preventing further questions. Applied in interviews, it separates senior-level responses from mid-level ones, particularly when discussing technical concepts like Hash Maps or LangGraph.",
+    "gold_pages": [
+      17
+    ],
+    "source_window": [
+      17,
+      24
+    ],
+    "id": "q013"
+  },
+  {
+    "question": "What are the universal delivery rules to follow in any interview format?",
+    "reference_answer": "The guide suggests signposting answers with \"First... Second... Third...\", quantifying improvements, stating trade-offs unprompted, narrating thoughts while coding, avoiding apologies when interrupted, and asking clarifying questions before coding. These practices align with scoring criteria in interviews, both AI-led and human.",
+    "gold_pages": [
+      18
+    ],
+    "source_window": [
+      17,
+      24
+    ],
+    "id": "q014"
+  },
+  {
+    "question": "Can you summarize the main points of the two-minute Zaylon project script?",
+    "reference_answer": "The two-minute script describes Zaylon AI, a conversational commerce platform for MENA merchants integrating with existing e-commerce platforms. It highlights the architecture, including multi-agent LangGraph, FastAPI, and retrieval layers. The script also emphasizes lessons learned about latency reductions through architectural optimizations rather than model changes.",
+    "gold_pages": [
+      19
+    ],
+    "source_window": [
+      17,
+      24
+    ],
+    "id": "q015"
+  },
+  {
+    "question": "What are the key architectural components of the Zaylon AI system as described in the five-minute script?",
+    "reference_answer": "The Zaylon AI architecture is built on a multi-agent LangGraph system using FastAPI, Postgres for state persistence, and a hybrid retrieval layer combining BM25 and pgvector. DialectBridge is used for linguistic customization, and row-level security ensures multi-tenant data isolation. Performance improvements were achieved by profiling and optimizing the architecture rather than the model.",
+    "gold_pages": [
+      20
+    ],
+    "source_window": [
+      17,
+      24
+    ],
+    "id": "q016"
+  },
+  {
+    "question": "What is the critical opening line for the fifteen-minute script, and why is it important?",
+    "reference_answer": "The critical opening line is: \"Let me start with the problem, then the architecture, then drill into each major component, then close with what I would change if I were rebuilding it.\" This line structures the response, guiding the interviewer through the explanation, and signals a senior-level approach by outlining the thought process.",
+    "gold_pages": [
+      21
+    ],
+    "source_window": [
+      17,
+      24
+    ],
+    "id": "q017"
+  },
+  {
+    "question": "How does the Zaylon project handle linguistic challenges with DialectBridge?",
+    "reference_answer": "DialectBridge addresses linguistic challenges by tokenizing messages at the word level, classifying each token as English, Egyptian Arabic, Franco-Arabic, or numeric, and processing them accordingly. This approach ensures responses match the input's dominant language style, improving engagement with users who code-switch between dialects.",
+    "gold_pages": [
+      22
+    ],
+    "source_window": [
+      17,
+      24
+    ],
+    "id": "q018"
+  },
+  {
+    "question": "What methods are used to prevent prompt injection from customer inputs?",
+    "reference_answer": "Prompt injection is mitigated using input filters to strip common injection patterns, and system prompts to frame user messages as data. Additionally, Pydantic schema validation ensures malformed inputs are rejected, and output validators check for prompt leakage.",
+    "gold_pages": [
+      25
+    ],
+    "source_window": [
+      25,
+      32
+    ],
+    "id": "q019"
+  },
+  {
+    "question": "How is conversation continuity managed across multiple sessions?",
+    "reference_answer": "Conversations are maintained using Postgres for LangGraph state. Within 24 hours, the cart is preserved. Between 24 hours and 30 days, context is retained but the cart is reset. Beyond 30 days, it's treated as new, but preference history is considered.",
+    "gold_pages": [
+      25
+    ],
+    "source_window": [
+      25,
+      32
+    ],
+    "id": "q020"
+  },
+  {
+    "question": "What is the typical cost of a conversation using this system?",
+    "reference_answer": "An 8-turn conversation costs approximately 4 to 6 US cents. This involves 2 embedding and 8 to 12 LLM calls, with the supervisor using a smaller model for cost efficiency, while sub-agents use a larger model for quality.",
+    "gold_pages": [
+      25
+    ],
+    "source_window": [
+      25,
+      32
+    ],
+    "id": "q021"
+  },
+  {
+    "question": "Why was FastAPI chosen over Flask or Django for the backend?",
+    "reference_answer": "FastAPI was selected for its native async support, automatic OpenAPI generation, and Pydantic integration, which aligns with the codebase's type-safety needs. Django's features were deemed unnecessary, and Flask's lack of native async was a drawback.",
+    "gold_pages": [
+      25,
+      26
+    ],
+    "source_window": [
+      25,
+      32
+    ],
+    "id": "q022"
+  },
+  {
+    "question": "How do you test the functionality of a stateful agent system?",
+    "reference_answer": "Testing includes unit tests for node functions, integration tests with a stubbed LLM for routing logic, and weekly end-to-end tests against the real LLM covering various paths and adversarial cases.",
+    "gold_pages": [
+      26
+    ],
+    "source_window": [
+      25,
+      32
+    ],
+    "id": "q023"
+  },
+  {
+    "question": "What steps would you take if rebuilding the system from scratch?",
+    "reference_answer": "Prioritize using Langfuse from the start for tracing, use a labeled dataset for the DialectBridge classifier, and implement idempotency keys early to avoid issues like duplicate cart additions during network errors.",
+    "gold_pages": [
+      26
+    ],
+    "source_window": [
+      25,
+      32
+    ],
+    "id": "q024"
+  },
+  {
+    "question": "How does Python's probing method for dict and set differ from linear probing?",
+    "reference_answer": "Python uses random probing derived from the hash for dict and set, preventing primary clustering and maintaining O(1) average-case lookup, unlike fixed linear walk which can cause clustering under heavy load.",
+    "gold_pages": [
+      27
+    ],
+    "source_window": [
+      25,
+      32
+    ],
+    "id": "q025"
+  },
+  {
+    "question": "What are the three components needed for Kafka's exactly-once semantics?",
+    "reference_answer": "Exactly-once requires idempotent producers, Kafka transactions for atomic writes, and idempotent consumer logic at the application level for external writes, since Kafka alone cannot guarantee end-to-end exactly-once.",
+    "gold_pages": [
+      27,
+      28
+    ],
+    "source_window": [
+      25,
+      32
+    ],
+    "id": "q026"
+  },
+  {
+    "question": "What's the difference between Spring Boot 2.x and 3.x regarding namespaces?",
+    "reference_answer": "Spring Boot 3.x uses the jakarta namespace due to Java EE's transition to Eclipse Foundation, replacing javax. This requires updating imports when migrating from Spring Boot 2.x.",
+    "gold_pages": [
+      28,
+      29
+    ],
+    "source_window": [
+      25,
+      32
+    ],
+    "id": "q027"
+  },
+  {
+    "question": "What are the recommended steps to structure an answer effectively during the Zara interview?",
+    "reference_answer": "Use the Three-Part Answer Formula: 1) Name the concept (\"WHAT\"), 2) Explain why it works (\"WHY\"), 3) Discuss the trade-offs involved. This approach preempts Zara's follow-up questions and demonstrates deep understanding.",
+    "gold_pages": [
+      33
+    ],
+    "source_window": [
+      33,
+      40
+    ],
+    "id": "q028"
+  },
+  {
+    "question": "How should you handle a situation where you lack direct experience with a concept during an interview?",
+    "reference_answer": "If unfamiliar with a concept, relate it to something you know and reason from first principles. State: \"I have not used X directly, but it is similar to Y, which I know. My reasoning from first principles would be...\" This approach scores better than silence or guessing.",
+    "gold_pages": [
+      34
+    ],
+    "source_window": [
+      33,
+      40
+    ],
+    "id": "q029"
+  },
+  {
+    "question": "What are the advantages of using a deque over a list for queue operations?",
+    "reference_answer": "A deque allows for O(1) operations at both ends, unlike a list which is O(n) for popping from the left. This makes deque ideal for queue operations like BFS, maintaining efficiency at O(V+E) rather than O(n\u00b2) with a list.",
+    "gold_pages": [
+      36
+    ],
+    "source_window": [
+      33,
+      40
+    ],
+    "id": "q030"
+  },
+  {
+    "question": "Summarize the key steps involved in maintaining an LRU cache using data structures.",
+    "reference_answer": "An LRU cache requires a dict for O(1) key lookup and a doubly linked list to track usage order. When accessing an item, move it to the list's front. When the cache is full, remove the least recently used item from the back.",
+    "gold_pages": [
+      37,
+      38
+    ],
+    "source_window": [
+      33,
+      40
+    ],
+    "id": "q031"
+  },
+  {
+    "question": "What are the main complexity classes and their significance?",
+    "reference_answer": "Complexity classes include O(1) (constant time), O(log n) (logarithmic time), O(n) (linear time), O(n log n) (sorting), and O(n\u00b2) (quadratic time). They help assess how an algorithm scales, with lower complexities generally indicating more efficient algorithms for large inputs.",
+    "gold_pages": [
+      39
+    ],
+    "source_window": [
+      33,
+      40
+    ],
+    "id": "q032"
+  },
+  {
+    "question": "What are the common optimisation strategies to improve algorithms from O(n\u00b2) to O(n)?",
+    "reference_answer": "Replace nested loops with hash map lookups to improve from O(n\u00b2) to O(n). Use a heap for repeated min/max operations to reduce complexity from O(n) per call to O(1). Sort once and use binary search to optimize repeated sorted searches.",
+    "gold_pages": [
+      40
+    ],
+    "source_window": [
+      33,
+      40
+    ],
+    "id": "q033"
+  },
+  {
+    "question": "What is the difference between mutable and immutable types in Python, and why does it matter?",
+    "reference_answer": "Immutable types cannot be changed after creation, while mutable types can be modified in place. This affects how data is managed and can prevent bugs, as immutable types are safe to use as dictionary keys, whereas mutable types can lead to unexpected changes if modified in functions.",
+    "gold_pages": [
+      41
+    ],
+    "source_window": [
+      41,
+      48
+    ],
+    "id": "q034"
+  },
+  {
+    "question": "How can you fix the classic mutable default argument bug in Python functions?",
+    "reference_answer": "To fix the mutable default argument bug, use None as the default value and create a new list or object inside the function if None is passed. This ensures a new object is created with each function call.",
+    "gold_pages": [
+      42
+    ],
+    "source_window": [
+      41,
+      48
+    ],
+    "id": "q035"
+  },
+  {
+    "question": "Explain what the Global Interpreter Lock (GIL) is and when it matters in Python.",
+    "reference_answer": "The GIL is a mutex in CPython that ensures only one thread executes Python bytecode at a time, which limits speedup in CPU-bound tasks. It is released during I/O operations, so threading works well for I/O-bound tasks, but for CPU-bound tasks, multiprocessing is recommended.",
+    "gold_pages": [
+      42
+    ],
+    "source_window": [
+      41,
+      48
+    ],
+    "id": "q036"
+  },
+  {
+    "question": "What are the key steps in debugging code during an interview?",
+    "reference_answer": "Key steps include: reading the function name and signature, tracing the function with the simplest failing input, identifying the bug type, making a minimal fix, verifying the fix, and checking edge cases. Narrating this process is important.",
+    "gold_pages": [
+      44
+    ],
+    "source_window": [
+      41,
+      48
+    ],
+    "id": "q037"
+  },
+  {
+    "question": "What optimization patterns should you be familiar with for improving code efficiency?",
+    "reference_answer": "Some key optimization patterns include using hash maps to replace inner scans for O(n\u00b2) to O(n) improvements, sliding windows to avoid recomputing overlapping work, and two pointers to avoid nested loops on sorted data, reducing time complexity.",
+    "gold_pages": [
+      47,
+      48
+    ],
+    "source_window": [
+      41,
+      48
+    ],
+    "id": "q038"
+  },
+  {
+    "question": "How do generators differ from lists in Python, and when should you use them?",
+    "reference_answer": "Generators produce one value at a time and compute values only as needed, which is memory efficient for large datasets or streams. Lists store all values in memory immediately, making them suitable when you need random access or to iterate multiple times.",
+    "gold_pages": [
+      42,
+      43
+    ],
+    "source_window": [
+      41,
+      48
+    ],
+    "id": "q039"
+  },
+  {
+    "question": "How does using a heap improve the process of finding the largest numbers in a large dataset?",
+    "reference_answer": "By maintaining a min-heap of size K, you can efficiently find the K largest numbers from a large dataset in O(n log K) time, avoiding the need to sort all items, which would take O(n log n) time.",
+    "gold_pages": [
+      49
+    ],
+    "source_window": [
+      49,
+      56
+    ],
+    "id": "q040"
+  },
+  {
+    "question": "Can you explain the purpose of the Location header in REST API responses when a new resource is created?",
+    "reference_answer": "The Location header, included with a 201 Created response, informs the client about the URL of the newly created resource, preventing the need for an additional request to retrieve this information.",
+    "gold_pages": [
+      50,
+      51
+    ],
+    "source_window": [
+      49,
+      56
+    ],
+    "id": "q041"
+  },
+  {
+    "question": "What are the characteristics of a well-structured error response in an API?",
+    "reference_answer": "A well-structured error response includes machine-readable fields like an error code, human-readable messages for developers, the field causing the error, and a request ID for tracing.",
+    "gold_pages": [
+      52
+    ],
+    "source_window": [
+      49,
+      56
+    ],
+    "id": "q042"
+  },
+  {
+    "question": "How should API versioning be handled to avoid disruptions for existing clients?",
+    "reference_answer": "API versioning can be handled using a URL prefix. Deprecation should involve announcing the end date, running old and new versions in parallel, monitoring usage, and eventually removing the old version with a 410 Gone status.",
+    "gold_pages": [
+      52,
+      53
+    ],
+    "source_window": [
+      49,
+      56
+    ],
+    "id": "q043"
+  },
+  {
+    "question": "When should you use worker threads versus child processes for concurrency in Node.js?",
+    "reference_answer": "Use worker threads for CPU-heavy JavaScript tasks within the same process to minimize overhead. Use child processes for isolation, especially when involving external scripts or languages.",
+    "gold_pages": [
+      54,
+      55
+    ],
+    "source_window": [
+      49,
+      56
+    ],
+    "id": "q044"
+  },
+  {
+    "question": "What is the difference between using 'spawn' and 'exec' methods in Node.js for running child processes?",
+    "reference_answer": "'Spawn' is used for long-running processes with streaming output, while 'exec' is for short commands where the full output is required at once. 'Exec' buffers the output, which makes it suitable for short, complete tasks.",
+    "gold_pages": [
+      55
+    ],
+    "source_window": [
+      49,
+      56
+    ],
+    "id": "q045"
+  },
+  {
+    "question": "What is the reasoning behind using nouns instead of verbs in RESTful URLs?",
+    "reference_answer": "RESTful URLs use nouns because the HTTP method already conveys the verb. This maintains the uniform interface principle, where the URL identifies the resource, and the method specifies the action.",
+    "gold_pages": [
+      50
+    ],
+    "source_window": [
+      49,
+      56
+    ],
+    "id": "q046"
+  },
+  {
+    "question": "Why is it important to handle version deprecation carefully in APIs?",
+    "reference_answer": "Careful handling of version deprecation ensures that clients have time to migrate to newer versions without disruption, maintaining service continuity and avoiding breaking changes.",
+    "gold_pages": [
+      53
+    ],
+    "source_window": [
+      49,
+      56
+    ],
+    "id": "q047"
+  },
+  {
+    "question": "What are the benefits and drawbacks of using a URL prefix for API versioning?",
+    "reference_answer": "Using a URL prefix is explicit, cacheable, and testable in a browser, but it changes URLs, making it harder to share links. It's simple and visible but can complicate link sharing.",
+    "gold_pages": [
+      52
+    ],
+    "source_window": [
+      49,
+      56
+    ],
+    "id": "q048"
+  },
+  {
+    "question": "What is the purpose of a structured error response in an API?",
+    "reference_answer": "Structured error responses provide machine-readable codes and human-readable messages, helping both programmatic handling and developer understanding of errors.",
+    "gold_pages": [
+      52
+    ],
+    "source_window": [
+      49,
+      56
+    ],
+    "id": "q049"
+  },
+  {
+    "question": "What are the key differences between GitHub Flow and GitFlow branching strategies?",
+    "reference_answer": "GitHub Flow uses a single main branch with short-lived feature branches, ideal for continuous deployment, while GitFlow involves a main and develop branch for scheduled releases, requiring separate release and hotfix branches.",
+    "gold_pages": [
+      57
+    ],
+    "source_window": [
+      57,
+      64
+    ],
+    "id": "q050"
+  },
+  {
+    "question": "How does trunk-based development improve continuous integration and what are its trade-offs?",
+    "reference_answer": "Trunk-based development involves frequent commits to the main branch, minimizing merge conflicts and enhancing continuous integration. However, it requires robust feature flag infrastructure and disciplined, small commits.",
+    "gold_pages": [
+      58
+    ],
+    "source_window": [
+      57,
+      64
+    ],
+    "id": "q051"
+  },
+  {
+    "question": "What are the benefits and drawbacks of using blue-green deployment versus canary deployment?",
+    "reference_answer": "Blue-green allows quick rollbacks with zero downtime but requires double infrastructure. Canary gradually shifts traffic, minimizing user impact from errors, making it suitable for AI/ML systems with subtle quality changes.",
+    "gold_pages": [
+      58
+    ],
+    "source_window": [
+      57,
+      64
+    ],
+    "id": "q052"
+  },
+  {
+    "question": "When should you use useState, Context API, or Zustand/Redux Toolkit in React?",
+    "reference_answer": "Use useState for local component state, Context API for rarely changing global data, and Zustand/Redux for complex state that requires frequent updates and is accessed by multiple components.",
+    "gold_pages": [
+      60
+    ],
+    "source_window": [
+      57,
+      64
+    ],
+    "id": "q053"
+  },
+  {
+    "question": "What makes the stale closure bug in React useEffect problematic, and how can it be fixed?",
+    "reference_answer": "The bug occurs when a useEffect captures a stale variable value due to a missing dependency. Fixes include adding necessary dependencies, using functional updates, or utilizing refs to maintain current values.",
+    "gold_pages": [
+      60
+    ],
+    "source_window": [
+      57,
+      64
+    ],
+    "id": "q054"
+  },
+  {
+    "question": "How should you approach narrating a coding exercise during an interview?",
+    "reference_answer": "Start by paraphrasing the problem, ask clarifying questions, state your approach before coding, narrate your process, trace with examples, state complexity, and check edge cases for a comprehensive solution.",
+    "gold_pages": [
+      63
+    ],
+    "source_window": [
+      57,
+      64
+    ],
+    "id": "q055"
+  },
+  {
+    "question": "What is the recommended schedule for preparing on April 30?",
+    "reference_answer": "The schedule includes practicing data structures from 08:00 to 09:30, Python internals from 09:30 to 10:30, debugging from 10:30 to 11:30, optimization patterns from 11:30 to 13:00, and API development from 14:00 to 15:30. Breaks and mock sessions are also part of the schedule.",
+    "gold_pages": [
+      65
+    ],
+    "source_window": [
+      65,
+      72
+    ],
+    "id": "q056"
+  },
+  {
+    "question": "Why is it advised to avoid taking the interview on April 30?",
+    "reference_answer": "Avoiding the interview on April 30 is advised to ensure you have a full preparation day and a restful night's sleep, leading to better performance and a clearer mind during the interview on May 1.",
+    "gold_pages": [
+      65
+    ],
+    "source_window": [
+      65,
+      72
+    ],
+    "id": "q057"
+  },
+  {
+    "question": "How do you handle a function that is correct for small inputs but fails for large ones?",
+    "reference_answer": "Investigate potential off-by-one errors, algorithm inefficiencies like O(n\u00b2) time complexity, and float precision issues. Reproduce failures with minimal inputs and log values at each step to isolate the problem.",
+    "gold_pages": [
+      68
+    ],
+    "source_window": [
+      65,
+      72
+    ],
+    "id": "q058"
+  },
+  {
+    "question": "What is the difference between list comprehension and generator expressions?",
+    "reference_answer": "List comprehensions create a full list in memory immediately, using O(n) space, while generator expressions are lazy and use O(1) memory, producing values one at a time. Use generators for processing large datasets and when memory efficiency is crucial.",
+    "gold_pages": [
+      67
+    ],
+    "source_window": [
+      65,
+      72
+    ],
+    "id": "q059"
+  },
+  {
+    "question": "What mindset should you adopt before starting to code during an interview?",
+    "reference_answer": "Spend 2-3 minutes thinking and speaking out loud to understand the problem, identify its type, and state a naive solution before optimizing. This structured approach reduces errors and showcases systematic thinking.",
+    "gold_pages": [
+      71,
+      72
+    ],
+    "source_window": [
+      65,
+      72
+    ],
+    "id": "q060"
+  },
+  {
+    "question": "What is the hash map pattern used for in coding problems?",
+    "reference_answer": "The hash map pattern is used to solve problems involving membership checks, frequency counts, or lookups inside loops, optimizing them to O(1) using a dictionary or set.",
+    "gold_pages": [
+      73
+    ],
+    "source_window": [
+      73,
+      80
+    ],
+    "id": "q061"
+  },
+  {
+    "question": "How can you group strings that are anagrams of each other?",
+    "reference_answer": "Group anagrams by sorting each string and using the sorted version as a dictionary key to group original strings together.",
+    "gold_pages": [
+      74
+    ],
+    "source_window": [
+      73,
+      80
+    ],
+    "id": "q062"
+  },
+  {
+    "question": "Explain the two pointers technique and when to use it.",
+    "reference_answer": "The two pointers technique involves placing pointers at the start and end of a sorted array and moving them towards each other based on certain conditions, transforming O(n\u00b2) problems to O(n). Use it when dealing with sorted arrays or problems like finding pairs, palindromes, or merging sorted arrays.",
+    "gold_pages": [
+      76
+    ],
+    "source_window": [
+      73,
+      80
+    ],
+    "id": "q063"
+  },
+  {
+    "question": "What is the sliding window pattern and how does it help with subarray problems?",
+    "reference_answer": "The sliding window pattern maintains a contiguous range of elements and slides it across data, updating only the part that changes. This avoids O(n\u00b2) operations by reusing calculations, useful for maximum sum subarray and substring problems.",
+    "gold_pages": [
+      78
+    ],
+    "source_window": [
+      73,
+      80
+    ],
+    "id": "q064"
+  },
+  {
+    "question": "How does the stack pattern help in solving valid parentheses problems?",
+    "reference_answer": "The stack pattern helps by processing elements in LIFO order. For valid parentheses problems, it keeps track of unmatched opening brackets, allowing for quick matching of closing brackets as they appear.",
+    "gold_pages": [
+      80
+    ],
+    "source_window": [
+      73,
+      80
+    ],
+    "id": "q065"
+  },
+  {
+    "question": "Describe the approach to find the longest consecutive sequence in an unsorted array.",
+    "reference_answer": "Store all numbers in a set for O(1) lookups. A sequence starts when a number minus one is not in the set, and is extended as long as consecutive numbers exist.",
+    "gold_pages": [
+      74,
+      75
+    ],
+    "source_window": [
+      73,
+      80
+    ],
+    "id": "q066"
+  },
+  {
+    "question": "How does the MinStack class maintain constant time complexity for all operations?",
+    "reference_answer": "The MinStack class uses a secondary stack to keep track of the minimum value at each stack level. When a new value is pushed, it compares with the current minimum, ensuring that both the value and its minimum are stored. Popping restores the previous minimum automatically.",
+    "gold_pages": [
+      81
+    ],
+    "source_window": [
+      81,
+      88
+    ],
+    "id": "q067"
+  },
+  {
+    "question": "What is the core idea behind using a heap for finding 'k largest' elements?",
+    "reference_answer": "For finding the k largest elements, maintain a min-heap of size k. The smallest element in the heap represents the kth largest element seen so far. For any new element greater than the heap minimum, replace the minimum with this new element.",
+    "gold_pages": [
+      82
+    ],
+    "source_window": [
+      81,
+      88
+    ],
+    "id": "q068"
+  },
+  {
+    "question": "Describe the process for finding the first and last position of a target in a sorted array.",
+    "reference_answer": "Use two binary searches. The first finds the leftmost occurrence by continuing to search left after finding the target. The second finds the rightmost occurrence by continuing to search right. If the target isn't found, return [-1, -1].",
+    "gold_pages": [
+      84,
+      85
+    ],
+    "source_window": [
+      81,
+      88
+    ],
+    "id": "q069"
+  },
+  {
+    "question": "What is the difference between BFS and DFS in terms of graph traversal?",
+    "reference_answer": "BFS explores level by level using a queue, ideal for shortest path problems in unweighted graphs. DFS dives deep along paths before backtracking, using recursion or a stack, suitable for exploring all paths or detecting cycles.",
+    "gold_pages": [
+      86
+    ],
+    "source_window": [
+      81,
+      88
+    ],
+    "id": "q070"
+  },
+  {
+    "question": "How is level order traversal of a binary tree achieved using BFS?",
+    "reference_answer": "Level order traversal uses BFS by processing nodes level by level. At each level, record the number of nodes, dequeue them, and enqueue their children for the next level. This process continues until no nodes are left.",
+    "gold_pages": [
+      87
+    ],
+    "source_window": [
+      81,
+      88
+    ],
+    "id": "q071"
+  },
+  {
+    "question": "Explain the approach to clone a graph using BFS.",
+    "reference_answer": "To clone a graph, use BFS to traverse each node and maintain a mapping from original nodes to their clones. For each node, clone its neighbors and add them to the queue if not already cloned, ensuring all connections are replicated.",
+    "gold_pages": [
+      87,
+      88
+    ],
+    "source_window": [
+      81,
+      88
+    ],
+    "id": "q072"
+  },
+  {
+    "question": "What are the two main approaches to solving dynamic programming problems?",
+    "reference_answer": "Dynamic programming problems can be solved using the top-down approach (recursion with memoization) or the bottom-up approach (iterative with a table).",
+    "gold_pages": [
+      89
+    ],
+    "source_window": [
+      89,
+      96
+    ],
+    "id": "q073"
+  },
+  {
+    "question": "How can you determine if a problem should be solved using dynamic programming?",
+    "reference_answer": "A problem is suitable for dynamic programming if it has an optimal substructure and overlapping subproblems. Look for trigger words like 'maximum/minimum', 'number of ways', or 'longest subsequence'.",
+    "gold_pages": [
+      89
+    ],
+    "source_window": [
+      89,
+      96
+    ],
+    "id": "q074"
+  },
+  {
+    "question": "What is the time and space complexity for solving the 'Climbing Stairs' problem using a bottom-up approach?",
+    "reference_answer": "The time complexity is O(n) and the space complexity is O(1) when solving the 'Climbing Stairs' problem using the bottom-up approach.",
+    "gold_pages": [
+      89
+    ],
+    "source_window": [
+      89,
+      96
+    ],
+    "id": "q075"
+  },
+  {
+    "question": "Describe the approach to find the middle node in a linked list using fast and slow pointers.",
+    "reference_answer": "Using fast and slow pointers, the slow pointer advances one step at a time, and the fast pointer advances two steps. When the fast pointer reaches the end, the slow pointer is at the middle.",
+    "gold_pages": [
+      92
+    ],
+    "source_window": [
+      89,
+      96
+    ],
+    "id": "q076"
+  },
+  {
+    "question": "How does the collections.defaultdict simplify handling missing keys?",
+    "reference_answer": "The collections.defaultdict automatically creates a default value for missing keys, eliminating the need for manual checks and value initialization.",
+    "gold_pages": [
+      93
+    ],
+    "source_window": [
+      89,
+      96
+    ],
+    "id": "q077"
+  },
+  {
+    "question": "What is the purpose of using Python's heapq module, and how can it be used to implement a max-heap?",
+    "reference_answer": "Python's heapq module provides functions for heap operations. To implement a max-heap, store negative values, and negate them when retrieving the maximum value.",
+    "gold_pages": [
+      94
+    ],
+    "source_window": [
+      89,
+      96
+    ],
+    "id": "q078"
+  },
+  {
+    "question": "How can you merge two sorted linked lists efficiently?",
+    "reference_answer": "To merge two sorted linked lists, use a dummy head node to simplify edge cases. Iterate through both lists, adding the smaller node to the result list, and finally append any remaining elements. This method has a time complexity of O(m+n) and space complexity of O(1).",
+    "gold_pages": [
+      97
+    ],
+    "source_window": [
+      97,
+      103
+    ],
+    "id": "q079"
+  },
+  {
+    "question": "What Python string methods should I remember for interviews?",
+    "reference_answer": "Key Python string methods include: lower(), upper(), strip(), split(), join(), replace(), startswith(), endswith(), isalnum(). These help with common operations like case conversion, trimming spaces, splitting, joining, and character checks.",
+    "gold_pages": [
+      98
+    ],
+    "source_window": [
+      97,
+      103
+    ],
+    "id": "q080"
+  },
+  {
+    "question": "How does the decision tree help in selecting a coding pattern?",
+    "reference_answer": "The decision tree guides you through questions about the problem's requirements, such as checking membership, sorting, subarray constraints, and more. Each answer points to a specific pattern, like hash maps, two pointers, or sliding windows, helping you quickly choose the right approach.",
+    "gold_pages": [
+      100
+    ],
+    "source_window": [
+      97,
+      103
+    ],
+    "id": "q081"
+  },
+  {
+    "question": "What are the three rules that solve most coding problems?",
+    "reference_answer": "The three main rules are: 1) Use a hash map for nested loops with a search. 2) Use two pointers for sorted data needing pairs. 3) Use a heap for minimum or maximum of a changing set.",
+    "gold_pages": [
+      101
+    ],
+    "source_window": [
+      97,
+      103
+    ],
+    "id": "q082"
+  },
+  {
+    "question": "What practice problems involve hash maps?",
+    "reference_answer": "Problems involving hash maps include Two Sum, Contains Duplicate, Group Anagrams, and LRU Cache implementation. These problems typically require efficient membership checks or value counts.",
+    "gold_pages": [
+      102
+    ],
+    "source_window": [
+      97,
+      103
+    ],
+    "id": "q083"
+  }
+]

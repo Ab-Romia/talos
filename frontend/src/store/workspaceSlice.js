@@ -103,8 +103,8 @@ const workspaceSlice = createSlice({
   initialState: {
     workspaces: [],
     chatrooms: [],
-    activeWorkspaceId: null,
-    activeChatroomId: null,
+    activeWorkspaceId: (() => { try { return localStorage.getItem(ACTIVE_WS_KEY) } catch { return null } })(),
+    activeChatroomId: (() => { try { return localStorage.getItem(ACTIVE_CR_KEY) } catch { return null } })(),
     unreadChannels: [],
     loading: false,
     error: null,

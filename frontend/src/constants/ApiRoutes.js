@@ -46,7 +46,7 @@ export const CHANNEL_ONLINE = (channelId) => `/api/channels/${channelId}/online`
 export const SOCKET_IO_PATH = '/socket.io'
 
 // AI + authorization
-export const AI_CONFIG = '/api/ai/config'
+export const AI_CONFIG = (workspaceId) => `/api/workspaces/${workspaceId}/ai/config`
 export const AUTHZ_SUMMARY = '/api/authorization/summary'
 export const AUTHZ_PLATFORM_ROLES = '/api/authorization/platform-roles'
 export const AUTHZ_PLATFORM_PERMISSIONS = '/api/authorization/platform-permissions'

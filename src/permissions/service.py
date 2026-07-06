@@ -94,14 +94,22 @@ class Bidict(bidict):
 _permission_registry = Bidict()
 
 
-@cached(_permission_registry.inverse, key=lambda db, permission: permission)
 def bit_offset(db: orm.Session, permission: ScopedPermission) -> int | None:
+    # Manual caching (not @cached): a miss must NOT be cached, or a lookup made
+    # before the permissions table is seeded poisons the registry with None
+    # for the process lifetime.
+    try:
+        return _permission_registry.inverse[permission]
+    except KeyError:
+        pass
     perm = db_permission(db, permission.resource, permission.action, permission.scope)
 
     if perm is None:
         return None
 
-    return perm.bit_offset + permission.scope.offset
+    offset = perm.bit_offset + permission.scope.offset
+    _permission_registry.inverse[permission] = offset
+    return offset
 
 
 @cached(_permission_registry, key=lambda db, key: key)

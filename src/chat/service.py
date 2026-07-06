@@ -1,31 +1,33 @@
 from uuid import UUID
 
-from utils.logger import get_logger
-from .ai import is_ai_trigger
-from .model import MessageSchema, MessageRole
+from .model import MessageSchema, MessageRole, wrap_plain_text
 from .storage import get_storage
 
-logger = get_logger(__name__)
 
+async def store_message(channel_id: UUID, user_id: UUID, content: dict | str) -> MessageSchema:
+    """
+    Persist a user message to storage.
 
-async def store_message(channel_id: UUID, user_id: UUID, content: str) -> MessageSchema:
-    """Persist a user message to both hot and cold storage."""
+    `content` accepts:
+      - dict  — already-validated ProseMirror JSON from MessageCreateSchema
+      - str   — plain text from a bot; auto-wrapped into a paragraph doc
+    """
+    if isinstance(content, str):
+        raw = wrap_plain_text(content).to_json()
+    else:
+        raw = content  # already validated by MessageCreateSchema upstream
+
     msg = MessageSchema(
         channel_id=channel_id,
         sender_id=user_id,
         role=MessageRole.USER,
-        content=content,
+        content=raw,
     )
     await get_storage().put(msg)
 
-    stripped = content.strip()
-    if len(stripped) >= 20 and not is_ai_trigger(stripped):
-        try:
-            from processing.tasks import index_message
-            await index_message.kiq(msg.id, channel_id, content)
-        except Exception:
-            logger.warning("Failed to enqueue message indexing", message_id=str(msg.id))
-
+    # Chat-memory indexing happens via the segment-based cron indexer
+    # (processing.chat_tasks), driven by messages.indexed_at — no per-message
+    # enqueue here.
     return msg
 
 
@@ -35,7 +37,7 @@ async def store_assistant_message(channel_id: UUID, sender_id: UUID, content: st
         channel_id=channel_id,
         sender_id=sender_id,
         role=MessageRole.ASSISTANT,
-        content=content,
+        content=wrap_plain_text(content).to_json(),
     )
     await get_storage().put(msg)
     return msg
@@ -51,5 +53,5 @@ async def get_messages(
 
 
 async def get_message_by_id(message_id: UUID) -> MessageSchema | None:
-    """Fetch a single message; hot cache checked first, then cold store."""
+    """Fetch a single message; storage checked (hot cache first if configured)."""
     return await get_storage().get_by_id(message_id)

@@ -3,15 +3,11 @@ from pathlib import Path
 from typing import cast
 
 from langchain_core.documents import Document
-from langchain_text_splitters import (
-    RecursiveCharacterTextSplitter,
-    MarkdownTextSplitter,
-)
 from langchain_unstructured import UnstructuredLoader
 
 from config import global_rag_config
 
-__all__ = ["load_documents", "document_splitter", "format_citations", "ingest_file_chunks"]
+__all__ = ["load_documents", "format_citations", "ingest_file_chunks", "ingest_chat_messages"]
 
 
 async def load_documents(file_paths: str | Path | list[str] | list[Path]):
@@ -42,32 +38,6 @@ async def load_documents(file_paths: str | Path | list[str] | list[Path]):
 
     async for doc in loader.alazy_load():
         yield doc
-
-
-def document_splitter(document: str) -> str:
-    return document
-
-
-# add config
-def document_splitter_(strategy: str | None = None):
-    if strategy is None:
-        strategy = global_rag_config.chunking_strategy
-
-    if strategy == "recursive":
-        return RecursiveCharacterTextSplitter(
-            chunk_size=global_rag_config.chunk_size,
-            chunk_overlap=global_rag_config.chunk_overlap,
-            separators=["\n\n", "\n", ". ", " ", ""],
-        )
-
-    elif strategy == "markdown":
-        return MarkdownTextSplitter(
-            chunk_size=global_rag_config.chunk_size,
-            chunk_overlap=global_rag_config.chunk_overlap,
-        )
-
-    else:
-        raise ValueError(f"Unknown chunking strategy: {strategy}")
 
 
 # TODO: add more metadata fields to Citation as needed
@@ -103,9 +73,27 @@ def ingest_file_chunks(
     for chunk in chunks:
         chunk.metadata.setdefault("workspace_id", workspace_id)
         chunk.metadata.setdefault("file_id", file_id)
+        # Discriminator so file retrieval and chat-memory retrieval stay separable
+        # in the shared `talos_documents` collection.
+        chunk.metadata.setdefault("source", "file")
 
     vectorstore = get_workspace_vectorstore()
     vectorstore.add_documents(chunks)
+
+
+def ingest_chat_messages(docs: list[Document]):
+    """Insert pre-built chat-memory Documents into the workspace collection.
+
+    Documents already carry their metadata (workspace_id, chatroom_id,
+    message_id, source="chat", sent_at). No-op on an empty list. Pinned to the
+    same `talos_documents` collection file chunks use (WORKSPACE_COLLECTION).
+    """
+    if not docs:
+        return
+    from rag.vector_store import get_workspace_vectorstore
+
+    vectorstore = get_workspace_vectorstore()
+    vectorstore.add_documents(docs)
 
 
 # TODO: use templates for formatting
