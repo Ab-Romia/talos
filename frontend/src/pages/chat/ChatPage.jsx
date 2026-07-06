@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 
 import { useSelector, useDispatch as useReduxDispatch } from 'react-redux'
-import { markChannelUnread } from '../../store/workspaceSlice'
+import { markChannelUnread, loadDms } from '../../store/workspaceSlice'
 import { usePermissions } from '../../contexts/PermissionsContext'
 import { chatService } from '../../services/chat'
 import { getBotIdentity } from '../../services/ai'
@@ -82,9 +82,15 @@ export default function ChatPage() {
   const {
     workspaces,
     chatrooms,
+    dms,
     activeWorkspaceId: workspaceId,
     activeChatroomId: chatroomId,
   } = useSelector((s) => s.workspace)
+
+  const activeDm = useMemo(
+    () => dms.find((d) => d.id === chatroomId) || null,
+    [dms, chatroomId],
+  )
 
   const { hasChannelPerm, channelPermsLoaded } = usePermissions()
   const canSend = hasChannelPerm('channel.message', 'send')
@@ -184,8 +190,13 @@ export default function ChatPage() {
 
   useEffect(() => {
     const cr = chatrooms.find((c) => c.id === chatroomId)
-    setChatroomName(cr?.name || '')
-  }, [chatrooms, chatroomId])
+    if (cr) {
+      setChatroomName(cr.name || '')
+      return
+    }
+    const dm = dms.find((d) => d.id === chatroomId)
+    setChatroomName(dm ? (dm.peer?.name || 'Direct message') : '')
+  }, [chatrooms, dms, chatroomId])
 
   // Clear messages when switching channels.
   useEffect(() => {
@@ -227,6 +238,15 @@ export default function ChatPage() {
 
       // Track unread + OS notification for messages from others in different channels
       if (m.sender_id && m.sender_id !== user?.id && m.channel_id !== chatroomId) {
+        // A message in a conversation we don't know yet = a peer just opened a
+        // DM with us; refresh the DM list so it appears in the sidebar.
+        if (
+          !chatrooms.some((c) => c.id === m.channel_id) &&
+          !dms.some((d) => d.id === m.channel_id) &&
+          workspaceId
+        ) {
+          reduxDispatch(loadDms(workspaceId))
+        }
         reduxDispatch(markChannelUnread(m.channel_id))
         if ('Notification' in window && Notification.permission === 'granted') {
           try {
@@ -263,7 +283,7 @@ export default function ChatPage() {
       })
     })
     return () => off()
-  }, [chatroomId, user, toUiMessage])
+  }, [chatroomId, user, toUiMessage, chatrooms, dms, workspaceId, reduxDispatch])
 
   // Realtime: show a live "Talos is thinking…" indicator between the trigger
   // message and the assistant's reply. Ephemeral — reset on channel switch and
@@ -597,7 +617,7 @@ export default function ChatPage() {
         <div className="flex items-center gap-2.5">
           <span className="w-2 h-2 bg-success rounded-full" />
           <span className="text-[15px] font-semibold text-ink">
-            {chatroomName ? `# ${chatroomName}` : 'Select a channel'}
+            {chatroomName ? (activeDm ? chatroomName : `# ${chatroomName}`) : 'Select a channel'}
           </span>
           {workspaceName && (
             <span className="text-[12px] text-ink-tertiary">· {workspaceName}</span>
@@ -886,7 +906,7 @@ export default function ChatPage() {
                   value={input}
                   onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
-                  placeholder={chatroomName ? `Message #${chatroomName}` : 'Message…'}
+                  placeholder={chatroomName ? (activeDm ? `Message ${chatroomName}` : `Message #${chatroomName}`) : 'Message…'}
                 />
               </div>
               <button

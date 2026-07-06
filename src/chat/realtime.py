@@ -228,15 +228,17 @@ async def _notify_channel_members(channel_id: UUID, sender_id: UUID, content: st
             recipients = [uid for uid in members if uid != sender_id and uid not in mentioned]
             body = content[:200] if content else ""
 
+            sender = db.get(User, sender_id)
+            sender_name = (sender.name or sender.username) if sender else "Someone"
+
             if mentioned:
-                sender = db.get(User, sender_id)
-                sender_name = (sender.name or sender.username) if sender else "Someone"
+                where = sender_name if channel.is_direct else f"{sender_name} mentioned you in #{channel.name}"
                 await push_notification(
                     db=db,
                     user_ids=list(mentioned),
-                    title=f"{sender_name} mentioned you in #{channel.name}",
+                    title=where,
                     body=body,
-                    data={"channel_id": str(channel_id), "mention": True},
+                    data={"channel_id": str(channel_id), "mention": True, "direct": channel.is_direct},
                     tags=[NotificationTag.SOCIAL],
                 )
 
@@ -244,9 +246,9 @@ async def _notify_channel_members(channel_id: UUID, sender_id: UUID, content: st
                 await push_notification(
                     db=db,
                     user_ids=recipients,
-                    title=f"#{channel.name}",
+                    title=sender_name if channel.is_direct else f"#{channel.name}",
                     body=body,
-                    data={"channel_id": str(channel_id)},
+                    data={"channel_id": str(channel_id), "direct": channel.is_direct},
                     tags=[NotificationTag.SOCIAL],
                 )
                 log.info(f"_notify: push_notification sent to {len(recipients)} users")
@@ -314,14 +316,16 @@ def _channel_perms():
 def _get_accessible_channels(db: orm.Session, user_id: UUID) -> set[UUID]:
     """ Channels visible to a user"""
     from permissions.model import Role, ChannelRoleOverride
-    from workspace.model import Workspace
+    from workspace.model import Workspace, DMParticipant
 
-    # Owners can see all channels in their workspaces (bypass bitfield check).
+    # Owners can see all channels in their workspaces (bypass bitfield check) —
+    # EXCEPT direct messages, which only their two participants may see.
     owned = set(db.scalars(
         select(Channel.id)
         .join(Workspace, Workspace.id == Channel.workspace_id)
         .where(Workspace.owner_id == user_id)
         .where(Channel.deleted_at.is_(None))
+        .where(Channel.is_direct.is_(False))
     ))
 
     zero = BitString.from_int(0, cfg().auth.permission_bitstring_length)
@@ -336,6 +340,7 @@ def _get_accessible_channels(db: orm.Session, user_id: UUID) -> set[UUID]:
         .join(ChannelRoleOverride, (ChannelRoleOverride.role_id == Role.id) & (ChannelRoleOverride.channel_id == Channel.id), isouter=True)
         .where(Role.users.any(id=user_id))
         .where(Channel.deleted_at.is_(None))
+        .where(Channel.is_direct.is_(False))
         .having(  # = (role & ~override.deny | override.allow) & channel_view_perm_mask > 0
             func.bit_or(
                 Role.allow_mask
@@ -346,16 +351,31 @@ def _get_accessible_channels(db: orm.Session, user_id: UUID) -> set[UUID]:
         )
         .group_by(Channel.id)
     )
-    return owned | set(rows)
+
+    # Direct messages: membership only.
+    dms = set(db.scalars(
+        select(DMParticipant.channel_id)
+        .join(Channel, Channel.id == DMParticipant.channel_id)
+        .where(DMParticipant.user_id == user_id)
+        .where(Channel.deleted_at.is_(None))
+    ))
+
+    return owned | set(rows) | dms
 
 
 def _get_channel_members(db: Session, channel_id: UUID) -> set[UUID]:
-    """All workspace members who can view this channel (owners always included)."""
-    from workspace.model import Workspace
+    """All workspace members who can view this channel (owners always included).
+    For direct messages: exactly the two participants."""
+    from workspace.model import Workspace, DMParticipant
 
     channel = db.get(Channel, channel_id)
     if not channel:
         return set()
+
+    if channel.is_direct:
+        return set(db.scalars(
+            select(DMParticipant.user_id).where(DMParticipant.channel_id == channel_id)
+        ))
 
     owner_id = db.scalar(
         select(Workspace.owner_id).where(Workspace.id == channel.workspace_id)

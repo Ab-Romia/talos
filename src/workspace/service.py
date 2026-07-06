@@ -246,8 +246,10 @@ class ChannelService:
 
     @staticmethod
     def get_workspace_channels(db: Session, workspace_id: uuid.UUID) -> list[Channel]:
-        """Get all channels in a workspace."""
+        """Get all channels in a workspace (direct messages are never listed)."""
         return db.scalars(
-            select(Channel).where(Channel.workspace_id == workspace_id)
+            select(Channel)
+            .where(Channel.workspace_id == workspace_id)
+            .where(Channel.is_direct.is_(False))
         ).all()
 

@@ -60,4 +60,13 @@ export const chatService = {
   getMyPermissions(workspaceId) {
     return api.get(`/api/workspaces/${workspaceId}/my_permissions`)
   },
+
+  // Direct messages: [{ id, is_direct, peer:{id,username,name}, created_at }]
+  getDms(workspaceId) {
+    return api.get(`/api/workspaces/${workspaceId}/dms`)
+  },
+
+  openDm(workspaceId, userId) {
+    return api.post(`/api/workspaces/${workspaceId}/dms`, { user_id: userId })
+  },
 }

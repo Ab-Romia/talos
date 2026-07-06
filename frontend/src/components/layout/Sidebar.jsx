@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import Avatar from '@mui/material/Avatar'
@@ -24,11 +24,14 @@ import {
   switchWorkspace,
   setActiveChatroom,
   clearWorkspaceError,
+  loadDms,
+  openDm,
 } from '../../store/workspaceSlice'
 import { markRead } from '../../store/notificationsSlice'
 import * as R from '../../constants/Routes'
 import NotificationsBell from './NotificationsBell'
 import { usePermissions } from '../../contexts/PermissionsContext'
+import { chatService } from '../../services/chat'
 
 export default function Sidebar() {
   const location = useLocation()
@@ -37,7 +40,7 @@ export default function Sidebar() {
   const currentPath = location.pathname
 
   const {
-    workspaces, chatrooms, activeWorkspaceId, activeChatroomId, unreadChannels, loading, error,
+    workspaces, chatrooms, dms, activeWorkspaceId, activeChatroomId, unreadChannels, loading, error,
   } = useSelector((s) => s.workspace)
   const user = useSelector((s) => s.auth.user)
   const { hasPerm } = usePermissions()
@@ -50,6 +53,31 @@ export default function Sidebar() {
   const [channelName, setChannelName] = useState('')
   const [newWorkspaceName, setNewWorkspaceName] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [dmPickerAnchor, setDmPickerAnchor] = useState(null)
+  const [dmCandidates, setDmCandidates] = useState([])
+
+  // Keep the DM list fresh for the active workspace.
+  useEffect(() => {
+    if (activeWorkspaceId) dispatch(loadDms(activeWorkspaceId))
+  }, [activeWorkspaceId, dispatch])
+
+  const handleOpenDmPicker = async (e) => {
+    setDmPickerAnchor(e.currentTarget)
+    try {
+      const members = await chatService.getMembers(activeWorkspaceId)
+      setDmCandidates(
+        (Array.isArray(members) ? members : []).filter((m) => String(m.id) !== String(user?.id)),
+      )
+    } catch {
+      setDmCandidates([])
+    }
+  }
+
+  const handleStartDm = async (memberId) => {
+    setDmPickerAnchor(null)
+    const res = await dispatch(openDm({ workspaceId: activeWorkspaceId, userId: memberId }))
+    if (openDm.fulfilled.match(res)) navigate(R.CHAT_PAGE)
+  }
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
   const query = searchQuery.toLowerCase()
@@ -211,9 +239,56 @@ export default function Sidebar() {
                 />
               ))}
             </ul>
+
+            {/* Direct Messages */}
+            <SectionHeader label="Direct Messages" onAdd={handleOpenDmPicker} />
+            <ul className="list-none mb-4">
+              {dms.length === 0 && (
+                <li className="px-2.5 py-2 text-[12px] text-ink-tertiary">
+                  No conversations yet
+                </li>
+              )}
+              {dms
+                .filter((d) => (d.peer?.name || '').toLowerCase().includes(query))
+                .map((d) => (
+                  <NavItem
+                    key={d.id}
+                    icon={
+                      <Avatar sx={{ width: 18, height: 18, fontSize: 9, fontWeight: 700, bgcolor: '#EEEDEA', color: 'text.secondary' }}>
+                        {(d.peer?.name || '?').charAt(0).toUpperCase()}
+                      </Avatar>
+                    }
+                    label={d.peer?.name || 'Unknown'}
+                    active={d.id === activeChatroomId && currentPath === R.CHAT_PAGE}
+                    unread={unreadChannels.includes(d.id)}
+                    onClick={() => handleSelectChatroom(d.id)}
+                  />
+                ))}
+            </ul>
           </div>
         </>
       )}
+
+      {/* Start-DM member picker */}
+      <Menu
+        anchorEl={dmPickerAnchor}
+        open={Boolean(dmPickerAnchor)}
+        onClose={() => setDmPickerAnchor(null)}
+        slotProps={{ paper: { sx: { minWidth: 200, maxHeight: 280 } } }}
+      >
+        {dmCandidates.length === 0 ? (
+          <MenuItem disabled>No other members</MenuItem>
+        ) : (
+          dmCandidates.map((m) => (
+            <MenuItem key={m.id} onClick={() => handleStartDm(m.id)}>
+              <Avatar sx={{ width: 22, height: 22, fontSize: 10, fontWeight: 600, mr: 1, bgcolor: '#EEEDEA', color: 'text.secondary' }}>
+                {(m.name || '?').charAt(0).toUpperCase()}
+              </Avatar>
+              {m.name || m.username}
+            </MenuItem>
+          ))
+        )}
+      </Menu>
       {!canViewChannels && <div className="flex-1" />}
 
       {/* Quick nav - pinned to bottom */}

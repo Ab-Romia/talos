@@ -11,6 +11,7 @@ const ACTIVE_CR_KEY = 'talos:activeChatroomId'
 function resetToInitial(state) {
   state.workspaces = []
   state.chatrooms = []
+  state.dms = []
   state.activeWorkspaceId = null
   state.activeChatroomId = null
   state.unreadChannels = []
@@ -21,6 +22,35 @@ function resetToInitial(state) {
     localStorage.removeItem(ACTIVE_CR_KEY)
   } catch {}
 }
+
+// Direct messages for the active workspace.
+export const loadDms = createAsyncThunk(
+  'workspace/loadDms',
+  async (workspaceId, { rejectWithValue }) => {
+    try {
+      const dms = await chatService.getDms(workspaceId)
+      return Array.isArray(dms) ? dms : []
+    } catch (err) {
+      return rejectWithValue(err.detail || 'Failed to load direct messages')
+    }
+  },
+)
+
+// Create-or-get a DM with a member and make it the active conversation.
+export const openDm = createAsyncThunk(
+  'workspace/openDm',
+  async ({ workspaceId, userId }, { rejectWithValue }) => {
+    try {
+      const dm = await chatService.openDm(workspaceId, userId)
+      // The backend joins live sockets into the new room, but reconnecting
+      // guarantees membership for this client even after socket hiccups.
+      reconnectSocket()
+      return dm
+    } catch (err) {
+      return rejectWithValue(err.detail || 'Could not open the conversation')
+    }
+  },
+)
 
 export const bootstrapWorkspaces = createAsyncThunk(
   'workspace/bootstrap',
@@ -118,6 +148,7 @@ const workspaceSlice = createSlice({
     // which silently broke document upload and any workspace-scoped action.
     activeWorkspaceId: (() => { try { return localStorage.getItem(ACTIVE_WS_KEY) } catch { return null } })(),
     activeChatroomId: (() => { try { return localStorage.getItem(ACTIVE_CR_KEY) } catch { return null } })(),
+    dms: [],
     unreadChannels: [],
     loading: false,
     error: null,
@@ -166,11 +197,27 @@ const workspaceSlice = createSlice({
         state.activeWorkspaceId = action.payload.workspaceId
         state.chatrooms = action.payload.chatrooms
         state.activeChatroomId = action.payload.chatroomId
+        state.dms = []
         try {
           localStorage.setItem(ACTIVE_WS_KEY, action.payload.workspaceId)
           if (action.payload.chatroomId)
             localStorage.setItem(ACTIVE_CR_KEY, action.payload.chatroomId)
         } catch {}
+      })
+      .addCase(loadDms.fulfilled, (state, action) => {
+        state.dms = action.payload
+      })
+      .addCase(openDm.fulfilled, (state, action) => {
+        const dm = action.payload
+        if (!state.dms.some((d) => d.id === dm.id)) state.dms.push(dm)
+        state.activeChatroomId = dm.id
+        state.unreadChannels = state.unreadChannels.filter((id) => id !== dm.id)
+        try {
+          localStorage.setItem(ACTIVE_CR_KEY, dm.id)
+        } catch {}
+      })
+      .addCase(openDm.rejected, (state, action) => {
+        state.error = action.payload
       })
       .addCase(createWorkspace.fulfilled, (state, action) => {
         const ws = action.payload

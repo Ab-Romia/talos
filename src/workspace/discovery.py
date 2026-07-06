@@ -41,6 +41,7 @@ def _serialize(db, ws: Workspace, accessible_channel_ids: set | None = None) -> 
     channels = db.scalars(
         select(Channel)
         .where(Channel.workspace_id == ws.id, Channel.deleted_at.is_(None))
+        .where(Channel.is_direct.is_(False))
         .order_by(Channel.created_at)
     ).all()
     if accessible_channel_ids is not None:

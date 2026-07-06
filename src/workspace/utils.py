@@ -18,7 +18,10 @@ def is_owner(user_id: UserIdDep,
         return workspace is not None and workspace.owner_id == user_id
     if channel_id is not None:
         channel = db.get(Channel, channel_id)
-        return channel is not None and channel.workspace.owner_id == user_id
+        if channel is None or channel.is_direct:
+            # Owning the workspace confers NO access to direct messages.
+            return False
+        return channel.workspace.owner_id == user_id
     return False
 
 

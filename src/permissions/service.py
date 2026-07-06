@@ -21,7 +21,18 @@ def user_perms(
         workspace_id: Annotated[uuid.UUID | None, Path(default_factory=lambda: None)],
         channel_id: Annotated[uuid.UUID | None, Path(default_factory=lambda: None)],
 ):
-    from workspace.model import Channel
+    from workspace.model import Channel, DMParticipant
+
+    # Direct messages bypass the role system entirely: the two participants
+    # hold every permission, everyone else (workspace owner included) holds
+    # none. Roles/overrides must never leak another member into a DM.
+    if channel_id is not None:
+        is_direct = db.scalar(select(Channel.is_direct).where(Channel.id == channel_id))
+        if is_direct:
+            member = db.get(DMParticipant, {"channel_id": channel_id, "user_id": user_id})
+            if member is not None:
+                return PermissionSet(0).as_owner(True)
+            return PermissionSet(0)
 
     zero_bits = BitString.from_int(0, length=cfg().auth.permission_bitstring_length)
     channel_override_deny = func.coalesce(Override.deny_mask, zero_bits)

@@ -50,6 +50,15 @@ class Workspace(Base):
     )
 
 
+class DMParticipant(Base):
+    """The two members of a direct-message conversation. Access to a DM channel
+    is granted by rows here and NOTHING else — roles (and even the workspace
+    owner) do not apply."""
+    __tablename__ = "dm_participants"
+    channel_id = mapped_column(ForeignKey("channels.id", ondelete="CASCADE"), primary_key=True)
+    user_id = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True)
+
+
 class Channel(Base):
     __tablename__ = "channels"
 
@@ -60,6 +69,12 @@ class Channel(Base):
     is_public: Mapped[bool] = mapped_column(default=True)
     is_muted: Mapped[bool] = mapped_column(default=False)
     is_archived: Mapped[bool] = mapped_column(default=False)
+
+    # Direct-message conversation between exactly two workspace members.
+    # dm_key = "min_uuid:max_uuid" makes the pair unique per workspace via the
+    # (name, workspace_id) constraint (name is set to the key on creation).
+    is_direct: Mapped[bool] = mapped_column(default=False)
+    dm_key: Mapped[str | None] = mapped_column(nullable=True, default=None)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column()
