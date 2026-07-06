@@ -19,28 +19,39 @@ def accessible_channel_ids(db, user_id: UUID, workspace_id: UUID) -> set[UUID]:
     return visible & ws_channels
 
 
-def accessible_file_ids(db, user_id: UUID, workspace_id: UUID) -> set[UUID]:
+def accessible_file_ids(db, user_id: UUID, workspace_id: UUID,
+                        channel_id: UUID | None = None) -> set[UUID]:
+    """
+    Files the AI may retrieve for a user asking in a given conversation.
+
+    Scope is deliberately narrow and matches what the user can see in the UI:
+      - workspace **documents** (File.channel_id IS NULL) — if the user may read
+        workspace files (owners always may), and
+      - the **current conversation's own attachments** (File.channel_id == channel_id)
+        — only if the user can access that channel/DM/group.
+
+    Nothing else: no other channels' attachments, and no owner "see everything"
+    bypass (which would otherwise leak other users' private DM/group files).
+    """
     from filesystem.model import File
     from permissions import user_perms, ScopedPermission
     from workspace.model import Workspace
+    from chat.realtime import _get_accessible_channels
 
     base = select(File.id).where(
         File.workspace_id == workspace_id,
         File.deleted_at.is_(None),
     )
+    conds = []
 
     ws = db.get(Workspace, workspace_id)
-    if ws is not None and ws.owner_id == user_id:
-        return set(db.scalars(base))
-
-    conds = []
-    channel_ids = accessible_channel_ids(db, user_id, workspace_id)
-    if channel_ids:
-        conds.append(File.channel_id.in_(channel_ids))
-
+    is_owner = ws is not None and ws.owner_id == user_id
     perms = user_perms(user_id=user_id, workspace_id=workspace_id, channel_id=None, db=db)
-    if ScopedPermission.from_str("files:read") in perms.iter(db):
+    if is_owner or ScopedPermission.from_str("files:read") in perms.iter(db):
         conds.append(File.channel_id.is_(None))
+
+    if channel_id is not None and channel_id in _get_accessible_channels(db, user_id):
+        conds.append(File.channel_id == channel_id)
 
     if not conds:
         return set()

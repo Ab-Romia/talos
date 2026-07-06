@@ -92,7 +92,7 @@ def sio_exc(func):
             return await func(*args, **kwargs)
         except Exception as exc:
             get_logger(__name__).exception("Error in Socket.IO handler", exc_info=exc)
-            return {"error": str(exc)}
+            return {"error": "Something went wrong. Please try again."}
 
     return wrapper
 
@@ -156,7 +156,7 @@ async def disconnect(sid: str, _) -> None:
 
 @sio.event
 @sio_exc
-@require_perms("message:send", "channel:view")
+@require_perms("channel.message:send", "channel:view")
 async def message(sid: str, data: dict[str, Any]):
     from chat import store_message
 
@@ -232,8 +232,14 @@ async def _notify_channel_members(channel_id: UUID, sender_id: UUID, content: st
             sender = db.get(User, sender_id)
             sender_name = (sender.name or sender.username) if sender else "Someone"
 
+            group_name = channel.description or "Group"
             if mentioned:
-                where = sender_name if channel.is_direct else f"{sender_name} mentioned you in #{channel.name}"
+                if channel.is_group:
+                    where = f"{sender_name} mentioned you in {group_name}"
+                elif channel.is_direct:
+                    where = sender_name
+                else:
+                    where = f"{sender_name} mentioned you in #{channel.name}"
                 await push_notification(
                     db=db,
                     user_ids=list(mentioned),
@@ -244,10 +250,16 @@ async def _notify_channel_members(channel_id: UUID, sender_id: UUID, content: st
                 )
 
             if recipients:
+                if channel.is_group:
+                    title = f"{sender_name} · {group_name}"
+                elif channel.is_direct:
+                    title = sender_name
+                else:
+                    title = f"#{channel.name}"
                 await push_notification(
                     db=db,
                     user_ids=recipients,
-                    title=sender_name if channel.is_direct else f"#{channel.name}",
+                    title=title,
                     body=body,
                     data={"channel_id": str(channel_id), "direct": channel.is_direct},
                     tags=[NotificationTag.SOCIAL],

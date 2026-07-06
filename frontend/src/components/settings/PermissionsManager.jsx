@@ -208,7 +208,7 @@ export default function PermissionsManager() {
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>{error}</Alert>}
 
-      <div className="flex gap-4 min-h-[400px]">
+      <div className="flex flex-col md:flex-row gap-4 md:min-h-[400px]">
         <RoleList
           roles={roles}
           selectedRoleId={selectedRoleId}

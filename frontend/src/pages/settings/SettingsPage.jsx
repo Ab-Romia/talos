@@ -33,10 +33,20 @@ import { chatService } from '../../services/chat'
 import { permissionsService } from '../../services/permissions'
 import PermissionsManager from '../../components/settings/PermissionsManager'
 import NotificationsSettingsTab from './NotificationsSettingsTab'
+import SidebarToggle from '../../components/layout/SidebarToggle'
 
 function TabPanel({ value, index: key, children }) {
   if (value !== key) return null
   return <div>{children}</div>
+}
+
+const CONNECTABLE_PROVIDERS = [
+  { key: 'google', label: 'Google', glyph: 'G' },
+  { key: 'github', label: 'GitHub', glyph: 'GH' },
+]
+
+function providerLabel(key) {
+  return CONNECTABLE_PROVIDERS.find((p) => p.key === key)?.label || key
 }
 
 function initialsOf(name) {
@@ -89,7 +99,7 @@ export default function SettingsPage() {
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
 
-  const { activeWorkspaceId, workspaces } = useSelector((s) => s.workspace)
+  const { activeWorkspaceId, workspaces, membersVersion } = useSelector((s) => s.workspace)
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) || null
   const isOwner = Boolean(activeWorkspace && user && activeWorkspace.owner_id === user.id)
 
@@ -112,6 +122,10 @@ export default function SettingsPage() {
   const [passkeyDialogOpen, setPasskeyDialogOpen] = useState(false)
   const [passkeyName, setPasskeyName] = useState('')
   const [passkeyPassword, setPasskeyPassword] = useState('')
+
+  const [connections, setConnections] = useState({})
+  const [connectingProvider, setConnectingProvider] = useState(null)
+  const [focusConnections, setFocusConnections] = useState(false)
 
   const getInitials = () => {
     const name = user?.name || user?.username || 'U'
@@ -153,6 +167,59 @@ export default function SettingsPage() {
   const safeTab = tab < tabs.length ? tab : 0
   const activeKey = tabs[safeTab]?.key || 'profile'
 
+  const loadConnections = useCallback(async () => {
+    try {
+      const res = await authService.getConnections()
+      setConnections(res && typeof res === 'object' ? res : {})
+    } catch {
+      // non-fatal — leave whatever we had
+    }
+  }, [])
+
+  useEffect(() => {
+    loadConnections()
+  }, [loadConnections])
+
+  // Surface the outcome of returning from a "Connect" OAuth redirect.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const connected = params.get('connected')
+    const connectError = params.get('connect_error')
+    if (!connected && !connectError) return
+    if (connected) {
+      showSnackbar(`${providerLabel(connected)} connected`)
+      loadConnections()
+    } else {
+      showSnackbar(`${providerLabel(connectError)} is already linked to another account`)
+    }
+    setFocusConnections(true)
+    params.delete('connected')
+    params.delete('connect_error')
+    const qs = params.toString()
+    window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''))
+  }, [loadConnections])
+
+  // Jump to the Security tab (where connected accounts live) after a connect.
+  useEffect(() => {
+    if (!focusConnections) return
+    const idx = tabs.findIndex((t) => t.key === 'security')
+    if (idx >= 0) {
+      setTab(idx)
+      setFocusConnections(false)
+    }
+  }, [focusConnections, tabs])
+
+  const handleConnectProvider = async (provider) => {
+    setConnectingProvider(provider)
+    try {
+      await authService.connectProvider(provider)
+      // navigates away on success; nothing further to do here
+    } catch (err) {
+      setConnectingProvider(null)
+      showSnackbar(err?.detail || `Could not connect ${providerLabel(provider)}`)
+    }
+  }
+
   const loadMemberRoles = useCallback(async () => {
     if (!activeWorkspaceId) return
     try {
@@ -181,7 +248,7 @@ export default function SettingsPage() {
       loadMembers()
       loadMemberRoles()
     }
-  }, [tab, loadMembers, loadMemberRoles])
+  }, [tab, loadMembers, loadMemberRoles, membersVersion])
 
   const handleInviteSend = async () => {
     const identifier = inviteIdentifier.trim()
@@ -263,8 +330,8 @@ export default function SettingsPage() {
       showSnackbar('Passwords do not match')
       return
     }
-    if (newPassword.length < 8) {
-      showSnackbar('New password must be at least 8 characters')
+    if (newPassword.length < 12) {
+      showSnackbar('New password must be at least 12 characters')
       return
     }
     const result = await dispatch(changePassword({ currentPassword, newPassword }))
@@ -343,13 +410,14 @@ export default function SettingsPage() {
 
   return (
     <>
-      <header className="h-14 bg-base border-b border-[rgba(28,27,26,0.10)] flex items-center px-6 shrink-0">
+      <header className="h-14 bg-base border-b border-[rgba(28,27,26,0.10)] flex items-center gap-2 px-3 sm:px-6 shrink-0">
+        <SidebarToggle />
         <h1 className="text-lg font-semibold text-ink tracking-tight">Settings</h1>
       </header>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-[680px] mx-auto px-6 py-8 w-full">
-          <Tabs value={safeTab} onChange={(_, v) => setTab(v)} sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+        <div className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-10 py-8">
+          <Tabs value={safeTab} onChange={(_, v) => setTab(v)} variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
             {tabs.map((t) => <Tab key={t.key} label={t.label} />)}
           </Tabs>
 
@@ -366,19 +434,17 @@ export default function SettingsPage() {
             </div>
 
             <h3 className="text-[15px] font-semibold text-ink mb-4">Personal information</h3>
-            <div className="grid grid-cols-2 gap-4 mb-8">
-              <div className="col-span-2">
-                <TextField label="Full name" value={user?.name || ''} fullWidth disabled />
-              </div>
-              <TextField label="Username" value={user?.username || ''} disabled />
-              <TextField label="Email" value={user?.email || ''} disabled />
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+              <TextField label="Full name" value={user?.name || ''} fullWidth disabled />
+              <TextField label="Username" value={user?.username || ''} fullWidth disabled />
+              <TextField label="Email" value={user?.email || ''} fullWidth disabled />
             </div>
 
             <h3 className="text-[15px] font-semibold text-ink mb-4">Change password</h3>
-            <div className="grid grid-cols-1 gap-4 mb-6">
-              <TextField label="Current password" type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
-              <TextField label="New password" type="password" placeholder="Min. 8 characters" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
-              <TextField label="Confirm new password" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+              <TextField label="Current password" type="password" fullWidth value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
+              <TextField label="New password" type="password" fullWidth placeholder="Min. 12 characters" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+              <TextField label="Confirm new password" type="password" fullWidth value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
             </div>
 
             {settingsError && (
@@ -499,7 +565,7 @@ export default function SettingsPage() {
           {/* Security Tab */}
           <TabPanel value={activeKey} index="security">
             {/* 2FA */}
-            <div className="bg-surface-1 border border-[rgba(28,27,26,0.06)] rounded-lg p-4 flex items-center justify-between mb-6">
+            <div className="bg-surface-1 border border-[rgba(28,27,26,0.06)] rounded-lg p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-lg bg-amber-subtle flex items-center justify-center text-amber">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -516,7 +582,7 @@ export default function SettingsPage() {
             </div>
 
             {/* Passkeys */}
-            <div className="bg-surface-1 border border-[rgba(28,27,26,0.06)] rounded-lg p-4 flex items-center justify-between mb-6">
+            <div className="bg-surface-1 border border-[rgba(28,27,26,0.06)] rounded-lg p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-lg bg-amber-subtle flex items-center justify-center text-amber">
                   <KeyRound size={20} />
@@ -541,9 +607,9 @@ export default function SettingsPage() {
             )}
 
             {/* Sessions */}
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
               <h3 className="text-[15px] font-semibold text-ink">Active sessions</h3>
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
                 {sessions.length > 1 && (
                   <Button
                     size="small"
@@ -774,24 +840,44 @@ export default function SettingsPage() {
 
             <h3 className="text-[15px] font-semibold text-ink mb-4">Connected accounts</h3>
             <div className="space-y-0">
-              <div className="flex items-center gap-3 py-3 border-b border-[rgba(28,27,26,0.06)]">
-                <div className="w-8 h-8 rounded-md bg-surface-2 flex items-center justify-center text-sm font-bold">G</div>
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-ink">Google</p>
-                </div>
-                <Button variant="text" size="small" color="primary" onClick={() => authService.googleLogin()}>
-                  Connect
-                </Button>
-              </div>
-              <div className="flex items-center gap-3 py-3">
-                <div className="w-8 h-8 rounded-md bg-surface-2 flex items-center justify-center text-sm font-bold">G</div>
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-ink">GitHub</p>
-                </div>
-                <Button variant="text" size="small" color="primary" onClick={() => authService.githubLogin()}>
-                  Connect
-                </Button>
-              </div>
+              {CONNECTABLE_PROVIDERS.map((provider, i) => {
+                const isConnected = Boolean(connections[provider.key])
+                const isBusy = connectingProvider === provider.key
+                return (
+                  <div
+                    key={provider.key}
+                    className={`flex items-center gap-3 py-3 ${
+                      i < CONNECTABLE_PROVIDERS.length - 1
+                        ? 'border-b border-[rgba(28,27,26,0.06)]'
+                        : ''
+                    }`}
+                  >
+                    <div className="w-8 h-8 rounded-md bg-surface-2 flex items-center justify-center text-sm font-bold">
+                      {provider.glyph}
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-ink">{provider.label}</p>
+                      <p className="text-xs text-ink-tertiary">
+                        {isConnected ? 'Linked to your account' : 'Not connected'}
+                      </p>
+                    </div>
+                    {isConnected ? (
+                      <Chip label="Connected" color="success" size="small" variant="outlined" />
+                    ) : (
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        color="primary"
+                        disabled={isBusy}
+                        startIcon={isBusy ? <CircularProgress size={14} color="inherit" /> : null}
+                        onClick={() => handleConnectProvider(provider.key)}
+                      >
+                        {isBusy ? 'Connecting…' : 'Connect'}
+                      </Button>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           </TabPanel>
 

@@ -73,7 +73,11 @@ class Channel(Base):
     # Direct-message conversation between exactly two workspace members.
     # dm_key = "min_uuid:max_uuid" makes the pair unique per workspace via the
     # (name, workspace_id) constraint (name is set to the key on creation).
+    # Group conversations set both is_direct and is_group: they reuse the DM
+    # participant/permission machinery (access is by DMParticipant rows only)
+    # but hold N members and carry a display name in `description`.
     is_direct: Mapped[bool] = mapped_column(default=False)
+    is_group: Mapped[bool] = mapped_column(default=False)
     dm_key: Mapped[str | None] = mapped_column(nullable=True, default=None)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())

@@ -166,9 +166,10 @@ def revoke_by_uid(user_id: uuid.UUID, db: DatabaseDep, except_id: uuid.UUID = No
 
 
 def get_by_uid(user_id: uuid.UUID, db: DatabaseDep):
-    sessions = db.scalars(
-        select(Session.id, Session.last_used_at, Session.user_agent)
+    # Materialized rows (db.execute, not db.scalars — scalars would drop all but
+    # the first column). Newest activity first.
+    return db.execute(
+        select(Session.id, Session.last_used_at, Session.user_agent, Session.created_at)
         .where(Session.user_id == user_id)
-    )
-
-    return sessions
+        .order_by(Session.last_used_at.desc())
+    ).all()

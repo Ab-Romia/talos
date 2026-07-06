@@ -136,7 +136,7 @@ def _generate(workspace_id: str, channel_id: UUID, question: str,
 
     with SessionLocal() as db:
         resolved, provenance = resolve_ai_config(_UUID(workspace_id), channel_id, db)
-        allowed_files = accessible_file_ids(db, user_id, _UUID(workspace_id))
+        allowed_files = accessible_file_ids(db, user_id, _UUID(workspace_id), channel_id=channel_id)
     rag = RAGChain(
         WORKSPACE_COLLECTION,
         config=resolved,

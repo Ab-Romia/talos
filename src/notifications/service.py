@@ -70,6 +70,15 @@ async def push_notification(
                     subscription=PushSubscriptionSchema.model_validate(sub)
                 )
 
+            # Fall back to email so an offline user still gets reached even
+            # without a push subscription.
+            email_delivery = NotificationDelivery(
+                notification_id=n.id,
+                channel=NotificationsChannel.EMAIL,
+            )
+            db.add(email_delivery)
+            await tasks.email.kiq(notification=NotificationSchema.model_validate(n))
+
         db.commit()
 
     return notifications

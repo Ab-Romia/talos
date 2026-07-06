@@ -62,13 +62,27 @@ export const chatService = {
     return api.get(`/api/workspaces/${workspaceId}/my_permissions`)
   },
 
-  // Direct messages: [{ id, is_direct, peer:{id,username,name}, created_at }]
+  // Conversations (DMs + groups):
+  //   DM    -> { id, is_direct:true, is_group:false, peer:{...}, members:[...] }
+  //   group -> { id, is_direct:true, is_group:true, name, members:[...] }
   getDms(workspaceId) {
     return api.get(`/api/workspaces/${workspaceId}/dms`)
   },
 
   openDm(workspaceId, userId) {
     return api.post(`/api/workspaces/${workspaceId}/dms`, { user_id: userId })
+  },
+
+  createGroup(workspaceId, name, userIds) {
+    return api.post(`/api/workspaces/${workspaceId}/dms/groups`, { name, user_ids: userIds })
+  },
+
+  addGroupMembers(workspaceId, channelId, userIds) {
+    return api.post(`/api/workspaces/${workspaceId}/dms/groups/${channelId}/members`, { user_ids: userIds })
+  },
+
+  leaveGroup(workspaceId, channelId) {
+    return api.delete(`/api/workspaces/${workspaceId}/dms/groups/${channelId}/members/me`)
   },
 
   // Chat attachments (docs / images / videos) — stored, never RAG-indexed.
@@ -81,5 +95,11 @@ export const chatService = {
   // → { url } short-lived signed streaming URL (media tags can't send auth headers)
   getAttachmentUrl(channelId, fileId) {
     return api.get(`/api/channels/${channelId}/attachments/${fileId}/url`)
+  },
+
+  // All files shared in a conversation, newest first (WhatsApp-style panel).
+  // Each item already includes a signed `url`.
+  getSharedFiles(channelId) {
+    return api.get(`/api/channels/${channelId}/attachments`)
   },
 }

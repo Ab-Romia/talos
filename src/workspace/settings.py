@@ -15,6 +15,27 @@ from database import DatabaseDep
 from workspace import require_perms, WorkspaceID
 from workspace.service import WorkspaceService, ChannelService
 
+NAME_MAX_LENGTH = 100
+DESCRIPTION_MAX_LENGTH = 1000
+
+
+def _clean_name(value: str, max_length: int = NAME_MAX_LENGTH) -> str:
+    value = (value or "").strip()
+    if not value:
+        raise HTTPException(status_code=400, detail="Name cannot be empty.")
+    if len(value) > max_length:
+        raise HTTPException(status_code=400, detail=f"Name must be at most {max_length} characters.")
+    return value
+
+
+def _clean_description(value, max_length: int = DESCRIPTION_MAX_LENGTH):
+    if value is None:
+        return None
+    value = value.strip()
+    if len(value) > max_length:
+        raise HTTPException(status_code=400, detail=f"Description must be at most {max_length} characters.")
+    return value
+
 
 class WorkspaceSettingsResponse(BaseModel):
     """Response model for workspace settings."""
@@ -91,7 +112,7 @@ def update_workspace_name(
 ):
     """Edit workspace name."""
     try:
-        workspace = WorkspaceService.update_workspace_name(db, workspace_id, name)
+        workspace = WorkspaceService.update_workspace_name(db, workspace_id, _clean_name(name))
         return workspace
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -109,7 +130,7 @@ def update_workspace_description(
 ):
     """Edit workspace description."""
     try:
-        workspace = WorkspaceService.update_workspace_description(db, workspace_id, description)
+        workspace = WorkspaceService.update_workspace_description(db, workspace_id, _clean_description(description))
         return workspace
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -161,6 +182,10 @@ def add_workspace_member(
     """Add a member to the workspace."""
     try:
         workspace = WorkspaceService.add_workspace_member(db, workspace_id, user_id)
+        from chat.sync import notify_workspace
+        notify_workspace(db, workspace_id, "workspaces", action="added",
+                         name=workspace.name, targets=[user_id])
+        notify_workspace(db, workspace_id, "members")
         # Return the added user
         for member in workspace.members:
             if member.id == user_id:
@@ -182,7 +207,12 @@ def remove_workspace_member(
 ):
     """Remove a member from the workspace."""
     try:
+        ws = WorkspaceService.get_workspace(db, workspace_id)
         WorkspaceService.remove_workspace_member(db, workspace_id, user_id)
+        from chat.sync import notify_workspace
+        notify_workspace(db, workspace_id, "workspaces", action="removed",
+                         name=ws.name if ws else None, targets=[user_id])
+        notify_workspace(db, workspace_id, "members")
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -198,7 +228,12 @@ def leave_workspace(
 ):
     """Leave the workspace."""
     try:
+        ws = WorkspaceService.get_workspace(db, workspace_id)
         WorkspaceService.leave_workspace(db, workspace_id, user_id)
+        from chat.sync import notify_workspace
+        notify_workspace(db, workspace_id, "workspaces", action="left",
+                         name=ws.name if ws else None, targets=[user_id])
+        notify_workspace(db, workspace_id, "members")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -214,7 +249,13 @@ def delete_workspace(
 ):
     """Delete workspace (Owner only)."""
     try:
+        from chat.sync import workspace_member_ids, notify_workspace_id
+        ws = WorkspaceService.get_workspace(db, workspace_id)
+        member_ids = workspace_member_ids(db, workspace_id)
+        ws_name = ws.name if ws else None
         WorkspaceService.delete_workspace(db, workspace_id)
+        notify_workspace_id(workspace_id, "workspaces", action="removed",
+                            name=ws_name, targets=member_ids)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -249,7 +290,9 @@ def rename_channel(
 ):
     """Rename channel."""
     try:
-        channel = ChannelService.rename_channel(db, channel_id, name)
+        channel = ChannelService.rename_channel(db, channel_id, _clean_name(name))
+        from chat.sync import notify_workspace
+        notify_workspace(db, channel.workspace_id, "channels", action="renamed", name=channel.name)
         return channel
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -267,7 +310,7 @@ def update_channel_description(
 ):
     """Edit channel description."""
     try:
-        channel = ChannelService.update_channel_description(db, channel_id, description)
+        channel = ChannelService.update_channel_description(db, channel_id, _clean_description(description))
         return channel
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

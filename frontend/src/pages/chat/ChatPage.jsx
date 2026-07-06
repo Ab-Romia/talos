@@ -12,7 +12,7 @@ import ListItem from '@mui/material/ListItem'
 import ListItemAvatar from '@mui/material/ListItemAvatar'
 import ListItemText from '@mui/material/ListItemText'
 import {
-  Search, Users, Bold, Code, ArrowUp, X, Sparkles, Bug, Reply, Paperclip, FileText,
+  Search, Users, Bold, Code, ArrowUp, X, Sparkles, Bug, Reply, Paperclip, FileText, FolderOpen,
 } from 'lucide-react'
 
 import { useSelector, useDispatch as useReduxDispatch } from 'react-redux'
@@ -25,6 +25,8 @@ import { RagTracePanel } from '../../components/chat/RagTracePanel'
 import { askService } from '../../services/ask'
 import { AiTypingIndicator } from '../../components/chat/AiTypingIndicator'
 import { ChatComposerField } from '../../components/chat/ChatComposerField'
+import SidebarToggle from '../../components/layout/SidebarToggle'
+import SharedFilesPanel from '../../components/chat/SharedFilesPanel'
 import { MentionPicker } from '../../components/chat/MentionPicker'
 import { RichMessageBody } from '../../components/chat/RichMessageBody'
 import { AttachmentView } from '../../components/chat/AttachmentView'
@@ -79,6 +81,7 @@ export default function ChatPage() {
   const [replyTo, setReplyTo] = useState(null) // { serverId, uiId, name, snippet }
   const [pendingAttachments, setPendingAttachments] = useState([]) // uploaded, not yet sent
   const [uploadingCount, setUploadingCount] = useState(0)
+  const [sharedFilesOpen, setSharedFilesOpen] = useState(false)
   const trackedMentionsRef = useRef([]) // [{ label, user_id }] inserted via the picker
   const attachInputRef = useRef(null)
 
@@ -89,6 +92,7 @@ export default function ChatPage() {
     dms,
     activeWorkspaceId: workspaceId,
     activeChatroomId: chatroomId,
+    membersVersion,
   } = useSelector((s) => s.workspace)
 
   const activeDm = useMemo(
@@ -200,7 +204,11 @@ export default function ChatPage() {
       return
     }
     const dm = dms.find((d) => d.id === chatroomId)
-    setChatroomName(dm ? (dm.peer?.name || 'Direct message') : '')
+    if (dm) {
+      setChatroomName(dm.is_group ? (dm.name || 'Group') : (dm.peer?.name || 'Direct message'))
+    } else {
+      setChatroomName('')
+    }
   }, [chatrooms, dms, chatroomId])
 
   // Clear messages when switching channels.
@@ -577,7 +585,8 @@ export default function ChatPage() {
   }, [workspaceId, chatroomId, showSnackbar])
 
   // Load members eagerly so display names are available for messages.
-  useEffect(() => { loadMembers() }, [loadMembers])
+  // `membersVersion` bumps when another user changes the roster.
+  useEffect(() => { loadMembers() }, [loadMembers, membersVersion])
 
   const handleHeaderButton = useCallback(
     (Icon, event) => {
@@ -640,17 +649,29 @@ export default function ChatPage() {
   return (
     <div className="flex flex-col h-full bg-base">
       {/* Header */}
-      <header className="h-14 bg-surface-1 border-b border-[rgba(28,27,26,0.08)] flex items-center justify-between px-5 shrink-0">
-        <div className="flex items-center gap-2.5">
-          <span className="w-2 h-2 bg-success rounded-full" />
-          <span className="text-[15px] font-semibold text-ink">
+      <header className="h-14 bg-surface-1 border-b border-[rgba(28,27,26,0.08)] flex items-center justify-between px-3 sm:px-5 shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <SidebarToggle />
+          <span className="w-2 h-2 bg-success rounded-full shrink-0" />
+          <span className="text-[15px] font-semibold text-ink truncate">
             {chatroomName ? (activeDm ? chatroomName : `# ${chatroomName}`) : 'Select a channel'}
           </span>
           {workspaceName && (
-            <span className="text-[12px] text-ink-tertiary">· {workspaceName}</span>
+            <span className="text-[12px] text-ink-tertiary shrink-0 hidden sm:inline">· {workspaceName}</span>
           )}
         </div>
         <div className="flex items-center gap-0.5">
+          {chatroomId && (
+            <Tooltip title="Shared files">
+              <IconButton
+                size="small"
+                onClick={() => setSharedFilesOpen(true)}
+                sx={{ color: 'text.secondary', '&:hover': { bgcolor: 'rgba(28,27,26,0.04)' } }}
+              >
+                <FolderOpen size={16} />
+              </IconButton>
+            </Tooltip>
+          )}
           {headerIcons.map((Icon, i) => (
             <IconButton
               key={i}
@@ -769,7 +790,7 @@ export default function ChatPage() {
 
       {/* Thread */}
       <div ref={threadRef} className="flex-1 overflow-y-auto">
-        <div className="max-w-[680px] mx-auto px-5 py-6">
+        <div className="max-w-[1000px] mx-auto px-4 sm:px-5 py-6">
           {/* Date divider */}
           <div className="flex items-center gap-4 mb-6">
             <span className="flex-1 h-px bg-[rgba(28,27,26,0.06)]" />
@@ -852,7 +873,7 @@ export default function ChatPage() {
                   <AttachmentView channelId={chatroomId} attachments={msg.attachments} />
                   {msg.trace && <RagTracePanel trace={msg.trace} />}
                 </div>
-                <div className="absolute -top-2.5 right-0 hidden group-hover:flex items-center bg-base border border-[rgba(28,27,26,0.10)] rounded-lg shadow-sm">
+                <div className="absolute -top-2.5 right-0 flex sm:hidden sm:group-hover:flex items-center bg-base border border-[rgba(28,27,26,0.10)] rounded-lg shadow-sm">
                   <Tooltip title="Reply">
                     <IconButton
                       size="small"
@@ -875,7 +896,7 @@ export default function ChatPage() {
       {/* Input */}
       {canSend ? (
       <div className="border-t border-[rgba(28,27,26,0.06)] bg-surface-1">
-        <div className="max-w-[680px] mx-auto px-5 py-4">
+        <div className="max-w-[1000px] mx-auto px-4 sm:px-5 py-4">
           <div className="relative bg-base border border-[rgba(28,27,26,0.10)] rounded-2xl p-3 px-4 flex flex-col gap-0 focus-within:border-amber focus-within:shadow-[0_0_0_3px_rgba(196,145,58,0.12)] transition-all">
             {mentionQuery && mentionCandidates.length > 0 && (
               <MentionPicker
@@ -1048,6 +1069,13 @@ export default function ChatPage() {
           </List>
         )}
       </Popover>
+
+      {/* Shared files panel (WhatsApp-style, newest first) */}
+      <SharedFilesPanel
+        channelId={chatroomId}
+        open={sharedFilesOpen}
+        onClose={() => setSharedFilesOpen(false)}
+      />
 
       {/* Snackbar */}
       <Snackbar

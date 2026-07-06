@@ -332,9 +332,15 @@ class RAGChain:
         self._fill_trace(prepared.question, prepared.history)
 
         if include_citations:
-            yield "\n\nSources:"
-            for citation in format_citations(self.retrieved_docs):
-                yield f"\n{citation}"
+            # Only surface a Sources section when actual source files backed the
+            # answer. retrieved_docs is file-only, so no file chunks => no
+            # citations => omit the footer entirely (chat-only / general answers
+            # must not print an empty or misleading "Sources:" line).
+            citations = list(format_citations(self.retrieved_docs))
+            if citations:
+                yield "\n\nSources:"
+                for citation in citations:
+                    yield f"\n{citation}"
 
     def stream_query(self, question: str, include_citations: bool = True):
         """Back-compat wrapper: prepare + stream in one sync generator (used by

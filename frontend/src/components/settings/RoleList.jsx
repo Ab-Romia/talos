@@ -41,7 +41,7 @@ export default function RoleList({ roles, selectedRoleId, baseRoleId, onSelect, 
   }
 
   return (
-    <div className="w-[250px] shrink-0 border border-[rgba(28,27,26,0.06)] rounded-lg overflow-hidden flex flex-col">
+    <div className="w-full md:w-[250px] shrink-0 border border-[rgba(28,27,26,0.06)] rounded-lg overflow-hidden flex flex-col">
       <div className="px-3 py-2 border-b border-[rgba(28,27,26,0.06)] bg-surface-1">
         <span className="text-[11px] font-semibold text-ink-tertiary uppercase tracking-[0.06em]">
           Roles

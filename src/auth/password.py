@@ -1,8 +1,9 @@
+import os
 import uuid
 from typing import Annotated
 
 import bcrypt
-from fastapi import Depends, APIRouter, Form
+from fastapi import Depends, APIRouter, Form, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select, or_, update
 
@@ -15,6 +16,23 @@ from .utils import errors, jwt
 from .utils.session import revoke_by_uid, SessionDep, NewSessionDep
 
 router = APIRouter()
+
+PASSWORD_MIN_LENGTH = 12
+PASSWORD_MAX_BYTES = 72  # bcrypt hard limit
+
+
+def validate_password(password: str) -> None:
+    """Enforce the password policy uniformly across signup / reset / change."""
+    if not password or len(password) < PASSWORD_MIN_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Password must be at least {PASSWORD_MIN_LENGTH} characters long.",
+        )
+    if len(password.encode("utf-8")) > PASSWORD_MAX_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password is too long.",
+        )
 
 
 @router.post("/")
@@ -61,7 +79,7 @@ def password_authenticate(
 
     session.sub = user.id
     if requires_otp:
-        session.requires_totp = True
+        session.requires_otp = True
 
 
 class ForgotPasswordClaims(jwt.BaseJWTClaims):
@@ -70,7 +88,7 @@ class ForgotPasswordClaims(jwt.BaseJWTClaims):
 
 
 @router.post("/forgot")
-def forgot_password_request(email: Annotated[str, Form()], db: DatabaseDep):
+async def forgot_password_request(email: Annotated[str, Form()], db: DatabaseDep):
     identity = db.execute(
         select(IdentityProvider)
         .where(IdentityProvider.issuer == Issuer.password)
@@ -94,13 +112,23 @@ def forgot_password_request(email: Annotated[str, Form()], db: DatabaseDep):
 
     token = jwt.create_token(claims)
 
-    send_email(email, "Password Reset {{token}}", token=token)
+    frontend_origin = os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173").rstrip("/")
+    reset_url = f"{frontend_origin}/reset-password?token={token}"
+    await send_email(
+        email,
+        "We received a request to reset your Talos password.\n\n"
+        "Use the link below to choose a new password:\n\n"
+        f"{reset_url}\n\n"
+        "If you didn't request this, you can safely ignore this email.",
+        subject="Reset your Talos password",
+    )
 
 
 @router.put("/reset")
 def forgot_password(reset_token: Annotated[str, Form()],
                     reset_password: Annotated[str, Form()],
                     db: DatabaseDep):
+    validate_password(reset_password)
     claims = jwt.verify_token(reset_token, return_model=ForgotPasswordClaims)
 
     db.execute(
@@ -108,6 +136,9 @@ def forgot_password(reset_token: Annotated[str, Form()],
         .where(IdentityProvider.id == claims.identity_provider_id)
         .values(data={"hash": hash_password(reset_password)})
     )
+    db.commit()
+
+    revoke_by_uid(claims.sub, db)
 
 
 @router.put("/change", dependencies=[Depends(sudo)])
@@ -116,6 +147,7 @@ def change_password(
         db: DatabaseDep,
         session: SessionDep
 ):
+    validate_password(new_password)
     db.execute(
         update(IdentityProvider)
         .where(IdentityProvider.user_id == session.sub,

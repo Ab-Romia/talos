@@ -1,7 +1,8 @@
 import uuid
+from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 from sqlalchemy import select, or_
 from sqlalchemy.exc import IntegrityError
 
@@ -15,6 +16,23 @@ from workspace.model import Workspace, Channel, WorkspaceMember
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
+# Every permission the app checks anywhere. All must be registered so
+# require_perms(...) can *represent* them (otherwise the check raises and 500s),
+# even when the permission is only ever held by owners (who bypass the bitfield).
+ALL_PERMS = [
+    ("workspace", "view"), ("workspace", "edit"), ("workspace", "delete"),
+    ("workspace.member", "view"), ("workspace.member", "manage"),
+    ("workspace.role", "view"), ("workspace.role", "manage"),
+    ("channel", "view"), ("channel", "create"), ("channel", "edit"),
+    ("channel", "delete"), ("channel", "manage"),
+    ("channel.member", "view_presence"), ("channel.member", "manage"),
+    ("channel.message", "send"), ("channel.message", "view_history"),
+    ("files", "read"), ("files", "write"), ("files", "create"),
+]
+
+# The subset granted to a new workspace's base "everyone" role. Admin
+# capabilities (edit/delete/manage) are intentionally NOT here — owners get them
+# via the owner bypass, and they can be granted to other roles explicitly.
 STANDARD_PERMS = [
     ("workspace", "view"), ("workspace.role", "view"), ("workspace.role", "manage"),
     ("channel", "view"),
@@ -25,16 +43,23 @@ STANDARD_PERMS = [
 DEFAULT_CHANNELS = ["general", "random"]
 
 
+def _strip_nonempty(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        raise ValueError("must not be blank")
+    return value
+
+
 class CreateWorkspaceRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
+    name: Annotated[str, AfterValidator(_strip_nonempty)] = Field(min_length=1, max_length=100)
 
 
 class CreateChannelRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
+    name: Annotated[str, AfterValidator(_strip_nonempty)] = Field(min_length=1, max_length=100)
 
 
 class AddMemberRequest(BaseModel):
-    identifier: str = Field(min_length=1, max_length=320)
+    identifier: Annotated[str, AfterValidator(_strip_nonempty)] = Field(min_length=1, max_length=320)
 
 
 def _serialize(db, ws: Workspace, accessible_channel_ids: set | None = None) -> dict:
@@ -86,8 +111,9 @@ def _require_owner(ws: Workspace, user: User):
 
 
 def _ensure_standard_perms(db) -> dict:
+    """Register every permission the app checks (idempotent). Returns the map."""
     perms = {}
-    for resource, action in STANDARD_PERMS:
+    for resource, action in ALL_PERMS:
         p = db.scalar(select(Permission).where(Permission.resource == resource, Permission.action == action))
         if p is None:
             p = Permission(resource=resource, action=action, allowed_scopes=[PermissionScope.ANY])
@@ -95,6 +121,13 @@ def _ensure_standard_perms(db) -> dict:
         perms[(resource, action)] = p
     db.commit()
     return perms
+
+
+def ensure_permissions_registered():
+    """Seed the permission registry at startup so checks never fail to represent."""
+    from database import SessionLocal
+    with SessionLocal() as db:
+        _ensure_standard_perms(db)
 
 
 def _link_member(db, workspace_id: uuid.UUID, base_role: Role, user: User):
@@ -135,7 +168,10 @@ def provision_workspace(db, owner: User, name: str) -> Workspace:
 
     _link_member(db, ws.id, base_role, owner)
 
-    for permission in perms.values():
+    for key in STANDARD_PERMS:
+        permission = perms.get(key)
+        if permission is None:
+            continue
         exists = db.scalar(
             select(RolePermission).where(
                 RolePermission.role_id == base_role.id,
@@ -206,6 +242,10 @@ def create_channel(workspace_id: uuid.UUID, payload: CreateChannelRequest, user:
     db.add(channel)
     db.commit()
     db.refresh(channel)
+
+    from chat.sync import notify_workspace
+    notify_workspace(db, ws.id, "channels", action="created", name=channel.name)
+
     return {"id": str(channel.id), "name": channel.name}
 
 
@@ -252,6 +292,10 @@ def add_member(workspace_id: uuid.UUID, payload: AddMemberRequest, user: UserDep
     base_role = db.get(Role, ws.id)
     _link_member(db, ws.id, base_role, target)
 
+    from chat.sync import notify_workspace
+    notify_workspace(db, ws.id, "workspaces", action="added", name=ws.name, targets=[target.id])
+    notify_workspace(db, ws.id, "members")
+
     return _member_dict(target, ws.owner_id)
 
 
@@ -275,3 +319,7 @@ def remove_member(workspace_id: uuid.UUID, member_id: uuid.UUID, user: UserDep, 
         )
     )
     db.commit()
+
+    from chat.sync import notify_workspace
+    notify_workspace(db, ws.id, "workspaces", action="removed", name=ws.name, targets=[member_id])
+    notify_workspace(db, ws.id, "members")

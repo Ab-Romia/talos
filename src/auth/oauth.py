@@ -80,10 +80,35 @@ class ConnectClaims(BaseJWTClaims):
     """Short-lived ticket authorizing a provider connection for a logged-in user."""
     user_id: UUIDType
     provider: str
+    origin: str = "documents"
+
+
+class _IdentityConflict(Exception):
+    """The provider identity is already linked to a different account."""
+
+
+# Where the OAuth callback sends the browser after a successful connect, keyed by
+# the origin recorded in the ticket. Whitelisted to avoid open-redirects.
+_CONNECT_REDIRECTS = {
+    "documents": "/documents?drive_connected=1",
+    "settings": "/settings?connected={provider}",
+}
+
+
+def _provider_from_iss(iss: str | None) -> str | None:
+    if not iss:
+        return None
+    low = iss.lower()
+    if "google" in low:
+        return "google"
+    if "github" in low:
+        return "github"
+    return None
 
 
 @router.post("/{provider}/connect")
-async def oauth_connect_ticket(provider: ProviderParam, session: SessionDep):
+async def oauth_connect_ticket(provider: ProviderParam, session: SessionDep,
+                               origin: str = "documents"):
     """
     Mint a ticket the SPA passes to the OAuth redirect so the resulting provider
     token is attached to the CURRENT account instead of switching identities.
@@ -93,9 +118,34 @@ async def oauth_connect_ticket(provider: ProviderParam, session: SessionDep):
     claims = ConnectClaims(
         user_id=session.sub,
         provider=provider,
+        origin=origin if origin in _CONNECT_REDIRECTS else "documents",
         exp=jwt.now() + timedelta(minutes=5),
     )
     return {"ticket": claims.encode()}
+
+
+@router.get("/connections")
+async def oauth_connections(session: SessionDep, db: DatabaseDep):
+    """Report which OAuth providers the current account is linked to."""
+    connected: set[str] = set()
+
+    for provider in db.scalars(
+        select(ProviderToken.provider).where(ProviderToken.user_id == session.sub)
+    ):
+        connected.add(provider)
+
+    identities = db.scalars(
+        select(IdentityProvider)
+        .where(IdentityProvider.user_id == session.sub)
+        .where(IdentityProvider.issuer == Issuer.oauth)
+        .where(IdentityProvider.deleted_at.is_(None))
+    )
+    for ident in identities:
+        mapped = _provider_from_iss((ident.data or {}).get("iss"))
+        if mapped:
+            connected.add(mapped)
+
+    return {name: (name in connected) for name in cfg().auth.oauth_clients.keys()}
 
 
 @router.get("/{provider}")
@@ -104,12 +154,14 @@ async def oauth_login(provider: ProviderParam, request: Request, session: Unveri
     client = oauth.create_client(provider)
 
     connect_uid: uuid.UUID | None = None
+    connect_origin: str = "documents"
     if connect:
         try:
             ticket = ConnectClaims.decode(connect)
             if ticket.provider != provider:
                 raise ValueError("Ticket provider mismatch")
             connect_uid = ticket.user_id
+            connect_origin = ticket.origin
         except Exception as e:
             logger.warning(f"OAuth {provider} connect ticket rejected: {e!r}")
             raise _oauth_failed("failed")
@@ -130,6 +182,7 @@ async def oauth_login(provider: ProviderParam, request: Request, session: Unveri
         session.model_extra.update(request.session or {})
         if connect_uid is not None:
             session.model_extra["_connect_uid"] = str(connect_uid)
+            session.model_extra["_connect_origin"] = connect_origin
         session._modified = True
 
         return res
@@ -145,6 +198,7 @@ async def oauth_callback(provider: ProviderParam,
     client: StarletteOAuth2App = oauth.create_client(provider)
 
     raw_connect_uid = session.model_extra.pop("_connect_uid", None)
+    connect_origin = session.model_extra.pop("_connect_origin", "documents")
 
     try:
         # authlib expects a session dict in the scope
@@ -159,12 +213,21 @@ async def oauth_callback(provider: ProviderParam,
         raise _oauth_failed("failed")
 
     if raw_connect_uid is not None:
-        # Connect flow: attach the provider token to the account that minted the
-        # ticket. No identity creation, no account switching.
+        # Connect flow: link the provider to the account that minted the ticket.
+        # No account switching. Records an identity so the linkage is reportable
+        # (and re-usable for sign-in), and persists the API token where we keep
+        # one (google/Drive).
         connect_uid = uuid.UUID(raw_connect_uid)
         session.sub = connect_uid
+        try:
+            await _link_provider_identity(db, connect_uid, provider, client, token)
+        except _IdentityConflict:
+            return RedirectResponse(
+                url=_frontend(f"/settings?connect_error={provider}"),
+                status_code=status.HTTP_303_SEE_OTHER)
         _persist_provider_token(db, connect_uid, provider, token)
-        return RedirectResponse(url=_frontend("/documents?drive_connected=1"),
+        template = _CONNECT_REDIRECTS.get(connect_origin, _CONNECT_REDIRECTS["documents"])
+        return RedirectResponse(url=_frontend(template.format(provider=provider)),
                                 status_code=status.HTTP_303_SEE_OTHER)
 
     try:
@@ -232,6 +295,44 @@ async def oauth_callback(provider: ProviderParam,
     _persist_provider_token(db, user.id, provider, token)
 
     return RedirectResponse(url=_frontend("/?oauth_success=1"), status_code=status.HTTP_303_SEE_OTHER)
+
+
+async def _link_provider_identity(db, user_id, provider: str,
+                                  client: StarletteOAuth2App, token: dict):
+    """
+    Record an OIDC identity for the connected provider under ``user_id`` so the
+    linkage is reportable and re-usable for sign-in. Idempotent for the same
+    account; raises :class:`_IdentityConflict` when the identity already belongs
+    to a different account.
+    """
+    try:
+        match provider:
+            case "google":
+                info = OIDC.model_validate(token["userinfo"])
+            case "github":
+                res = await client.get("/user", token=token)
+                info = OIDC.from_github(res.json())
+            case _:
+                return
+    except (ValidationError, KeyError):
+        return
+
+    existing = db.scalar(
+        select(IdentityProvider)
+        .where(IdentityProvider.issuer == Issuer.oauth)
+        .where(IdentityProvider.data["sub"].as_string() == info.sub)
+    )
+    if existing is not None:
+        if existing.user_id != user_id:
+            raise _IdentityConflict()
+        return
+
+    db.add(IdentityProvider(
+        user_id=user_id,
+        issuer=Issuer.oauth,
+        data=info.model_dump(include={"sub", "iss"}),
+    ))
+    db.commit()
 
 
 # TODO: this should be a separate opt-in

@@ -8,6 +8,7 @@ from starlette.responses import StreamingResponse
 
 from auth.dependencies import UserIdDep
 from config import global_rag_config
+from utils.logger import get_logger
 from workspace import require_perms
 
 router = APIRouter(prefix="/workspaces/{workspace_id}/ai", tags=["ai"])
@@ -32,22 +33,20 @@ def _build_chain(
 ):
     from langchain_core.messages import AIMessage, HumanMessage
     from database import SessionLocal
-    from rag.access import accessible_file_ids, accessible_channel_ids
+    from rag.access import accessible_file_ids
     from rag.ai_settings import resolve_ai_config
     from rag.rag_chain import RAGChain
     from rag.vector_store import WORKSPACE_COLLECTION
 
-    # Honor per-workspace ai_settings AND scope retrieval to what the caller
-    # may actually access (files:read on channel-restricted files, channel:view
-    # for chat recall).
+    # The standalone Talos AI page is a workspace-level assistant: it is grounded
+    # in the workspace documents plus this AI conversation's own history — nothing
+    # else. It deliberately does NOT recall other channels'/DMs' chat or files.
     with SessionLocal() as db:
         resolved, provenance = resolve_ai_config(workspace_id, None, db)
         allowed_files = accessible_file_ids(db, user_id, workspace_id)
-        allowed_channels = accessible_channel_ids(db, user_id, workspace_id)
 
     if requested_file_ids:
         allowed_files = allowed_files & set(requested_file_ids)
-        allowed_channels = set()
 
     def _strip_citations(text: str) -> str:
         return text.split("\n\nSources:", 1)[0].strip()
@@ -64,7 +63,6 @@ def _build_chain(
         config_provenance=provenance,
         workspace_id=str(workspace_id),
         file_ids=[str(f) for f in allowed_files],
-        channel_ids=[str(c) for c in allowed_channels],
         chat_history=chat_history,
     )
 
@@ -151,7 +149,8 @@ async def query(workspace_id: uuid.UUID, req: AiQueryRequest, user_id: UserIdDep
                 answer_parts.append(chunk)
                 yield chunk
         except Exception as exc:
-            failure = f"\n\n[The assistant could not complete the request: {type(exc).__name__}: {exc}]"
+            get_logger(__name__).exception("AI stream failed", exc_info=exc)
+            failure = "\n\n[The assistant could not complete the request. Please try again.]"
             answer_parts.append(failure)
             yield failure
         finally:

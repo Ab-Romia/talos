@@ -1,3 +1,4 @@
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -58,11 +59,21 @@ async def get_upload_url(
 
     detected_mime = magic.from_buffer(payload.header, mime=True)
 
+    if detected_mime not in cfg().files.allowed_mime_types:
+        raise HTTPException(
+            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            f"File type '{detected_mime}' is not allowed.",
+        )
+
+    # Never trust the client filename for the object key — strip any path so it
+    # can't escape the intended prefix.
+    safe_filename = os.path.basename((payload.filename or "").strip()) or "unnamed"
+
     db_file = File(
         channel_id=payload.channel_id,
         workspace_id=payload.workspace_id,
         uploader_id=payload.user_id,
-        filename=payload.filename or "unnamed",
+        filename=safe_filename,
         content_type=detected_mime,
         size_bytes=payload.size,
         sha256checksum=payload.sha256checksum,

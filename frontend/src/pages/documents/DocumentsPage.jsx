@@ -23,6 +23,7 @@ import { Plus, Search, Upload, Grid3X3, List, FileText, Filter, Download, Cloud 
 import { documentService } from '../../services/documents'
 import { DriveImportDialog } from '../../components/documents/DriveImportDialog'
 import { usePermissions } from '../../contexts/PermissionsContext'
+import SidebarToggle from '../../components/layout/SidebarToggle'
 
 const typeColors = { PDF: '#C4462A', DOCX: '#2E6FC4', TXT: '#6B6966', MD: '#3D8C5C' }
 
@@ -204,7 +205,8 @@ export default function DocumentsPage() {
   if (permissionsLoaded && !canRead) {
     return (
       <div className="flex flex-col h-full bg-base">
-        <header className="h-14 bg-base border-b border-[rgba(28,27,26,0.10)] flex items-center px-6 shrink-0">
+        <header className="h-14 bg-base border-b border-[rgba(28,27,26,0.10)] flex items-center gap-2 px-3 sm:px-6 shrink-0">
+          <SidebarToggle />
           <h1 className="text-lg font-semibold text-ink tracking-tight">Documents</h1>
         </header>
         <p className="text-center text-sm text-ink-tertiary py-10 px-4">
@@ -227,17 +229,21 @@ export default function DocumentsPage() {
       />
 
       {/* Header */}
-      <header className="h-14 bg-base border-b border-[rgba(28,27,26,0.10)] flex items-center justify-between px-6 shrink-0">
-        <h1 className="text-lg font-semibold text-ink tracking-tight">Documents</h1>
+      <header className="min-h-14 bg-base border-b border-[rgba(28,27,26,0.10)] flex items-center justify-between gap-2 px-3 sm:px-6 py-2 shrink-0 flex-wrap">
+        <div className="flex items-center gap-2 min-w-0">
+          <SidebarToggle />
+          <h1 className="text-lg font-semibold text-ink tracking-tight">Documents</h1>
+        </div>
         {canCreate && (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Button
             variant="outlined"
             startIcon={<Cloud size={16} />}
             size="medium"
             onClick={() => setDriveOpen(true)}
           >
-            Import from Drive
+            <span className="hidden sm:inline">Import from Drive</span>
+            <span className="sm:hidden">Import</span>
           </Button>
           <Button
             variant="contained"
@@ -245,7 +251,8 @@ export default function DocumentsPage() {
             size="medium"
             onClick={() => fileInputRef.current?.click()}
           >
-            Upload documents
+            <span className="hidden sm:inline">Upload documents</span>
+            <span className="sm:hidden">Upload</span>
           </Button>
         </div>
         )}
@@ -261,11 +268,11 @@ export default function DocumentsPage() {
         }}
       />
 
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-3 sm:p-6">
         {/* Drop zone */}
         {canCreate && (
         <div
-          className={`border-2 border-dashed rounded-xl bg-surface-2 p-10 flex flex-col items-center justify-center text-center mb-8 cursor-pointer transition-colors ${
+          className={`border-2 border-dashed rounded-xl bg-surface-2 p-6 sm:p-10 flex flex-col items-center justify-center text-center mb-8 cursor-pointer transition-colors ${
             dragOver
               ? 'border-amber bg-amber-subtle'
               : 'border-[rgba(28,27,26,0.10)] hover:border-amber hover:bg-amber-subtle'
@@ -285,8 +292,8 @@ export default function DocumentsPage() {
         )}
 
         {/* Toolbar */}
-        <div className="flex items-center justify-between mb-5">
-          <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-5">
+          <div className="flex items-center gap-3 flex-wrap flex-1 min-w-0">
             <TextField
               size="small"
               placeholder="Search documents..."
@@ -299,7 +306,7 @@ export default function DocumentsPage() {
                   ),
                 },
               }}
-              sx={{ width: 260, '& .MuiOutlinedInput-root': { height: 32, fontSize: 13 } }}
+              sx={{ width: { xs: '100%', sm: 260 }, '& .MuiOutlinedInput-root': { height: 32, fontSize: 13 } }}
             />
             <Button
               variant="outlined"

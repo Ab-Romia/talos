@@ -22,23 +22,37 @@ function captureSessionToken(res) {
   if (t) setSessionToken(t)
 }
 
+// A user-safe fallback for an HTTP status, used whenever the server didn't
+// return a clean human-readable message. Never surface raw status text, HTML
+// error pages, or internal payloads to the user.
+function friendlyForStatus(status) {
+  if (status >= 500 || status === 0) return 'Something went wrong. Please try again.'
+  if (status === 401) return 'Your session has expired. Please sign in again.'
+  if (status === 403) return 'You don’t have permission to do that.'
+  if (status === 404) return 'We couldn’t find what you were looking for.'
+  if (status === 429) return 'Too many requests — please slow down and try again.'
+  return 'Something went wrong. Please try again.'
+}
+
 // FastAPI errors come back as {detail: "..."} (HTTPException) OR
 // {detail: [{type, loc, msg, input}, ...]} (422 validation). Always reduce to a
-// human-readable string so it can be safely rendered in the UI (never an object).
+// human-readable string so it can be safely rendered in the UI (never an object,
+// raw JSON, or internal payload).
 function normalizeDetail(detail, fallback) {
   if (detail == null) return fallback
   if (typeof detail === 'string') return detail
   if (Array.isArray(detail)) {
-    return detail
+    const parts = detail
       .map((d) => {
         if (typeof d === 'string') return d
         const loc = Array.isArray(d?.loc) ? d.loc.filter((x) => x !== 'body').join('.') : ''
-        return loc ? `${loc}: ${d?.msg}` : (d?.msg || JSON.stringify(d))
+        return loc && d?.msg ? `${loc}: ${d.msg}` : (d?.msg || '')
       })
-      .join('; ')
+      .filter(Boolean)
+    return parts.length ? parts.join('; ') : fallback
   }
-  if (typeof detail === 'object') return detail.msg || detail.message || JSON.stringify(detail)
-  return String(detail)
+  if (typeof detail === 'object') return detail.msg || detail.message || fallback
+  return fallback
 }
 
 async function request(path, options = {}) {
@@ -66,10 +80,13 @@ async function request(path, options = {}) {
   captureSessionToken(res)
 
   if (!res.ok) {
-    const payload = await res.json().catch(() => ({ detail: res.statusText }))
+    const payload = await res.json().catch(() => ({}))
+    const fallback = friendlyForStatus(res.status)
     // keep the raw payload under `errors` for field-level handling, but always
-    // expose `detail` as a string so UI code can render it directly.
-    throw { status: res.status, ...payload, errors: payload.detail, detail: normalizeDetail(payload.detail, res.statusText) }
+    // expose `detail` as a user-safe string. 5xx bodies are never surfaced
+    // verbatim — they get a generic message.
+    const detail = res.status >= 500 ? fallback : normalizeDetail(payload.detail, fallback)
+    throw { status: res.status, ...payload, errors: payload.detail, detail }
   }
 
   if (res.status === 204 || res.headers.get('content-length') === '0') {
@@ -132,8 +149,10 @@ export const api = {
     })
     captureSessionToken(res)
     if (!res.ok) {
-      const payload = await res.json().catch(() => ({ detail: res.statusText }))
-      throw { status: res.status, ...payload, errors: payload.detail, detail: normalizeDetail(payload.detail, res.statusText) }
+      const payload = await res.json().catch(() => ({}))
+      const fallback = friendlyForStatus(res.status)
+      const detail = res.status >= 500 ? fallback : normalizeDetail(payload.detail, fallback)
+      throw { status: res.status, ...payload, errors: payload.detail, detail }
     }
     return true
   },

@@ -134,6 +134,10 @@ def delete_workspace_channel(
         if channel.workspace_id != workspace_id:
             raise ValueError("Channel does not belong to this workspace")
 
+        name = channel.name
         ChannelService.delete_channel(db, channel_id)
+
+        from chat.sync import notify_workspace
+        notify_workspace(db, workspace_id, "channels", action="deleted", name=name)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

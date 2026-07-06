@@ -201,7 +201,7 @@ async def ask_question(channel_id: UUID, body: AskRequest, session: SessionDep):
         from database import SessionLocal
         from rag.access import accessible_file_ids
         with SessionLocal() as db:
-            return accessible_file_ids(db, user_id, workspace_id)
+            return accessible_file_ids(db, user_id, workspace_id, channel_id=channel_id)
 
     allowed = await asyncio.to_thread(_resolve_allowed_files)
     if body.file_ids:

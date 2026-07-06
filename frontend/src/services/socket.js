@@ -32,12 +32,21 @@ export function getSocket() {
   return socket
 }
 
-// Force a fresh connection — used after creating a workspace/channel so the
-// backend re-computes and re-joins the socket into the new channel:{id} rooms
-// (rooms are only joined at connect time).
+// Re-run the handshake so the backend re-computes room membership (rooms are
+// only joined at connect time) — used after workspace/channel/DM/permission
+// changes. This deliberately does NOT tear the socket down: manual
+// disconnect()+connect() preserves every registered listener, so chat,
+// notification and sync handlers keep working across the reconnect.
 export function reconnectSocket() {
-  disconnectSocket()
-  return getSocket()
+  const s = getSocket()
+  if (!s) return null
+  try {
+    s.disconnect()
+    s.connect()
+  } catch {
+    /* socket gone */
+  }
+  return s
 }
 
 export function disconnectSocket() {
@@ -89,6 +98,21 @@ export function onAiTyping(handler) {
   return () => {
     try {
       s.off('ai_typing', handler)
+    } catch {
+      /* socket gone */
+    }
+  }
+}
+
+// Workspace-level realtime sync: membership, channel-list, DM and permission
+// changes made by other users. Payload: { resource, workspace_id, action?, name? }.
+export function onWorkspaceSync(handler) {
+  const s = getSocket()
+  if (!s) return () => {}
+  s.on('workspace_sync', handler)
+  return () => {
+    try {
+      s.off('workspace_sync', handler)
     } catch {
       /* socket gone */
     }

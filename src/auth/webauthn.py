@@ -1,3 +1,4 @@
+import os
 from datetime import timedelta
 from typing import Annotated
 
@@ -21,11 +22,14 @@ router = APIRouter()
 
 
 def _rp_id() -> str:
+    # The registrable domain (no scheme/port). Bare "localhost" is valid.
     return cfg().app_host
 
 
 def _origin() -> str:
-    return cfg().app_host
+    # The full web origin the ceremony runs in — the frontend page, not the API
+    # host. The browser stamps clientDataJSON.origin with this exact value.
+    return os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173").rstrip("/")
 
 
 class WebAuthnChallengeClaims(BaseJWTClaims):
@@ -42,7 +46,7 @@ async def generate_passkey_new(user: UserDep, db: DatabaseDep):
 
     # For registration (authenticated user): generate registration options
     credentials = db.scalars(
-        select(IdentityProvider.data["credential_id"])
+        select(IdentityProvider.data["credential_id"].as_string())
         .where(IdentityProvider.issuer == Issuer.passkey)
         .where(IdentityProvider.user_id == user.id)
     ).all()

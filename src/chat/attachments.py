@@ -90,6 +90,43 @@ async def upload_attachment(channel_id: UUID, file: UploadFile, user: UserDep, d
     return attachment_dict(record)
 
 
+def _is_previewable(content_type: str | None) -> bool:
+    f = cfg().files
+    ct = content_type or ""
+    return ct in set(f.image_mime_types) or ct in set(f.video_mime_types)
+
+
+@attachments.get("/attachments", dependencies=[require("channel:view")])
+async def list_shared_files(channel_id: UUID, user: UserDep, db: DatabaseDep):
+    """Every file shared in this conversation, newest first (WhatsApp-style).
+    Access is `channel:view`, so DM/group participants — and only them — see it.
+    Each entry carries a short-lived signed URL for viewing/downloading."""
+    from auth.model import User
+
+    rows = db.execute(
+        select(File, User.name, User.username)
+        .join(User, User.id == File.uploader_id, isouter=True)
+        .where(
+            File.channel_id == channel_id,
+            File.deleted_at.is_(None),
+        )
+        .order_by(File.created_at.desc(), File.id.desc())
+    ).all()
+
+    items = []
+    for f, uploader_name, uploader_username in rows:
+        token = MediaClaims(file_id=f.id, exp=jwt.now() + timedelta(hours=2)).encode()
+        items.append({
+            **attachment_dict(f),
+            "url": f"/api/media?token={token}",
+            "previewable": _is_previewable(f.content_type),
+            "uploader": (uploader_name or uploader_username) if (uploader_name or uploader_username) else None,
+            "uploaded_by_me": f.uploader_id == user.id,
+            "created_at": f.created_at.isoformat() if f.created_at else None,
+        })
+    return items
+
+
 @attachments.get("/attachments/{file_id}/url", dependencies=[require("channel:view")])
 async def get_attachment_url(channel_id: UUID, file_id: UUID, db: DatabaseDep):
     """Mint a short-lived streaming URL for an attachment in this channel."""
@@ -161,11 +198,16 @@ async def stream_media(token: str, db: DatabaseDep,
                 remaining -= len(chunk)
                 yield chunk
 
+    # Sanitize the filename before it goes into a response header (strip quotes
+    # and control chars that would allow header injection / break parsing).
+    safe_name = "".join(c for c in (record.filename or "file") if c.isprintable() and c not in '"\\').strip() or "file"
     headers = {
         "Accept-Ranges": "bytes",
         "Content-Length": str(length),
-        "Content-Disposition": f'inline; filename="{record.filename}"',
+        "Content-Disposition": f'inline; filename="{safe_name}"',
         "Cache-Control": "private, max-age=3600",
+        # Never let the browser MIME-sniff a stored file into something executable.
+        "X-Content-Type-Options": "nosniff",
     }
     if rng:
         headers["Content-Range"] = f"bytes {start}-{end}/{size}"

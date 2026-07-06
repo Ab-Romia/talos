@@ -1,5 +1,6 @@
 """Authentication-related endpoints."""
 import os
+import re
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Annotated, Literal
@@ -18,7 +19,7 @@ from utils.ratelimit import email_ratelimit
 from .dependencies import sudo, UserDep
 from .model import User
 from .oauth import router as oauth_router
-from .password import create_password_identity, hash_password
+from .password import create_password_identity, hash_password, validate_password
 from .password import router as pass_router
 from .totp import router as totp_router
 from .utils import jwt
@@ -32,6 +33,9 @@ router.include_router(oauth_router, prefix="/oauth")
 router.include_router(webauthn_router, prefix="/passkey")
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
 class InitSignupClaims(jwt.BaseJWTClaims):
     email: str
 
@@ -42,6 +46,11 @@ class InitSignupClaims(jwt.BaseJWTClaims):
 async def initiate_signup(email: Annotated[str, Form()], db: DatabaseDep):
     # TODO:
     #  - Captcha
+
+    email = (email or "").strip()
+    if len(email) > 254 or not _EMAIL_RE.match(email):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Please enter a valid email address.")
 
     try:
         with db.begin_nested():
@@ -114,12 +123,19 @@ def complete_signup(
 ):
     claims = jwt.verify_token(email_token, return_model=InitSignupClaims)
 
+    username = (username or "").strip()
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9-]{3,31}$", username):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username must be 4–32 characters, start with a letter, and use only letters, numbers, and hyphens.",
+        )
+    if name is not None:
+        name = name.strip()[:80] or None
+
     for auth_method in auth_info:
         match auth_method:
             case PasswordAuth(password=password):
-                if len(password) < 12:
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                                        detail="Password must be at least 8 characters long")
+                validate_password(password)
             case PasskeyAuth():
                 pass  # TODO: implement passkey validation
             case OtpAuth():
@@ -191,9 +207,20 @@ async def activate_sudo(session: s.SessionDep,
     session.sudo_exp = datetime.now(timezone.utc) + cfg().auth.sudo_max_age
 
 
+def _serialize_session(row, current_jti) -> dict:
+    return {
+        "id": str(row.id),
+        "last_used_at": row.last_used_at.isoformat() if row.last_used_at else None,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "user_agent": row.user_agent,
+        "current": row.id == current_jti,
+    }
+
+
 @router.get("/sessions", dependencies=[Depends(sudo)])
-async def get_session(user: UserDep, db: DatabaseDep):
-    s.get_by_uid(user.id, db)
+async def get_session(user: UserDep, db: DatabaseDep, session: s.SessionDep):
+    rows = s.get_by_uid(user.id, db)
+    return [_serialize_session(r, session.jti) for r in rows]
 
 
 @router.delete("/sessions", dependencies=[Depends(sudo)])
@@ -202,12 +229,10 @@ async def revoke_current_token(user: UserDep, db: DatabaseDep):
 
 
 @router.get("/sessions/{session_id}", dependencies=[Depends(sudo)])
-async def get_session_by_id(session_id: UUID, user: UserDep, db: DatabaseDep):
-    sessions = s.get_by_uid(user.id, db)
-
-    for session in sessions:
-        if session.id == session_id:
-            return session
+async def get_session_by_id(session_id: UUID, user: UserDep, db: DatabaseDep, session: s.SessionDep):
+    for row in s.get_by_uid(user.id, db):
+        if row.id == session_id:
+            return _serialize_session(row, session.jti)
 
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                         detail="Session not found")

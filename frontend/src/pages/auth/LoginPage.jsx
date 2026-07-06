@@ -88,7 +88,7 @@ export default function LoginPage() {
       </div>
 
       {/* Right Form Panel */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-12 bg-base">
+      <div className="w-full lg:w-1/2 flex items-center justify-center p-6 sm:p-12 bg-base">
         {requiresOtp ? (
           <form onSubmit={handleVerifyOtp} className="w-full max-w-[400px]">
             <div className="flex lg:hidden items-center gap-3 mb-8 justify-center">

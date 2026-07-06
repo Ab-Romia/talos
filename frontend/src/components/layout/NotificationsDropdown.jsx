@@ -49,7 +49,7 @@ export default function NotificationsDropdown({ anchorEl, open, onClose }) {
       slotProps={{
         paper: {
           className:
-            'mt-2 w-[380px] max-h-[480px] flex flex-col bg-surface-2 border border-[rgba(28,27,26,0.08)] rounded-lg shadow-lg overflow-hidden',
+            'mt-2 w-[min(380px,calc(100vw-24px))] max-h-[480px] flex flex-col bg-surface-2 border border-[rgba(28,27,26,0.08)] rounded-lg shadow-lg overflow-hidden',
         },
       }}
     >

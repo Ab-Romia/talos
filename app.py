@@ -26,15 +26,30 @@ templates = Jinja2Templates(directory="frontend/templates")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import asyncio
     from chat.storage import bind_chat_storage, DatabaseStorageBackend
+    from chat.sync import bind_loop
     from broker import broker
     from database import Base, engine
+
+    bind_loop(asyncio.get_running_loop())
 
     with Session(engine) as session:
         session.execute(text("CREATE EXTENSION IF NOT EXISTS citext;"))
         session.commit()
 
     Base.metadata.create_all(engine)
+
+    # create_all never alters existing tables; patch columns added after a
+    # table was first created so long-lived databases stay in sync.
+    with Session(engine) as session:
+        session.execute(text(
+            "ALTER TABLE channels ADD COLUMN IF NOT EXISTS is_group boolean NOT NULL DEFAULT false"
+        ))
+        session.commit()
+
+    from workspace.discovery import ensure_permissions_registered
+    ensure_permissions_registered()
 
     bind_chat_storage(DatabaseStorageBackend())
 

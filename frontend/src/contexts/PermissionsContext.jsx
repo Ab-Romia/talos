@@ -13,6 +13,7 @@ const PermissionsContext = createContext({
 export function PermissionsProvider({ children }) {
   const { activeWorkspaceId, workspaces } = useSelector((s) => s.workspace)
   const activeChatroomId = useSelector((s) => s.workspace.activeChatroomId)
+  const permissionsVersion = useSelector((s) => s.workspace.permissionsVersion)
   const user = useSelector((s) => s.auth.user)
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
@@ -48,7 +49,7 @@ export function PermissionsProvider({ children }) {
         if (!cancelled) setPermissionsLoaded(true)
       })
     return () => { cancelled = true }
-  }, [activeWorkspaceId, isOwner])
+  }, [activeWorkspaceId, isOwner, permissionsVersion])
 
   useEffect(() => {
     if (!activeChatroomId) {
@@ -75,7 +76,7 @@ export function PermissionsProvider({ children }) {
         if (!cancelled) setChannelPermsLoaded(true)
       })
     return () => { cancelled = true }
-  }, [activeChatroomId, isOwner])
+  }, [activeChatroomId, isOwner, permissionsVersion])
 
   const hasPerm = useCallback(
     (resource, action) => {

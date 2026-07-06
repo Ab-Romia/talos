@@ -3,6 +3,7 @@ import { useSelector } from 'react-redux'
 import { Sparkles, Send, SquarePen } from 'lucide-react'
 import { ChatMessageContent } from '../../components/chat/ChatMessageContent'
 import { streamAiQuery, getAiHistory, clearAiHistory } from '../../services/ai'
+import SidebarToggle from '../../components/layout/SidebarToggle'
 
 const SUGGESTIONS = [
   'Summarize the key points across my documents.',
@@ -85,7 +86,7 @@ export default function AIChatPage() {
         setMessages((prev) =>
           prev.map((m) =>
             m.id === aiMsg.id
-              ? { ...m, content: `${m.content}\n\n_Sorry — ${e.message}_` }
+              ? { ...m, content: `${m.content}\n\n_Sorry — something went wrong. Please try again._` }
               : m,
           ),
         )
@@ -115,13 +116,14 @@ export default function AIChatPage() {
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-surface-1">
       {/* Header */}
-      <div className="h-14 shrink-0 flex items-center justify-between px-5 border-b border-[rgba(28,27,26,0.08)]">
-        <div className="flex items-center gap-2.5 min-w-0">
+      <div className="h-14 shrink-0 flex items-center justify-between px-3 sm:px-5 border-b border-[rgba(28,27,26,0.08)]">
+        <div className="flex items-center gap-2 min-w-0">
+          <SidebarToggle />
           <div className="w-7 h-7 rounded-lg bg-amber flex items-center justify-center text-white shrink-0">
             <Sparkles size={15} />
           </div>
           <div className="min-w-0">
-            <div className="text-sm font-semibold text-ink leading-tight">AI Assistant</div>
+            <div className="text-sm font-semibold text-ink leading-tight">Talos AI</div>
             <div className="text-[11px] text-ink-tertiary truncate">
               {activeWorkspace ? `Grounded in ${activeWorkspace.name}` : 'Ask about your workspace'}
             </div>
@@ -139,7 +141,7 @@ export default function AIChatPage() {
 
       {/* Thread */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0">
-        <div className="max-w-[760px] mx-auto px-5 py-6">
+        <div className="max-w-[1000px] mx-auto px-4 sm:px-5 py-6">
           {messages.length === 0 ? (
             historyLoading ? null : <EmptyState onPick={send} disabled={!workspaceId} />
           ) : (
@@ -171,8 +173,8 @@ export default function AIChatPage() {
       </div>
 
       {/* Composer */}
-      <div className="shrink-0 border-t border-[rgba(28,27,26,0.08)] px-5 py-3">
-        <div className="max-w-[760px] mx-auto">
+      <div className="shrink-0 border-t border-[rgba(28,27,26,0.08)] px-4 sm:px-5 py-3">
+        <div className="max-w-[1000px] mx-auto">
           {!workspaceId && (
             <div className="text-[12px] text-ink-tertiary mb-2">
               Select or create a workspace to start chatting with the assistant.

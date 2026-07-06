@@ -42,7 +42,7 @@ function ImageAttachment({ channelId, attachment }) {
           src={url}
           alt={attachment.filename}
           loading="lazy"
-          className="max-h-[260px] max-w-[360px] rounded-xl border border-[rgba(28,27,26,0.10)] object-cover hover:brightness-95 transition"
+          className="max-h-[260px] w-auto max-w-full sm:max-w-[360px] rounded-xl border border-[rgba(28,27,26,0.10)] object-cover hover:brightness-95 transition"
         />
       </button>
       <Dialog open={open} onClose={() => setOpen(false)} maxWidth="lg">

@@ -30,7 +30,9 @@ export const authService = {
   },
 
   sudo(password) {
-    return api.post('/api/auth/sudo', { password })
+    return api.post('/api/auth/sudo', {
+      auth_info: { auth_type: 'password', password },
+    })
   },
 
   changePassword(newPassword) {
@@ -102,5 +104,17 @@ export const authService = {
 
   githubLogin() {
     window.location.href = '/api/auth/oauth/github'
+  },
+
+  // → { google: bool, github: bool } — which providers the current account links.
+  getConnections() {
+    return api.get('/api/auth/oauth/connections')
+  },
+
+  // Link a provider to the CURRENT account (vs. sign-in). Mints a connect ticket
+  // then hands off to the OAuth flow, returning to `/settings?connected=<p>`.
+  async connectProvider(provider) {
+    const { ticket } = await api.post(`/api/auth/oauth/${provider}/connect?origin=settings`)
+    window.location.href = `/api/auth/oauth/${provider}?connect=${encodeURIComponent(ticket)}`
   },
 }

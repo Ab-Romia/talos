@@ -14,8 +14,10 @@ import MenuItem from '@mui/material/MenuItem'
 import MuiButton from '@mui/material/Button'
 import Alert from '@mui/material/Alert'
 import CircularProgress from '@mui/material/CircularProgress'
+import Checkbox from '@mui/material/Checkbox'
 import {
-  Hash, Plus, Search, ChevronDown, Settings, MessageSquare, FileText, LogOut, Layers, Sparkles,
+  Hash, Plus, Search, ChevronDown, Settings, FileText, LogOut, Layers, Sparkles,
+  Users, UserPlus,
 } from 'lucide-react'
 import { logout } from '../../store/authSlice'
 import {
@@ -26,6 +28,7 @@ import {
   clearWorkspaceError,
   loadDms,
   openDm,
+  createGroup,
 } from '../../store/workspaceSlice'
 import { markRead } from '../../store/notificationsSlice'
 import * as R from '../../constants/Routes'
@@ -33,11 +36,12 @@ import NotificationsBell from './NotificationsBell'
 import { usePermissions } from '../../contexts/PermissionsContext'
 import { chatService } from '../../services/chat'
 
-export default function Sidebar() {
+export default function Sidebar({ onNavigate } = {}) {
   const location = useLocation()
   const navigate = useNavigate()
   const dispatch = useDispatch()
   const currentPath = location.pathname
+  const go = (path) => { navigate(path); onNavigate?.() }
 
   const {
     workspaces, chatrooms, dms, activeWorkspaceId, activeChatroomId, unreadChannels, loading, error,
@@ -55,6 +59,9 @@ export default function Sidebar() {
   const [submitting, setSubmitting] = useState(false)
   const [dmPickerAnchor, setDmPickerAnchor] = useState(null)
   const [dmCandidates, setDmCandidates] = useState([])
+  const [groupDialogOpen, setGroupDialogOpen] = useState(false)
+  const [groupName, setGroupName] = useState('')
+  const [groupSelected, setGroupSelected] = useState([])
 
   // Keep the DM list fresh for the active workspace.
   useEffect(() => {
@@ -76,7 +83,43 @@ export default function Sidebar() {
   const handleStartDm = async (memberId) => {
     setDmPickerAnchor(null)
     const res = await dispatch(openDm({ workspaceId: activeWorkspaceId, userId: memberId }))
-    if (openDm.fulfilled.match(res)) navigate(R.CHAT_PAGE)
+    if (openDm.fulfilled.match(res)) go(R.CHAT_PAGE)
+  }
+
+  const handleOpenGroupDialog = async () => {
+    setDmPickerAnchor(null)
+    setGroupName('')
+    setGroupSelected([])
+    try {
+      const members = await chatService.getMembers(activeWorkspaceId)
+      setDmCandidates(
+        (Array.isArray(members) ? members : []).filter((m) => String(m.id) !== String(user?.id)),
+      )
+    } catch {
+      setDmCandidates([])
+    }
+    setGroupDialogOpen(true)
+  }
+
+  const toggleGroupMember = (id) => {
+    setGroupSelected((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    )
+  }
+
+  const handleCreateGroup = async () => {
+    if (!groupName.trim() || groupSelected.length === 0) return
+    setSubmitting(true)
+    const res = await dispatch(createGroup({
+      workspaceId: activeWorkspaceId,
+      name: groupName.trim(),
+      userIds: groupSelected,
+    }))
+    setSubmitting(false)
+    if (createGroup.fulfilled.match(res)) {
+      setGroupDialogOpen(false)
+      go(R.CHAT_PAGE)
+    }
   }
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
@@ -130,12 +173,11 @@ export default function Sidebar() {
     notifications
       .filter((n) => !n.read_at && n.data?.channel_id === id)
       .forEach((n) => dispatch(markRead(n.id)))
-    navigate(R.CHAT_PAGE)
+    go(R.CHAT_PAGE)
   }
 
   const navItems = [
-    { label: 'Chat', path: R.CHAT_PAGE, icon: MessageSquare },
-    { label: 'AI Assistant', path: R.AI, icon: Sparkles },
+    { label: 'Talos AI', path: R.AI, icon: Sparkles },
     { label: 'Documents', path: R.DOCUMENTS, icon: FileText },
     { label: 'Settings', path: R.SETTINGS, icon: Settings },
   ]
@@ -147,7 +189,7 @@ export default function Sidebar() {
     : 'U'
 
   return (
-    <aside className="w-[260px] bg-surface-2 border-r border-[rgba(28,27,26,0.08)] flex flex-col shrink-0">
+    <aside className="w-[260px] h-full bg-surface-2 border-r border-[rgba(28,27,26,0.08)] flex flex-col shrink-0">
       {/* Workspace selector */}
       <button
         className="flex items-center justify-between px-4 py-3 mx-3 mt-3 rounded-lg hover:bg-surface-3 transition-colors"
@@ -240,7 +282,7 @@ export default function Sidebar() {
               ))}
             </ul>
 
-            {/* Direct Messages */}
+            {/* Direct Messages & Groups */}
             <SectionHeader label="Direct Messages" onAdd={handleOpenDmPicker} />
             <ul className="list-none mb-4">
               {dms.length === 0 && (
@@ -249,16 +291,24 @@ export default function Sidebar() {
                 </li>
               )}
               {dms
-                .filter((d) => (d.peer?.name || '').toLowerCase().includes(query))
+                .filter((d) => (
+                  (d.is_group ? d.name : d.peer?.name) || ''
+                ).toLowerCase().includes(query))
                 .map((d) => (
                   <NavItem
                     key={d.id}
                     icon={
-                      <Avatar sx={{ width: 18, height: 18, fontSize: 9, fontWeight: 700, bgcolor: '#EEEDEA', color: 'text.secondary' }}>
-                        {(d.peer?.name || '?').charAt(0).toUpperCase()}
-                      </Avatar>
+                      d.is_group ? (
+                        <Avatar sx={{ width: 18, height: 18, bgcolor: '#EEEDEA', color: 'text.secondary' }}>
+                          <Users size={11} />
+                        </Avatar>
+                      ) : (
+                        <Avatar sx={{ width: 18, height: 18, fontSize: 9, fontWeight: 700, bgcolor: '#EEEDEA', color: 'text.secondary' }}>
+                          {(d.peer?.name || '?').charAt(0).toUpperCase()}
+                        </Avatar>
+                      )
                     }
-                    label={d.peer?.name || 'Unknown'}
+                    label={d.is_group ? (d.name || 'Group') : (d.peer?.name || 'Unknown')}
                     active={d.id === activeChatroomId && currentPath === R.CHAT_PAGE}
                     unread={unreadChannels.includes(d.id)}
                     onClick={() => handleSelectChatroom(d.id)}
@@ -274,8 +324,14 @@ export default function Sidebar() {
         anchorEl={dmPickerAnchor}
         open={Boolean(dmPickerAnchor)}
         onClose={() => setDmPickerAnchor(null)}
-        slotProps={{ paper: { sx: { minWidth: 200, maxHeight: 280 } } }}
+        slotProps={{ paper: { sx: { minWidth: 220, maxHeight: 320 } } }}
       >
+        <MenuItem onClick={handleOpenGroupDialog}>
+          <UserPlus size={16} style={{ marginRight: 10 }} /> New group chat
+        </MenuItem>
+        <div className="px-3 pt-2 pb-1 text-[11px] font-semibold text-ink-tertiary uppercase tracking-[0.06em]">
+          Message someone
+        </div>
         {dmCandidates.length === 0 ? (
           <MenuItem disabled>No other members</MenuItem>
         ) : (
@@ -289,6 +345,59 @@ export default function Sidebar() {
           ))
         )}
       </Menu>
+
+      {/* Create Group Dialog */}
+      <Dialog open={groupDialogOpen} onClose={() => setGroupDialogOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>New group chat</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Group name"
+            placeholder="e.g. Project team"
+            fullWidth
+            variant="outlined"
+            value={groupName}
+            onChange={(e) => setGroupName(e.target.value)}
+          />
+          <div className="mt-3 mb-1 text-[12px] font-semibold text-ink-tertiary uppercase tracking-[0.06em]">
+            Add members
+          </div>
+          <div className="max-h-[240px] overflow-y-auto -mx-1">
+            {dmCandidates.length === 0 ? (
+              <div className="px-2 py-3 text-[13px] text-ink-tertiary">No other members to add.</div>
+            ) : (
+              dmCandidates.map((m) => (
+                <label
+                  key={m.id}
+                  className="flex items-center gap-2 px-1 py-1 rounded-lg hover:bg-surface-3 cursor-pointer"
+                >
+                  <Checkbox
+                    size="small"
+                    checked={groupSelected.includes(m.id)}
+                    onChange={() => toggleGroupMember(m.id)}
+                  />
+                  <Avatar sx={{ width: 24, height: 24, fontSize: 11, fontWeight: 600, bgcolor: '#EEEDEA', color: 'text.secondary' }}>
+                    {(m.name || '?').charAt(0).toUpperCase()}
+                  </Avatar>
+                  <span className="text-[13px] text-ink">{m.name || m.username}</span>
+                </label>
+              ))
+            )}
+          </div>
+        </DialogContent>
+        <DialogActions>
+          <MuiButton onClick={() => setGroupDialogOpen(false)}>Cancel</MuiButton>
+          <MuiButton
+            onClick={handleCreateGroup}
+            variant="contained"
+            disabled={!groupName.trim() || groupSelected.length === 0 || submitting}
+            startIcon={submitting ? <CircularProgress size={14} color="inherit" /> : null}
+          >
+            Create group
+          </MuiButton>
+        </DialogActions>
+      </Dialog>
       {!canViewChannels && <div className="flex-1" />}
 
       {/* Quick nav - pinned to bottom */}
@@ -296,7 +405,7 @@ export default function Sidebar() {
         {navItems.map((item) => (
           <button
             key={item.path}
-            onClick={() => navigate(item.path)}
+            onClick={() => go(item.path)}
             className={`flex items-center gap-2.5 w-full h-9 px-2.5 rounded-lg text-[13px] font-medium transition-colors mb-0.5 ${
               currentPath === item.path
                 ? 'bg-amber-subtle text-amber'

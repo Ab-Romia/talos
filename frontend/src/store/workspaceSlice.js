@@ -17,11 +17,28 @@ function resetToInitial(state) {
   state.unreadChannels = []
   state.loading = false
   state.error = null
+  state.membersVersion = 0
+  state.permissionsVersion = 0
+  state.syncNotice = null
   try {
     localStorage.removeItem(ACTIVE_WS_KEY)
     localStorage.removeItem(ACTIVE_CR_KEY)
   } catch {}
 }
+
+// Re-pull the workspace list (each with its channels inline) after a realtime
+// change to membership, channels, or permissions made by another user.
+export const refreshWorkspaces = createAsyncThunk(
+  'workspace/refresh',
+  async (_, { rejectWithValue }) => {
+    try {
+      const workspaces = await chatService.getWorkspaces()
+      return Array.isArray(workspaces) ? workspaces : []
+    } catch (err) {
+      return rejectWithValue(err.detail || 'Failed to sync workspaces')
+    }
+  },
+)
 
 // Direct messages for the active workspace.
 export const loadDms = createAsyncThunk(
@@ -48,6 +65,20 @@ export const openDm = createAsyncThunk(
       return dm
     } catch (err) {
       return rejectWithValue(err.detail || 'Could not open the conversation')
+    }
+  },
+)
+
+// Create a group conversation and make it the active conversation.
+export const createGroup = createAsyncThunk(
+  'workspace/createGroup',
+  async ({ workspaceId, name, userIds }, { rejectWithValue }) => {
+    try {
+      const group = await chatService.createGroup(workspaceId, name, userIds)
+      reconnectSocket()
+      return group
+    } catch (err) {
+      return rejectWithValue(err.detail || 'Could not create the group')
     }
   },
 )
@@ -152,6 +183,13 @@ const workspaceSlice = createSlice({
     unreadChannels: [],
     loading: false,
     error: null,
+    // Bumped when another user changes this workspace's roster / permissions, so
+    // views that fetch members or effective permissions re-run their effects.
+    membersVersion: 0,
+    permissionsVersion: 0,
+    // Transient, user-friendly notice for a sync event that concerns me directly
+    // (e.g. "You were removed from X"). Rendered once, then cleared.
+    syncNotice: null,
   },
   reducers: {
     setActiveChatroom(state, action) {
@@ -168,6 +206,37 @@ const workspaceSlice = createSlice({
     },
     clearWorkspaceError(state) {
       state.error = null
+    },
+    bumpMembersVersion(state) {
+      state.membersVersion += 1
+    },
+    bumpPermissionsVersion(state) {
+      state.permissionsVersion += 1
+    },
+    setSyncNotice(state, action) {
+      state.syncNotice = action.payload
+    },
+    clearSyncNotice(state) {
+      state.syncNotice = null
+    },
+    // Another user removed me from (or deleted) this workspace: drop it and fall
+    // back to whatever remains so I'm never left "inside" a workspace I can't see.
+    workspaceRemoved(state, action) {
+      const wsId = action.payload
+      state.workspaces = state.workspaces.filter((w) => w.id !== wsId)
+      if (state.activeWorkspaceId === wsId) {
+        const next = state.workspaces[0] || null
+        state.activeWorkspaceId = next ? next.id : null
+        state.chatrooms = next ? next.channels || [] : []
+        state.activeChatroomId = state.chatrooms[0]?.id ?? null
+        state.dms = []
+        try {
+          if (state.activeWorkspaceId) localStorage.setItem(ACTIVE_WS_KEY, state.activeWorkspaceId)
+          else localStorage.removeItem(ACTIVE_WS_KEY)
+          if (state.activeChatroomId) localStorage.setItem(ACTIVE_CR_KEY, state.activeChatroomId)
+          else localStorage.removeItem(ACTIVE_CR_KEY)
+        } catch {}
+      }
     },
   },
   extraReducers: (builder) => {
@@ -219,6 +288,18 @@ const workspaceSlice = createSlice({
       .addCase(openDm.rejected, (state, action) => {
         state.error = action.payload
       })
+      .addCase(createGroup.fulfilled, (state, action) => {
+        const group = action.payload
+        if (!state.dms.some((d) => d.id === group.id)) state.dms.push(group)
+        state.activeChatroomId = group.id
+        state.unreadChannels = state.unreadChannels.filter((id) => id !== group.id)
+        try {
+          localStorage.setItem(ACTIVE_CR_KEY, group.id)
+        } catch {}
+      })
+      .addCase(createGroup.rejected, (state, action) => {
+        state.error = action.payload
+      })
       .addCase(createWorkspace.fulfilled, (state, action) => {
         const ws = action.payload
         state.workspaces.push(ws)
@@ -246,6 +327,31 @@ const workspaceSlice = createSlice({
       .addCase(createChatroom.rejected, (state, action) => {
         state.error = action.payload
       })
+      .addCase(refreshWorkspaces.fulfilled, (state, action) => {
+        const workspaces = action.payload || []
+        state.workspaces = workspaces
+        let active = workspaces.find((w) => w.id === state.activeWorkspaceId)
+        if (!active) {
+          // The active workspace vanished (removed/deleted) — fall back gracefully.
+          active = workspaces[0] || null
+          state.activeWorkspaceId = active ? active.id : null
+          state.activeChatroomId = null
+          state.dms = []
+        }
+        if (active) {
+          state.chatrooms = active.channels || []
+          if (!state.chatrooms.some((c) => c.id === state.activeChatroomId)) {
+            state.activeChatroomId = state.chatrooms[0]?.id ?? null
+          }
+          try {
+            localStorage.setItem(ACTIVE_WS_KEY, active.id)
+            if (state.activeChatroomId) localStorage.setItem(ACTIVE_CR_KEY, state.activeChatroomId)
+          } catch {}
+        } else {
+          state.chatrooms = []
+          state.activeChatroomId = null
+        }
+      })
       // Account switches: clear on logout (fulfilled OR rejected — the UI
       // treats both as logged out) and on a fresh login, so bootstrap always
       // refetches the NEW account's workspaces instead of reusing the old
@@ -256,5 +362,14 @@ const workspaceSlice = createSlice({
   },
 })
 
-export const { setActiveChatroom, markChannelUnread, clearWorkspaceError } = workspaceSlice.actions
+export const {
+  setActiveChatroom,
+  markChannelUnread,
+  clearWorkspaceError,
+  bumpMembersVersion,
+  bumpPermissionsVersion,
+  setSyncNotice,
+  clearSyncNotice,
+  workspaceRemoved,
+} = workspaceSlice.actions
 export default workspaceSlice.reducer

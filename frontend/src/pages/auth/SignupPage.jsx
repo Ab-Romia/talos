@@ -151,7 +151,7 @@ export default function SignupPage() {
     return (
       <div className="flex min-h-screen">
         {BrandPanel}
-        <div className="w-full lg:w-1/2 flex items-center justify-center p-12 bg-base">
+        <div className="w-full lg:w-1/2 flex items-center justify-center p-6 sm:p-12 bg-base">
           <div className="w-full max-w-[400px] text-center">
             <div className="w-14 h-14 rounded-full bg-amber-subtle flex items-center justify-center mx-auto mb-5 text-amber">
               <MailCheck size={28} />
@@ -180,7 +180,7 @@ export default function SignupPage() {
       {BrandPanel}
 
       {/* Right Form Panel */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-12 bg-base">
+      <div className="w-full lg:w-1/2 flex items-center justify-center p-6 sm:p-12 bg-base">
         <form onSubmit={handleSubmit} className="w-full max-w-[400px]">
           <div className="flex lg:hidden items-center gap-3 mb-8 justify-center">
             <div className="w-8 h-8 bg-amber rounded-lg flex items-center justify-center text-white text-lg font-bold">T</div>

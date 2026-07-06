@@ -215,6 +215,9 @@ def update_workspace_role_permissions(
     ])
     db.commit()
 
+    from chat.sync import notify_workspace
+    notify_workspace(db, workspace_id, "permissions")
+
     return RoleResp.from_attributes(role, include_permissions=True)
 
 
@@ -244,6 +247,9 @@ def update_workspace_role_members(
 
     db.commit()
 
+    from chat.sync import notify_workspace
+    notify_workspace(db, workspace_id, "permissions")
+
     return RoleResp.from_attributes(role, include_permissions=True, include_users=True)
 
 
@@ -262,6 +268,9 @@ def delete_workspace_role(workspace_id: WorkspaceID, role_id: RoleID, db: Databa
 
     db.delete(role)
     db.commit()
+
+    from chat.sync import notify_workspace
+    notify_workspace(db, workspace_id, "permissions")
 
 
 @workspace.get("/my_permissions")
@@ -388,6 +397,12 @@ def update_channel_roles_override(
     )
 
     db.commit()
+
+    from chat.sync import notify_workspace
+    ch = db.get(Channel, channel_id)
+    if ch is not None:
+        notify_workspace(db, ch.workspace_id, "permissions")
+
     return override
 
 
@@ -412,8 +427,12 @@ def delete_channel_roles_override(channel_id: uuid.UUID, role_id: RoleID, db: Da
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Cannot delete override for workspace base role")
 
+    workspace_id = override.channel.workspace_id
     db.delete(override)
     db.commit()
+
+    from chat.sync import notify_workspace
+    notify_workspace(db, workspace_id, "permissions")
 
 
 @channel.get("/my_permissions")
