@@ -71,6 +71,20 @@ class WorkspaceService:
         return workspace
 
     @staticmethod
+    def _unlink_workspace_roles(db: Session, workspace_id: uuid.UUID, user_id: uuid.UUID):
+        """Remove the user's assignments to every role belonging to the workspace."""
+        from permissions.model import Role, users_roles
+
+        db.execute(
+            users_roles.delete().where(
+                users_roles.c.user_id == user_id,
+                users_roles.c.role_id.in_(
+                    select(Role.id).where(Role.workspace_id == workspace_id)
+                ),
+            )
+        )
+
+    @staticmethod
     def remove_workspace_member(db: Session, workspace_id: uuid.UUID, user_id: uuid.UUID) -> Workspace:
         """Remove a member from workspace."""
         workspace = db.get(Workspace, workspace_id)
@@ -83,6 +97,7 @@ class WorkspaceService:
 
         if user in workspace.members:
             workspace.members.remove(user)
+            WorkspaceService._unlink_workspace_roles(db, workspace_id, user_id)
             db.commit()
             db.refresh(workspace)
 
@@ -112,6 +127,7 @@ class WorkspaceService:
 
         if user in workspace.members:
             workspace.members.remove(user)
+            WorkspaceService._unlink_workspace_roles(db, workspace_id, user_id)
             db.commit()
             return True
 

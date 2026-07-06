@@ -71,9 +71,11 @@ export const switchWorkspace = createAsyncThunk(
 
 export const createWorkspace = createAsyncThunk(
   'workspace/create',
-  async (name, { rejectWithValue }) => {
+  // Accepts a plain name string (quick create) or { name, channels, members }.
+  async (arg, { rejectWithValue }) => {
     try {
-      const ws = await chatService.createWorkspace(name)
+      const { name, channels, members } = typeof arg === 'string' ? { name: arg } : arg
+      const ws = await chatService.createWorkspace(name, { channels, members })
       // New channel rooms are only joined by the socket at connect time.
       reconnectSocket()
       return ws // { id, name, owner_id, channels:[{id,name}] }

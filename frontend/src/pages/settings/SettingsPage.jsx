@@ -14,7 +14,7 @@ import Dialog from '@mui/material/Dialog'
 import DialogTitle from '@mui/material/DialogTitle'
 import DialogContent from '@mui/material/DialogContent'
 import DialogActions from '@mui/material/DialogActions'
-import { KeyRound, Trash2, Hash, Pencil } from 'lucide-react'
+import { KeyRound, Trash2, Hash, Pencil, AlertTriangle, LogOut } from 'lucide-react'
 import {
   changePassword,
   deleteAccount,
@@ -532,19 +532,35 @@ export default function SettingsPage() {
               </Button>
             </div>
 
-            <div className="mt-10 pt-6 border-t border-red-200">
-              <h3 className="text-[15px] font-semibold text-red-600 mb-2">Danger zone</h3>
-              <p className="text-[13px] text-ink-secondary mb-4">
-                Permanently delete your account and all associated data. This action cannot be undone.
-              </p>
-              <Button
-                variant="outlined"
-                color="error"
-                startIcon={<Trash2 size={14} />}
-                onClick={() => { setDeletePassword(''); setDeleteConfirmText(''); setDeleteDialogOpen(true); dispatch(clearSettingsError()) }}
-              >
-                Delete account
-              </Button>
+            <div className="mt-10">
+              <div className="flex items-center gap-2 mb-3">
+                <AlertTriangle size={15} className="text-red-500" />
+                <h3 className="text-[15px] font-semibold text-red-600">Danger zone</h3>
+              </div>
+              <div className="border border-red-200 rounded-xl overflow-hidden">
+                <div className="flex items-center justify-between gap-4 px-4 py-4 bg-red-50/40">
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center shrink-0 mt-0.5">
+                      <Trash2 size={15} className="text-red-500" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-ink">Delete account</p>
+                      <p className="text-[12px] text-ink-tertiary mt-0.5 max-w-md">
+                        Permanently delete your account and all associated data. This action cannot be undone.
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="outlined"
+                    color="error"
+                    size="small"
+                    sx={{ flexShrink: 0 }}
+                    onClick={() => { setDeletePassword(''); setDeleteConfirmText(''); setDeleteDialogOpen(true); dispatch(clearSettingsError()) }}
+                  >
+                    Delete account
+                  </Button>
+                </div>
+              </div>
             </div>
 
             <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)} maxWidth="xs" fullWidth>
@@ -799,19 +815,30 @@ export default function SettingsPage() {
                 </Dialog>
 
                 {/* Leave / Delete workspace */}
-                <div className="mt-10 pt-6 border-t border-red-200">
-                  <h3 className="text-[15px] font-semibold text-red-600 mb-2">Danger zone</h3>
-                  <div className="space-y-3">
+                <div className="mt-10">
+                  <div className="flex items-center gap-2 mb-3">
+                    <AlertTriangle size={15} className="text-red-500" />
+                    <h3 className="text-[15px] font-semibold text-red-600">Danger zone</h3>
+                  </div>
+                  <div className="border border-red-200 rounded-xl overflow-hidden divide-y divide-red-100">
                     {!isOwner && (
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-ink">Leave workspace</p>
-                          <p className="text-[12px] text-ink-tertiary">You will lose access to all channels and messages.</p>
+                      <div className="flex items-center justify-between gap-4 px-4 py-4 bg-red-50/40">
+                        <div className="flex items-start gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center shrink-0 mt-0.5">
+                            <LogOut size={15} className="text-red-500" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-ink">Leave workspace</p>
+                            <p className="text-[12px] text-ink-tertiary mt-0.5 max-w-md">
+                              You will lose access to all channels and messages.
+                            </p>
+                          </div>
                         </div>
                         <Button
                           variant="outlined"
                           color="error"
                           size="small"
+                          sx={{ flexShrink: 0 }}
                           onClick={() => setLeaveDialogOpen(true)}
                         >
                           Leave
@@ -819,16 +846,23 @@ export default function SettingsPage() {
                       </div>
                     )}
                     {isOwner && (
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-ink">Delete workspace</p>
-                          <p className="text-[12px] text-ink-tertiary">Permanently delete this workspace and all its data.</p>
+                      <div className="flex items-center justify-between gap-4 px-4 py-4 bg-red-50/40">
+                        <div className="flex items-start gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center shrink-0 mt-0.5">
+                            <Trash2 size={15} className="text-red-500" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-ink">Delete workspace</p>
+                            <p className="text-[12px] text-ink-tertiary mt-0.5 max-w-md">
+                              Permanently delete this workspace and all its data.
+                            </p>
+                          </div>
                         </div>
                         <Button
                           variant="outlined"
                           color="error"
                           size="small"
-                          startIcon={<Trash2 size={14} />}
+                          sx={{ flexShrink: 0 }}
                           onClick={() => { setDeleteWsConfirm(''); setDeleteWsDialogOpen(true) }}
                         >
                           Delete

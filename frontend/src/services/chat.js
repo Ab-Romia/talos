@@ -12,10 +12,14 @@ export const chatService = {
     return api.get('/api/workspaces')
   },
 
-  createWorkspace(name) {
-    // → { id, name, owner_id, channels:[{id,name}] } (server provisions base role,
-    //    permissions, membership + default channels).
-    return api.post('/api/workspaces', { name })
+  createWorkspace(name, { channels, members } = {}) {
+    // → { id, name, owner_id, channels:[{id,name}], skipped_members:[...] }
+    //   (server provisions base role, permissions, membership + channels;
+    //    channels/members are optional — server falls back to defaults).
+    const body = { name }
+    if (channels?.length) body.channels = channels
+    if (members?.length) body.members = members
+    return api.post('/api/workspaces', body)
   },
 
   createChannel(workspaceId, name) {
@@ -113,5 +117,9 @@ export const chatService = {
 
   deleteWorkspace(workspaceId) {
     return api.delete(`/api/workspaces/${workspaceId}/settings`)
+  },
+
+  searchUsers(query) {
+    return api.get(`/api/auth/users/search?q=${encodeURIComponent(query)}`)
   },
 }

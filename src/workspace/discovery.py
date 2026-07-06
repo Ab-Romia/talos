@@ -27,6 +27,8 @@ DEFAULT_CHANNELS = ["general", "random"]
 
 class CreateWorkspaceRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
+    channels: list[str] | None = Field(default=None, max_length=50)
+    members: list[str] | None = Field(default=None, max_length=100)
 
 
 class CreateChannelRequest(BaseModel):
@@ -108,8 +110,20 @@ def _link_member(db, workspace_id: uuid.UUID, base_role: Role, user: User):
         db.commit()
 
 
-def provision_workspace(db, owner: User, name: str) -> Workspace:
-    """Create a workspace with its base role, permissions, owner membership and default channels."""
+def provision_workspace(db, owner: User, name: str, channels: list[str] | None = None) -> Workspace:
+    """Create a workspace with its base role, permissions, owner membership and channels.
+
+    ``channels`` defaults to DEFAULT_CHANNELS; blank names and duplicates are dropped.
+    """
+    channel_names, seen = [], set()
+    for raw in channels or DEFAULT_CHANNELS:
+        cleaned = raw.strip().lstrip("#")[:100]
+        if cleaned and cleaned.lower() not in seen:
+            seen.add(cleaned.lower())
+            channel_names.append(cleaned)
+    if not channel_names:
+        channel_names = list(DEFAULT_CHANNELS)
+
     perms = _ensure_standard_perms(db)
 
     for role in system_roles():
@@ -147,7 +161,7 @@ def provision_workspace(db, owner: User, name: str) -> Workspace:
             db.add(RolePermission(role_id=base_role.id, permission_id=permission.id, scope=PermissionScope.ANY))
     db.commit()
 
-    for channel_name in DEFAULT_CHANNELS:
+    for channel_name in channel_names:
         db.add(Channel(name=channel_name, workspace_id=ws.id))
     db.commit()
 
@@ -181,9 +195,28 @@ def list_my_workspaces(user: UserDep, db: DatabaseDep):
 @router.post("", status_code=status.HTTP_201_CREATED)
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_workspace(payload: CreateWorkspaceRequest, user: UserDep, db: DatabaseDep):
-    """Create a new workspace owned by the current user."""
-    ws = provision_workspace(db, user, payload.name.strip())
-    return _serialize(db, ws)
+    """Create a new workspace owned by the current user, with optional channels and members."""
+    ws = provision_workspace(db, user, payload.name.strip(), payload.channels)
+
+    skipped = []
+    if payload.members:
+        base_role = db.get(Role, ws.id)
+        for raw in payload.members:
+            identifier = raw.strip()
+            if not identifier:
+                continue
+            target = db.scalar(
+                select(User).where(
+                    User.deleted_at.is_(None),
+                    or_(User.primary_email == identifier, User.username == identifier),
+                )
+            )
+            if target is None:
+                skipped.append(identifier)
+            elif target.id != user.id:
+                _link_member(db, ws.id, base_role, target)
+
+    return {**_serialize(db, ws), "skipped_members": skipped}
 
 
 @router.post("/{workspace_id}/channels", status_code=status.HTTP_201_CREATED)
@@ -270,7 +303,8 @@ def remove_member(workspace_id: uuid.UUID, member_id: uuid.UUID, user: UserDep, 
     db.delete(membership)
     db.execute(
         users_roles.delete().where(
-            users_roles.c.user_id == member_id, users_roles.c.role_id == ws.id
+            users_roles.c.user_id == member_id,
+            users_roles.c.role_id.in_(select(Role.id).where(Role.workspace_id == ws.id)),
         )
     )
     db.commit()
