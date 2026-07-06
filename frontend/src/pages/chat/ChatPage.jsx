@@ -156,10 +156,12 @@ export default function ChatPage() {
     const q = mentionQuery.query.toLowerCase()
     const pool = [
       ...(bot ? [{ user_id: bot.user_id, label: bot.name || 'Talos AI', isBot: true }] : []),
-      ...members.map((m) => ({ user_id: String(m.id), label: m.name || m.username, isBot: false })),
+      ...members
+        .filter((m) => String(m.id) !== String(user?.id))
+        .map((m) => ({ user_id: String(m.id), label: m.name || m.username, isBot: false })),
     ]
     return pool.filter((c) => c.label && c.label.toLowerCase().includes(q)).slice(0, 8)
-  }, [mentionQuery, bot, members])
+  }, [mentionQuery, bot, members, user])
 
   const searchResults = useMemo(() => {
     if (!searchOpen) return []
