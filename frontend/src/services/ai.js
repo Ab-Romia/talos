@@ -9,6 +9,11 @@ export function clearAiHistory(workspaceId) {
   return api.delete(`/api/workspaces/${workspaceId}/ai/messages`)
 }
 
+// The assistant's user identity, so the mention picker can offer @Talos AI.
+export function getBotIdentity(workspaceId) {
+  return api.get(`/api/workspaces/${workspaceId}/ai/bot`)
+}
+
 // Streams a RAG answer from the workspace AI endpoint. The backend responds with
 // a plain-text token stream (answer followed by a "Sources:" trailer). `onChunk`
 // is called with each decoded piece as it arrives.

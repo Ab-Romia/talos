@@ -12,20 +12,23 @@ import ListItem from '@mui/material/ListItem'
 import ListItemAvatar from '@mui/material/ListItemAvatar'
 import ListItemText from '@mui/material/ListItemText'
 import {
-  Search, Users, Bold, Code, ArrowUp, X, Sparkles, Bug,
+  Search, Users, Bold, Code, ArrowUp, X, Sparkles, Bug, Reply,
 } from 'lucide-react'
 
 import { useSelector, useDispatch as useReduxDispatch } from 'react-redux'
 import { markChannelUnread } from '../../store/workspaceSlice'
 import { usePermissions } from '../../contexts/PermissionsContext'
 import { chatService } from '../../services/chat'
+import { getBotIdentity } from '../../services/ai'
 import { onChatMessage, onAiTyping, getSocket } from '../../services/socket'
-import { ChatMessageContent } from '../../components/chat/ChatMessageContent'
 import { RagTracePanel } from '../../components/chat/RagTracePanel'
 import { askService } from '../../services/ask'
 import { AiTypingIndicator } from '../../components/chat/AiTypingIndicator'
 import { ChatComposerField } from '../../components/chat/ChatComposerField'
+import { MentionPicker } from '../../components/chat/MentionPicker'
+import { RichMessageBody } from '../../components/chat/RichMessageBody'
 import { docText } from '../../utils/prosemirrorText'
+import { buildMessageDoc, activeMentions } from '../../utils/mentionDoc'
 
 function fmtTime(iso) {
   if (!iso) return ''
@@ -69,6 +72,11 @@ export default function ChatPage() {
   const [chatroomName, setChatroomName] = useState('')
   const [aiThinking, setAiThinking] = useState(false)
   const [debugTrace, setDebugTrace] = useState(false)
+  const [bot, setBot] = useState(null)
+  const [mentionQuery, setMentionQuery] = useState(null) // { start, query } while typing @…
+  const [mentionIndex, setMentionIndex] = useState(0)
+  const [replyTo, setReplyTo] = useState(null) // { serverId, uiId, name, snippet }
+  const trackedMentionsRef = useRef([]) // [{ label, user_id }] inserted via the picker
 
   const user = useSelector((state) => state.auth.user)
   const {
@@ -126,10 +134,32 @@ export default function ChatPage() {
         initials: initialsOf(name),
         time: fmtTime(m.sent_at),
         body: docText(m.content),
+        content: m.content,
+        replyToId: m.reply_to_id || null,
       }
     },
     [displayName, user],
   )
+
+  // Bot identity for the mention picker (@Talos AI triggers the assistant).
+  useEffect(() => {
+    if (!workspaceId) { setBot(null); return }
+    let cancelled = false
+    getBotIdentity(workspaceId)
+      .then((b) => { if (!cancelled && b?.user_id) setBot(b) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [workspaceId])
+
+  const mentionCandidates = useMemo(() => {
+    if (!mentionQuery) return []
+    const q = mentionQuery.query.toLowerCase()
+    const pool = [
+      ...(bot ? [{ user_id: bot.user_id, label: bot.name || 'Talos AI', isBot: true }] : []),
+      ...members.map((m) => ({ user_id: String(m.id), label: m.name || m.username, isBot: false })),
+    ]
+    return pool.filter((c) => c.label && c.label.toLowerCase().includes(q)).slice(0, 8)
+  }, [mentionQuery, bot, members])
 
   const searchResults = useMemo(() => {
     if (!searchOpen) return []
@@ -281,9 +311,52 @@ export default function ChatPage() {
     setSnackbar((prev) => ({ ...prev, open: false }))
   }, [])
 
+  // Track an in-progress "@query" at the caret so the picker can open.
+  const detectMention = useCallback((text, caret) => {
+    const upto = text.slice(0, caret)
+    const at = upto.lastIndexOf('@')
+    if (at === -1) { setMentionQuery(null); return }
+    if (at > 0 && /[\w@]/.test(upto[at - 1])) { setMentionQuery(null); return }
+    const query = upto.slice(at + 1)
+    if (query.length > 30 || query.includes('\n')) { setMentionQuery(null); return }
+    setMentionQuery({ start: at, query })
+    setMentionIndex(0)
+  }, [])
+
+  const handleInputChange = useCallback((e) => {
+    const text = e.target.value
+    setInput(text)
+    detectMention(text, e.target.selectionStart ?? text.length)
+  }, [detectMention])
+
+  const pickMention = useCallback((candidate) => {
+    if (!mentionQuery) return
+    const token = `@${candidate.label} `
+    const caret = textareaRef.current?.selectionStart ?? input.length
+    const next = input.slice(0, mentionQuery.start) + token + input.slice(caret)
+    const tracked = trackedMentionsRef.current
+    if (!tracked.some((m) => m.user_id === candidate.user_id)) {
+      tracked.push({ label: candidate.label, user_id: candidate.user_id })
+    }
+    setInput(next)
+    setMentionQuery(null)
+    setTimeout(() => {
+      const ta = textareaRef.current
+      if (ta) {
+        ta.focus()
+        const pos = mentionQuery.start + token.length
+        ta.setSelectionRange(pos, pos)
+      }
+    }, 0)
+  }, [mentionQuery, input])
+
   const sendText = useCallback(async (rawText) => {
     const text = (rawText ?? '').trim()
     if (!text || sending || !chatroomId) return
+
+    const mentions = activeMentions(text, trackedMentionsRef.current)
+    const reply = replyTo
+    const rich = mentions.length > 0 || reply
 
     const localKey = nextIdRef.current++
     const optimistic = {
@@ -294,12 +367,22 @@ export default function ChatPage() {
       mine: true,
       time: nowTime(),
       body: text,
+      content: rich ? buildMessageDoc(text, mentions) : null,
+      replyToId: reply?.serverId || null,
     }
     setMessages((prev) => [...prev, optimistic])
     setInput('')
+    setReplyTo(null)
+    setMentionQuery(null)
+    trackedMentionsRef.current = []
     setSending(true)
     try {
-      const res = await chatService.sendMessage(chatroomId, text)
+      const res = await chatService.sendMessage(
+        chatroomId,
+        rich
+          ? { content: buildMessageDoc(text, mentions), replyToId: reply?.serverId || null }
+          : text,
+      )
       // Attach the real server id (if the socket echo didn't already adopt it).
       if (res?.id) {
         setMessages((prev) =>
@@ -314,11 +397,13 @@ export default function ChatPage() {
       // Roll back the optimistic message and restore the draft.
       setMessages((prev) => prev.filter((m) => m.id !== localKey))
       setInput(text)
+      if (mentions.length) trackedMentionsRef.current = mentions
+      if (reply) setReplyTo(reply)
       showSnackbar(err?.detail || 'Failed to send message')
     } finally {
       setSending(false)
     }
-  }, [sending, chatroomId, user, showSnackbar])
+  }, [sending, chatroomId, user, showSnackbar, replyTo])
 
   const handleSend = useCallback(() => sendText(input), [sendText, input])
 
@@ -374,13 +459,51 @@ export default function ChatPage() {
 
   const handleKeyDown = useCallback(
     (e) => {
+      if (mentionQuery && mentionCandidates.length) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault()
+          setMentionIndex((i) => (i + 1) % mentionCandidates.length)
+          return
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault()
+          setMentionIndex((i) => (i - 1 + mentionCandidates.length) % mentionCandidates.length)
+          return
+        }
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault()
+          pickMention(mentionCandidates[mentionIndex] || mentionCandidates[0])
+          return
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          setMentionQuery(null)
+          return
+        }
+      }
+      if (e.key === 'Escape' && replyTo) {
+        e.preventDefault()
+        setReplyTo(null)
+        return
+      }
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault()
         handleSend()
       }
     },
-    [handleSend],
+    [handleSend, mentionQuery, mentionCandidates, mentionIndex, pickMention, replyTo],
   )
+
+  const startReply = useCallback((msg) => {
+    if (!msg.serverId) return
+    setReplyTo({
+      serverId: msg.serverId,
+      uiId: msg.id,
+      name: msg.isAI ? 'Talos AI' : displayName(msg.senderId),
+      snippet: (msg.body || '').slice(0, 90),
+    })
+    setTimeout(() => textareaRef.current?.focus(), 0)
+  }, [displayName])
 
   const loadMembers = useCallback(async () => {
     if (!workspaceId) return
@@ -629,11 +752,14 @@ export default function ChatPage() {
                 </div>
               )
             }
+            const repliedTo = msg.replyToId
+              ? messages.find((x) => x.serverId === msg.replyToId)
+              : null
             return (
               <div
                 key={msg.id}
                 data-msg-id={msg.id}
-                className="flex gap-3 mb-6 group transition-colors duration-500"
+                className="relative flex gap-3 mb-6 group transition-colors duration-500"
               >
                 <div className="pt-0.5">
                   <Avatar
@@ -652,11 +778,41 @@ export default function ChatPage() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-[13px] font-semibold text-ink">{displayName(msg.senderId)}</span>
+                    <span className="text-[13px] font-semibold text-ink">{msg.isAI ? 'Talos AI' : displayName(msg.senderId)}</span>
                     <span className="text-[12px] text-ink-muted">{msg.time}</span>
                   </div>
-                  <ChatMessageContent content={msg.body || ''} renderCursor={false} />
+                  {msg.replyToId && (
+                    <button
+                      type="button"
+                      onClick={() => repliedTo && scrollToMessage(repliedTo.id)}
+                      className="flex items-start gap-1.5 mb-1 max-w-full text-left group/quote"
+                      title={repliedTo ? 'Jump to original message' : undefined}
+                    >
+                      <span className="w-[3px] self-stretch rounded-full bg-amber/50 shrink-0" />
+                      <span className="text-[12px] text-ink-tertiary truncate py-0.5">
+                        <span className="font-semibold text-ink-secondary group-hover/quote:text-amber transition-colors">
+                          {repliedTo ? (repliedTo.isAI ? 'Talos AI' : displayName(repliedTo.senderId)) : 'Original message'}
+                        </span>
+                        {repliedTo && (
+                          <span className="ml-1.5">{(repliedTo.body || '').slice(0, 90)}</span>
+                        )}
+                      </span>
+                    </button>
+                  )}
+                  <RichMessageBody content={msg.content} fallbackText={msg.body || ''} />
                   {msg.trace && <RagTracePanel trace={msg.trace} />}
+                </div>
+                <div className="absolute -top-2.5 right-0 hidden group-hover:flex items-center bg-base border border-[rgba(28,27,26,0.10)] rounded-lg shadow-sm">
+                  <Tooltip title="Reply">
+                    <IconButton
+                      size="small"
+                      onClick={() => startReply(msg)}
+                      disabled={!msg.serverId}
+                      sx={{ width: 28, height: 28, color: 'text.secondary', '&:hover': { color: '#C4913A' } }}
+                    >
+                      <Reply size={15} />
+                    </IconButton>
+                  </Tooltip>
                 </div>
               </div>
             )
@@ -670,7 +826,27 @@ export default function ChatPage() {
       {canSend ? (
       <div className="border-t border-[rgba(28,27,26,0.06)] bg-surface-1">
         <div className="max-w-[680px] mx-auto px-5 py-4">
-          <div className="bg-base border border-[rgba(28,27,26,0.10)] rounded-2xl p-3 px-4 flex flex-col gap-0 focus-within:border-amber focus-within:shadow-[0_0_0_3px_rgba(196,145,58,0.12)] transition-all">
+          <div className="relative bg-base border border-[rgba(28,27,26,0.10)] rounded-2xl p-3 px-4 flex flex-col gap-0 focus-within:border-amber focus-within:shadow-[0_0_0_3px_rgba(196,145,58,0.12)] transition-all">
+            {mentionQuery && mentionCandidates.length > 0 && (
+              <MentionPicker
+                candidates={mentionCandidates}
+                activeIndex={mentionIndex}
+                onPick={pickMention}
+                onHover={setMentionIndex}
+              />
+            )}
+            {replyTo && (
+              <div className="flex items-center gap-2 mb-2 pl-2.5 pr-1.5 py-1.5 bg-surface-2 rounded-lg border-l-[3px] border-amber">
+                <Reply size={13} className="text-amber shrink-0" />
+                <span className="text-[12px] text-ink-tertiary truncate flex-1">
+                  Replying to <span className="font-semibold text-ink-secondary">{replyTo.name}</span>
+                  <span className="ml-1.5">{replyTo.snippet}</span>
+                </span>
+                <IconButton size="small" onClick={() => setReplyTo(null)} sx={{ width: 22, height: 22 }}>
+                  <X size={13} />
+                </IconButton>
+              </div>
+            )}
             <div className="flex items-end gap-3 min-w-0">
               <div className="flex-1 flex flex-col min-w-0">
                 <div className="flex items-center gap-1 pb-2 mb-2 border-b border-[rgba(28,27,26,0.06)]">
@@ -706,7 +882,7 @@ export default function ChatPage() {
                 <ChatComposerField
                   inputRef={textareaRef}
                   value={input}
-                  onChange={(e) => setInput(e.target.value)}
+                  onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
                   placeholder={chatroomName ? `Message #${chatroomName}` : 'Message…'}
                 />

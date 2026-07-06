@@ -69,6 +69,20 @@ def _build_chain(
     )
 
 
+@router.get("/bot", dependencies=[require_perms("files:read")])
+async def get_bot_identity(workspace_id: uuid.UUID):
+    """The assistant's user identity — used by the mention picker."""
+    from database import SessionLocal
+    from chat.ai import get_ai_user_id, AI_USERNAME
+
+    def _load():
+        with SessionLocal() as db:
+            return str(get_ai_user_id(db))
+
+    bot_id = await asyncio.to_thread(_load)
+    return {"user_id": bot_id, "username": AI_USERNAME, "name": "Talos AI"}
+
+
 def _save_message(workspace_id: uuid.UUID, user_id: uuid.UUID, role: str, content: str):
     from database import SessionLocal
     from .model import AiChatMessage

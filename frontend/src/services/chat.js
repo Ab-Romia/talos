@@ -30,8 +30,15 @@ export const chatService = {
     return api.get(`/api/channels/${channelId}/messages?${q.toString()}`)
   },
 
-  sendMessage(channelId, text) {
-    return api.post(`/api/channels/${channelId}/messages`, { text })
+  // Accepts a plain string (legacy) or an options object:
+  //   { text?, content? (ProseMirror doc), replyToId? }
+  sendMessage(channelId, message) {
+    const opts = typeof message === 'string' ? { text: message } : (message || {})
+    return api.post(`/api/channels/${channelId}/messages`, {
+      text: opts.text ?? null,
+      content: opts.content ?? null,
+      reply_to_id: opts.replyToId ?? null,
+    })
   },
 
   getOnline(channelId) {

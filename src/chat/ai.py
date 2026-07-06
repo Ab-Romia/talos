@@ -37,18 +37,42 @@ def get_ai_user_id(db) -> UUID:
     return _ai_user_id
 
 
+def _mentions_bot(content) -> bool:
+    """True when a rich doc carries a mention node pointing at the bot user."""
+    if not isinstance(content, dict):
+        return False
+    from chat.model import extract_mentioned_user_ids_from_raw
+    mentioned = extract_mentioned_user_ids_from_raw(content)
+    if not mentioned:
+        return False
+    with SessionLocal() as db:
+        bot_id = get_ai_user_id(db)
+    return bot_id in mentioned
+
+
 def is_ai_trigger(content) -> bool:
+    """Mention-style trigger: a real @-mention of the bot, or '@talos'/'/talos'
+    appearing anywhere in the text — mirroring how platform mentions behave."""
     from rag.message_text import doc_text
-    stripped = doc_text(content).strip().lower()
-    return any(stripped.startswith(t) for t in _TRIGGERS)
+    text = doc_text(content).strip().lower()
+    return any(t in text for t in _TRIGGERS) or _mentions_bot(content)
 
 
 def _strip_trigger(content: str) -> str:
     stripped = content.strip()
-    for t in _TRIGGERS:
-        if stripped.lower().startswith(t):
-            return stripped[len(t):].strip()
+    lowered = stripped.lower()
+    for t in ("@talos ai", *_TRIGGERS):
+        idx = lowered.find(t)
+        if idx != -1:
+            stripped = (stripped[:idx] + stripped[idx + len(t):]).strip()
+            break
     return stripped
+
+
+# Strong references to in-flight reply tasks: a bare create_task result is only
+# weakly held by the loop, so a long generation can be garbage-collected mid-run
+# and vanish without a reply OR an error.
+_reply_tasks: set = set()
 
 
 async def maybe_ai_reply(channel_id: UUID, content, user_id: UUID) -> None:
@@ -62,7 +86,10 @@ async def maybe_ai_reply(channel_id: UUID, content, user_id: UUID) -> None:
     question = _strip_trigger(doc_text(content))
     if not question:
         return
-    asyncio.create_task(_run_ai_reply(channel_id, question, user_id))
+    logger.info("AI trigger fired", channel_id=str(channel_id), question=question[:80])
+    task = asyncio.create_task(_run_ai_reply(channel_id, question, user_id))
+    _reply_tasks.add(task)
+    task.add_done_callback(_reply_tasks.discard)
 
 
 async def _run_ai_reply(channel_id: UUID, question: str, user_id: UUID) -> None:

@@ -75,8 +75,7 @@ def _ensure_milvus_connection():
     if not _milvus_connected:
         connections.connect(
             alias="default",
-            host=global_rag_config.milvus_host,
-            port=global_rag_config.milvus_port,
+            uri=f"http://{global_rag_config.milvus_host}:{global_rag_config.milvus_port}",
         )
         _milvus_connected = True
 
@@ -214,9 +213,11 @@ def get_workspace_vectorstore(
         collection_name=collection_name,
         auto_id=True,
         enable_dynamic_field=True,
+        # MUST stay the uri form: MilvusClient(host=, port=) deadlocks in
+        # _wait_for_channel_ready (the 2026-07-02 bug, still present on
+        # pymilvus 2.6.x via connection_manager._create_shared).
         connection_args={
-            "host": global_rag_config.milvus_host,
-            "port": global_rag_config.milvus_port,
+            "uri": f"http://{global_rag_config.milvus_host}:{global_rag_config.milvus_port}",
         },
     )
 

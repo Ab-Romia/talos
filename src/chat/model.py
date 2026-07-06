@@ -99,6 +99,14 @@ def extract_mentioned_user_ids(doc: Node) -> list[UUID]:
 # Pydantic schemas  (API boundary)
 # =============================================================================
 
+def extract_mentioned_user_ids_from_raw(raw: dict[str, Any]) -> list[UUID]:
+    """Mentioned user ids from a raw doc dict; [] on any parse failure."""
+    try:
+        return extract_mentioned_user_ids(parse_doc(raw))
+    except Exception:
+        return []
+
+
 class MessageSchema(BaseModel):
     """
     Serialisable representation of a Message — used for API responses and
@@ -114,6 +122,8 @@ class MessageSchema(BaseModel):
     sender_id: UUID | None = None
     role: MessageRole = MessageRole.USER
     content: dict[str, Any]   # validated ProseMirror JSON (from Node.to_json())
+    # Slack-style reply: points at the message this one responds to.
+    reply_to_id: UUID | None = None
     sent_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     model_config = ConfigDict(from_attributes=True)
@@ -139,6 +149,7 @@ class MessageCreateSchema(BaseModel):
     channel_id: UUID
     content: dict[str, Any] | str
     role: MessageRole = MessageRole.USER
+    reply_to_id: UUID | None = None
 
     @model_validator(mode="after")
     def coerce_and_validate(self) -> "MessageCreateSchema":
@@ -194,6 +205,12 @@ class Message(Base):
 
     # Serialised byte-length — stored for O(1) size queries.
     content_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Slack-style reply target. SET NULL keeps the reply when the original is
+    # hard-deleted; soft deletes preserve it anyway.
+    reply_to_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="SET NULL"), nullable=True, default=None
+    )
 
     # --- metadata ------------------------------------------------------------
     role: Mapped[MessageRole] = mapped_column(default=MessageRole.USER)

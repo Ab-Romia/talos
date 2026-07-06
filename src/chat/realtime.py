@@ -169,6 +169,7 @@ async def message(sid: str, data: dict[str, Any]):
         channel_id=incoming.channel_id,
         user_id=sess["user_id"],
         content=incoming.content,
+        reply_to_id=incoming.reply_to_id,
     )
 
     await sio.send(
@@ -194,10 +195,12 @@ async def message(sid: str, data: dict[str, Any]):
     ]
 
     from rag.message_text import doc_text
+    from chat.model import extract_mentioned_user_ids_from_raw
     asyncio.create_task(_notify_channel_members(
         channel_id=message.channel_id,
         sender_id=sess["user_id"],
         content=doc_text(message.content),
+        mentioned_user_ids=extract_mentioned_user_ids_from_raw(message.content),
     ))
 
     return "OK", {  # ack
@@ -205,10 +208,12 @@ async def message(sid: str, data: dict[str, Any]):
     },
 
 
-async def _notify_channel_members(channel_id: UUID, sender_id: UUID, content: str):
+async def _notify_channel_members(channel_id: UUID, sender_id: UUID, content: str,
+                                  mentioned_user_ids: list[UUID] | None = None):
     log = get_logger(__name__)
     try:
         with SessionLocal() as db:
+            from auth.model import User
             from notifications.service import push_notification
             from notifications.model import NotificationTag
 
@@ -219,15 +224,28 @@ async def _notify_channel_members(channel_id: UUID, sender_id: UUID, content: st
 
             members = _get_channel_members(db, channel_id)
             log.info(f"_notify: channel={channel_id} sender={sender_id} members={members}")
-            recipients = [uid for uid in members if uid != sender_id]
-            log.info(f"_notify: recipients={recipients}")
+            mentioned = {uid for uid in (mentioned_user_ids or []) if uid in members and uid != sender_id}
+            recipients = [uid for uid in members if uid != sender_id and uid not in mentioned]
+            body = content[:200] if content else ""
+
+            if mentioned:
+                sender = db.get(User, sender_id)
+                sender_name = (sender.name or sender.username) if sender else "Someone"
+                await push_notification(
+                    db=db,
+                    user_ids=list(mentioned),
+                    title=f"{sender_name} mentioned you in #{channel.name}",
+                    body=body,
+                    data={"channel_id": str(channel_id), "mention": True},
+                    tags=[NotificationTag.SOCIAL],
+                )
 
             if recipients:
                 await push_notification(
                     db=db,
                     user_ids=recipients,
                     title=f"#{channel.name}",
-                    body=content[:200] if content else "",
+                    body=body,
                     data={"channel_id": str(channel_id)},
                     tags=[NotificationTag.SOCIAL],
                 )

@@ -4,7 +4,8 @@ from .model import MessageSchema, MessageRole, wrap_plain_text
 from .storage import get_storage
 
 
-async def store_message(channel_id: UUID, user_id: UUID, content: dict | str) -> MessageSchema:
+async def store_message(channel_id: UUID, user_id: UUID, content: dict | str,
+                        reply_to_id: UUID | None = None) -> MessageSchema:
     """
     Persist a user message to storage.
 
@@ -22,6 +23,7 @@ async def store_message(channel_id: UUID, user_id: UUID, content: dict | str) ->
         sender_id=user_id,
         role=MessageRole.USER,
         content=raw,
+        reply_to_id=reply_to_id,
     )
     await get_storage().put(msg)
 

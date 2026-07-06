@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from auth.utils.session import SessionDep
 from database import DatabaseDep
 from workspace import require_perms as require
+from .model import extract_mentioned_user_ids_from_raw
 from .realtime import get_channel_online
 from .service import (
     get_message_by_id,
@@ -22,9 +23,11 @@ channel = APIRouter(tags=["chat"])
 # TODO: support message editing, deletion, reactions, threads, etc. (See Requirements)
 #  support same facilities as websocket?
 
-# TODO: support rich text, attachments, replies, etc. (See Requirements)
 class SendRequest(BaseModel):
-    text: str
+    """Plain text OR a full ProseMirror doc (mentions ride in `content`)."""
+    text: str | None = None
+    content: dict[str, Any] | None = None
+    reply_to_id: UUID | None = None
 
 
 class ChatMessageResponse(BaseModel):
@@ -60,7 +63,18 @@ async def post_message(channel_id: UUID, req: SendRequest, session: SessionDep):
     Does NOT push a real-time notification — use the WebSocket endpoint for that.
     """
     from chat.realtime import sio
-    message = await store_message(channel_id=channel_id, user_id=cast(UUID, session.sub), content=req.text)
+    from rag.message_text import doc_text
+
+    payload = req.content if req.content is not None else req.text
+    if payload is None or (isinstance(payload, str) and not payload.strip()):
+        raise HTTPException(status_code=400, detail="Message is empty")
+
+    message = await store_message(
+        channel_id=channel_id,
+        user_id=cast(UUID, session.sub),
+        content=payload,
+        reply_to_id=req.reply_to_id,
+    )
 
     # Broadcast to everyone in the channel room. NOTE: this MUST be awaited — sio.send on
     # an AsyncServer returns a coroutine, and a bare (un-awaited) call silently no-ops.
@@ -76,11 +90,12 @@ async def post_message(channel_id: UUID, req: SendRequest, session: SessionDep):
     asyncio.create_task(_notify_channel_members(
         channel_id=channel_id,
         sender_id=cast(UUID, session.sub),
-        content=req.text,
+        content=doc_text(message.content),
+        mentioned_user_ids=extract_mentioned_user_ids_from_raw(message.content),
     ))
 
     from chat.ai import maybe_ai_reply
-    await maybe_ai_reply(channel_id, req.text, cast(UUID, session.sub))
+    await maybe_ai_reply(channel_id, message.content, cast(UUID, session.sub))
 
     return {
         "id": message.id,

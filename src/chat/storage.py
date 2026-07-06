@@ -79,6 +79,7 @@ class DatabaseStorageBackend(ChatStorageBackend):
                 channel_id=message.channel_id,
                 sender_id=message.sender_id,
                 role=message.role,
+                reply_to_id=message.reply_to_id,
                 sent_at=message.sent_at,
             )
             # parse_doc gives us a live Node so set_content can walk it
