@@ -28,12 +28,14 @@ from .totp import router as totp_router
 from .utils import jwt
 from .utils import session as s
 from .webauthn import router as webauthn_router
+from .avatars import router as avatar_router, avatar_url_for
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 router.include_router(pass_router, prefix="/password")
 router.include_router(totp_router, prefix="/totp")
 router.include_router(oauth_router, prefix="/oauth")
 router.include_router(webauthn_router, prefix="/passkey")
+router.include_router(avatar_router)
 
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -252,6 +254,7 @@ def get_current_user(user: UserDep):
         "username": user.username,
         "name": user.name,
         "email": user.primary_email,
+        "avatar_url": avatar_url_for(user),
     }
 
 
@@ -276,6 +279,7 @@ def search_users(q: str, user: UserDep, db: DatabaseDep):
         .limit(10)
     ).all()
     return [
-        {"id": str(u.id), "username": u.username, "name": u.name or u.username, "email": u.primary_email}
+        {"id": str(u.id), "username": u.username, "name": u.name or u.username, "email": u.primary_email,
+         "avatar_url": avatar_url_for(u)}
         for u in rows
     ]

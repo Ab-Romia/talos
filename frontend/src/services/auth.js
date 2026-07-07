@@ -29,6 +29,16 @@ export const authService = {
     return api.get('/api/auth/me')
   },
 
+  uploadAvatar(file) {
+    const form = new FormData()
+    form.append('file', file)
+    return api.upload('/api/auth/me/avatar', form)
+  },
+
+  deleteAvatar() {
+    return api.delete('/api/auth/me/avatar')
+  },
+
   sudo(password) {
     return api.post('/api/auth/sudo', {
       auth_info: { auth_type: 'password', password },
@@ -82,6 +92,14 @@ export const authService = {
 
   totpDelete() {
     return api.delete('/api/auth/totp')
+  },
+
+  passkeyList() {
+    return api.get('/api/auth/passkey')
+  },
+
+  passkeyDelete(passkeyId) {
+    return api.delete(`/api/auth/passkey/${passkeyId}`)
   },
 
   passkeyRegistrationChallenge() {

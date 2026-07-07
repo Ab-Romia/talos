@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
-import { Layers, Plus, LogOut, Hash } from 'lucide-react'
+import { Layers, Plus, LogOut } from 'lucide-react'
 import { bootstrapWorkspaces, switchWorkspace } from '../../store/workspaceSlice'
 import { logout } from '../../store/authSlice'
 import * as R from '../../constants/Routes'
@@ -87,12 +87,13 @@ export default function WorkspaceSelectPage() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-ink truncate">{ws.name}</p>
-                  <p className="text-[12px] text-ink-tertiary flex items-center gap-2">
+                  <p className="text-[12px] text-ink-tertiary flex items-center gap-1.5">
                     <span>{isOwner ? 'Owner' : 'Member'}</span>
                     {channelCount > 0 && (
-                      <span className="flex items-center gap-0.5">
-                        <Hash size={11} /> {channelCount}
-                      </span>
+                      <>
+                        <span aria-hidden>·</span>
+                        <span>{channelCount} {channelCount === 1 ? 'channel' : 'channels'}</span>
+                      </>
                     )}
                   </p>
                 </div>

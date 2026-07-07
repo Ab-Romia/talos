@@ -56,10 +56,12 @@ def _participants(db, channel_id: uuid.UUID) -> list[User]:
 
 
 def _peer_dict(user: User) -> dict:
+    from auth.avatars import avatar_url_for
     return {
         "id": str(user.id),
         "username": user.username,
         "name": user.name or user.username,
+        "avatar_url": avatar_url_for(user),
     }
 
 

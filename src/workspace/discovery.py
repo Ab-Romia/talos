@@ -84,12 +84,14 @@ def _serialize(db, ws: Workspace, accessible_channel_ids: set | None = None) -> 
 
 
 def _member_dict(user: User, owner_id: uuid.UUID) -> dict:
+    from auth.avatars import avatar_url_for
     return {
         "id": str(user.id),
         "username": user.username,
         "name": user.name or user.username,
         "email": user.primary_email,
         "is_owner": user.id == owner_id,
+        "avatar_url": avatar_url_for(user),
     }
 
 

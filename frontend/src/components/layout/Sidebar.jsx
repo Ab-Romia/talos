@@ -311,7 +311,7 @@ export default function Sidebar({ onNavigate } = {}) {
                           <Users size={11} />
                         </Avatar>
                       ) : (
-                        <Avatar sx={{ width: 18, height: 18, fontSize: 9, fontWeight: 700, bgcolor: '#EEEDEA', color: 'text.secondary' }}>
+                        <Avatar src={d.peer?.avatar_url || undefined} sx={{ width: 18, height: 18, fontSize: 9, fontWeight: 700, bgcolor: '#EEEDEA', color: 'text.secondary' }}>
                           {(d.peer?.name || '?').charAt(0).toUpperCase()}
                         </Avatar>
                       )
@@ -345,7 +345,7 @@ export default function Sidebar({ onNavigate } = {}) {
         ) : (
           dmMessageCandidates.map((m) => (
             <MenuItem key={m.id} onClick={() => handleStartDm(m.id)}>
-              <Avatar sx={{ width: 22, height: 22, fontSize: 10, fontWeight: 600, mr: 1, bgcolor: '#EEEDEA', color: 'text.secondary' }}>
+              <Avatar src={m.avatar_url || undefined} sx={{ width: 22, height: 22, fontSize: 10, fontWeight: 600, mr: 1, bgcolor: '#EEEDEA', color: 'text.secondary' }}>
                 {(m.name || '?').charAt(0).toUpperCase()}
               </Avatar>
               {m.name || m.username}
@@ -385,7 +385,7 @@ export default function Sidebar({ onNavigate } = {}) {
                     checked={groupSelected.includes(m.id)}
                     onChange={() => toggleGroupMember(m.id)}
                   />
-                  <Avatar sx={{ width: 24, height: 24, fontSize: 11, fontWeight: 600, bgcolor: '#EEEDEA', color: 'text.secondary' }}>
+                  <Avatar src={m.avatar_url || undefined} sx={{ width: 24, height: 24, fontSize: 11, fontWeight: 600, bgcolor: '#EEEDEA', color: 'text.secondary' }}>
                     {(m.name || '?').charAt(0).toUpperCase()}
                   </Avatar>
                   <span className="text-[13px] text-ink">{m.name || m.username}</span>
@@ -429,7 +429,7 @@ export default function Sidebar({ onNavigate } = {}) {
       {/* User footer */}
       <div className="flex items-center justify-between px-4 py-3 border-t border-[rgba(28,27,26,0.06)]">
         <div className="flex items-center gap-2.5">
-          <Avatar sx={{ width: 30, height: 30, bgcolor: 'primary.light', color: 'primary.main', fontSize: 12, fontWeight: 600 }}>
+          <Avatar src={user?.avatar_url || undefined} sx={{ width: 30, height: 30, bgcolor: 'primary.light', color: 'primary.main', fontSize: 12, fontWeight: 600 }}>
             {userInitials}
           </Avatar>
           <span className="text-[13px] font-medium text-ink truncate max-w-[140px]">

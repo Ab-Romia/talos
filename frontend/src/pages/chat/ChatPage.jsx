@@ -157,7 +157,7 @@ export default function ChatPage() {
 
   const membersMap = useMemo(() => {
     const map = new Map()
-    for (const m of members) map.set(String(m.id), m.name || m.username)
+    for (const m of members) map.set(String(m.id), m)
     membersMapRef.current = map
     return map
   }, [members])
@@ -165,7 +165,16 @@ export default function ChatPage() {
   const displayName = useCallback(
     (senderId) => {
       if (senderId && senderId === user?.id) return user?.name || user?.username || 'You'
-      return membersMap.get(String(senderId)) || 'Member'
+      const m = membersMap.get(String(senderId))
+      return (m && (m.name || m.username)) || 'Member'
+    },
+    [user, membersMap],
+  )
+
+  const avatarUrl = useCallback(
+    (senderId) => {
+      if (senderId && senderId === user?.id) return user?.avatar_url || undefined
+      return membersMap.get(String(senderId))?.avatar_url || undefined
     },
     [user, membersMap],
   )
@@ -184,6 +193,7 @@ export default function ChatPage() {
         mine: m.sender_id === user?.id,
         name,
         initials: initialsOf(name),
+        avatarUrl: isAI ? undefined : avatarUrl(m.sender_id),
         time: fmtTime(m.sent_at),
         sentAt: m.sent_at || null,
         body: docText(m.content),
@@ -192,7 +202,7 @@ export default function ChatPage() {
         attachments: m.attachments || [],
       }
     },
-    [displayName, user],
+    [displayName, avatarUrl, user],
   )
 
   // Bot identity for the mention picker (@Talos AI triggers the assistant).
@@ -246,6 +256,7 @@ export default function ChatPage() {
           mine: m.sender_id === user?.id,
           name: displayName(m.sender_id),
           initials: initialsOf(displayName(m.sender_id)),
+          avatarUrl: avatarUrl(m.sender_id),
           time: fmtTime(m.sent_at),
           body: docText(m.content),
         }))
@@ -705,6 +716,7 @@ export default function ChatPage() {
         mine: true,
         name: user?.name || 'You',
         initials: initialsOf(user?.name || 'You'),
+        avatarUrl: user?.avatar_url || undefined,
         time: fmtTime(new Date().toISOString()),
         body: question,
       },
@@ -1015,6 +1027,7 @@ export default function ChatPage() {
                       }}
                     >
                       <Avatar
+                        src={msg.avatarUrl}
                         sx={{
                           width: 28,
                           height: 28,
@@ -1152,6 +1165,7 @@ export default function ChatPage() {
                       <div className="w-7 shrink-0 self-end mb-1">
                         {d.endsGroup && (
                           <Avatar
+                            src={msg.avatarUrl}
                             sx={{
                               width: 28, height: 28, fontSize: 11, fontWeight: 600,
                               bgcolor: msg.isAI ? 'rgba(196,145,58,0.15)' : '#EEEDEA',
@@ -1215,6 +1229,7 @@ export default function ChatPage() {
                   <div className="w-[34px] shrink-0 pt-0.5">
                     {d.startsGroup ? (
                       <Avatar
+                        src={msg.avatarUrl}
                         sx={{
                           width: 34, height: 34,
                           bgcolor: msg.isAI ? 'rgba(196,145,58,0.15)' : msg.mine ? 'primary.light' : '#EEEDEA',
@@ -1425,7 +1440,7 @@ export default function ChatPage() {
               return (
                 <ListItem key={m.id} sx={{ py: 0.5, gap: 1 }}>
                   <ListItemAvatar sx={{ minWidth: 40 }}>
-                    <Avatar sx={{ width: 28, height: 28, fontSize: 12, bgcolor: '#EEEDEA', color: 'text.secondary' }}>
+                    <Avatar src={m.avatar_url || undefined} sx={{ width: 28, height: 28, fontSize: 12, bgcolor: '#EEEDEA', color: 'text.secondary' }}>
                       {initialsOf(m.name)}
                     </Avatar>
                   </ListItemAvatar>

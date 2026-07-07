@@ -127,17 +127,19 @@ def verified_session(claims: UnverifiedSessionDep, db: DatabaseDep):
     return claims
 
 
-def new_session(claims: UnverifiedSessionDep, db: DatabaseDep):
+def new_session(claims: UnverifiedSessionDep, db: DatabaseDep, request: Request = None):
     # TODO: handle existing session (e.g. revoke previous session, or allow multiple sessions per user)
     yield claims
 
     assert claims.sub is not None, "User ID (sub) must be set for new session"
     assert claims.jti is not None, "Session ID (jti) must be set for new session"
 
+    user_agent = request.headers.get("user-agent") if request is not None else None
     sess = Session(
         id=claims.jti,
         user_id=claims.sub,
         last_used_at=func.now(),
+        user_agent=user_agent[:1024] if user_agent else None,
     )
     db.merge(sess)
     db.commit()

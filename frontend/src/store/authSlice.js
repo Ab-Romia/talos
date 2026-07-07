@@ -238,6 +238,55 @@ export const registerPasskey = createAsyncThunk(
   }
 )
 
+export const updateAvatar = createAsyncThunk(
+  'auth/updateAvatar',
+  async (file, { rejectWithValue }) => {
+    try {
+      const res = await authService.uploadAvatar(file)
+      return res.avatar_url
+    } catch (err) {
+      return rejectWithValue(err?.detail || 'Failed to upload photo')
+    }
+  }
+)
+
+export const removeAvatar = createAsyncThunk(
+  'auth/removeAvatar',
+  async (_, { rejectWithValue }) => {
+    try {
+      await authService.deleteAvatar()
+      return true
+    } catch (err) {
+      return rejectWithValue(err?.detail || 'Failed to remove photo')
+    }
+  }
+)
+
+export const listPasskeys = createAsyncThunk(
+  'auth/listPasskeys',
+  async (_, { rejectWithValue }) => {
+    try {
+      const passkeys = await authService.passkeyList()
+      return passkeys || []
+    } catch (err) {
+      return rejectWithValue(err?.detail || 'Failed to load passkeys')
+    }
+  }
+)
+
+export const deletePasskey = createAsyncThunk(
+  'auth/deletePasskey',
+  async ({ passkeyId, password }, { rejectWithValue }) => {
+    try {
+      if (password) await authService.sudo(password)
+      await authService.passkeyDelete(passkeyId)
+      return passkeyId
+    } catch (err) {
+      return rejectWithValue(err?.detail || 'Failed to remove passkey')
+    }
+  }
+)
+
 export const loginWithPasskey = createAsyncThunk(
   'auth/loginWithPasskey',
   async (_, { rejectWithValue, dispatch }) => {
@@ -299,6 +348,8 @@ const authSlice = createSlice({
     totpError: null,
     passkeyLoading: false,
     passkeyError: null,
+    passkeys: [],
+    passkeysLoading: false,
   },
   reducers: {
     clearError(state) {
@@ -365,6 +416,7 @@ const authSlice = createSlice({
         state.requiresOtp = false
         state.sessionChecked = true
         state.sessions = []
+        state.passkeys = []
         localStorage.removeItem('talos_auth')
       })
       .addCase(logout.rejected, (state) => {
@@ -373,6 +425,7 @@ const authSlice = createSlice({
         state.requiresOtp = false
         state.sessionChecked = true
         state.sessions = []
+        state.passkeys = []
         localStorage.removeItem('talos_auth')
       })
       .addCase(refreshToken.fulfilled, (state, action) => {
@@ -471,6 +524,28 @@ const authSlice = createSlice({
         state.passkeyLoading = false
         state.passkeyError = action.payload
       })
+      .addCase(listPasskeys.pending, (state) => {
+        state.passkeysLoading = true
+      })
+      .addCase(listPasskeys.fulfilled, (state, action) => {
+        state.passkeysLoading = false
+        state.passkeys = action.payload
+      })
+      .addCase(listPasskeys.rejected, (state) => {
+        state.passkeysLoading = false
+      })
+      .addCase(deletePasskey.fulfilled, (state, action) => {
+        state.passkeys = state.passkeys.filter((p) => p.id !== action.payload)
+      })
+      .addCase(updateAvatar.fulfilled, (state, action) => {
+        if (state.user) state.user = { ...state.user, avatar_url: action.payload }
+      })
+      .addCase(removeAvatar.fulfilled, (state) => {
+        if (state.user) state.user = { ...state.user, avatar_url: null }
+      })
+      .addCase(deletePasskey.rejected, (state, action) => {
+        state.passkeyError = action.payload
+      })
       .addCase(loginWithPasskey.pending, (state) => {
         state.loading = true
         state.error = null
@@ -493,6 +568,7 @@ const authSlice = createSlice({
         state.requiresOtp = false
         state.sessionChecked = true
         state.sessions = []
+        state.passkeys = []
         localStorage.removeItem('talos_auth')
       })
       .addCase(deleteAccount.rejected, (state, action) => {

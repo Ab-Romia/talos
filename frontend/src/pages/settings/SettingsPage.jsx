@@ -14,7 +14,7 @@ import Dialog from '@mui/material/Dialog'
 import DialogTitle from '@mui/material/DialogTitle'
 import DialogContent from '@mui/material/DialogContent'
 import DialogActions from '@mui/material/DialogActions'
-import { KeyRound, Trash2, Hash, Pencil, AlertTriangle, LogOut } from 'lucide-react'
+import { KeyRound, Trash2, Hash, Pencil, AlertTriangle, LogOut, Camera } from 'lucide-react'
 import {
   changePassword,
   deleteAccount,
@@ -28,6 +28,10 @@ import {
   clearTotpSetup,
   registerPasskey,
   clearPasskeyError,
+  listPasskeys,
+  deletePasskey,
+  updateAvatar,
+  removeAvatar,
 } from '../../store/authSlice'
 import { authService } from '../../services/auth'
 import { chatService } from '../../services/chat'
@@ -62,16 +66,69 @@ function initialsOf(name) {
     .toUpperCase()
 }
 
+// Turn a raw User-Agent into a friendly "Browser on OS" label.
+function deviceLabel(ua) {
+  if (!ua) return 'Unknown device'
+  if (/iPhone/i.test(ua)) return 'iPhone'
+  if (/iPad/i.test(ua)) return 'iPad'
+  if (/Android/i.test(ua)) return 'Android device'
+  const os = /Windows/i.test(ua) ? 'Windows'
+    : /Mac OS X|Macintosh/i.test(ua) ? 'macOS'
+    : /CrOS/i.test(ua) ? 'ChromeOS'
+    : /Linux/i.test(ua) ? 'Linux' : 'device'
+  const browser = /Edg\//i.test(ua) ? 'Edge'
+    : /OPR\/|Opera/i.test(ua) ? 'Opera'
+    : /Chrome\//i.test(ua) ? 'Chrome'
+    : /Firefox\//i.test(ua) ? 'Firefox'
+    : /Safari\//i.test(ua) ? 'Safari' : 'Browser'
+  return `${browser} on ${os}`
+}
+
 function describeSession(s) {
-  const ua = s.user_agent || 'Unknown device'
-  let device = ua
-  if (/iPhone|iPad/i.test(ua)) device = 'Safari on iPhone'
-  else if (/Android/i.test(ua)) device = 'Browser on Android'
-  else if (/Chrome/i.test(ua)) device = 'Chrome on ' + (/Windows/i.test(ua) ? 'Windows' : /Mac/i.test(ua) ? 'macOS' : 'Linux')
-  else if (/Firefox/i.test(ua)) device = 'Firefox on ' + (/Windows/i.test(ua) ? 'Windows' : /Mac/i.test(ua) ? 'macOS' : 'Linux')
-  else if (/Safari/i.test(ua)) device = 'Safari on macOS'
   const last = s.last_used_at ? new Date(s.last_used_at).toLocaleString() : 'Unknown'
-  return { device, location: `Last active ${last}` }
+  return { device: deviceLabel(s.user_agent), location: `Last active ${last}` }
+}
+
+// Collapse many logins from the same device into one entry that carries a
+// sign-in history, instead of showing every login as a separate "device".
+function groupSessions(sessions) {
+  const groups = new Map()
+  for (const s of sessions) {
+    const key = s.user_agent || 'unknown'
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(s)
+  }
+  const out = []
+  for (const [key, list] of groups) {
+    const logins = [...list].sort(
+      (a, b) => new Date(b.created_at || b.last_used_at) - new Date(a.created_at || a.last_used_at),
+    )
+    const lastActive = list.reduce(
+      (mx, s) => Math.max(mx, new Date(s.last_used_at || s.created_at || 0).getTime()), 0,
+    )
+    out.push({
+      key,
+      device: deviceLabel(key === 'unknown' ? null : key),
+      current: list.some((s) => s.current),
+      lastActive,
+      logins,
+      revocableIds: list.filter((s) => !s.current).map((s) => s.id),
+    })
+  }
+  return out.sort((a, b) => (b.current ? 1 : 0) - (a.current ? 1 : 0) || b.lastActive - a.lastActive)
+}
+
+function describePasskey(p) {
+  const kind = p.backed_up || p.device_type === 'multi_device' ? 'Synced passkey' : 'This device'
+  const added = p.created_at ? new Date(p.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : null
+  return added ? `${kind} · Added ${added}` : kind
+}
+
+// Softer, greyer labels/placeholders for password fields so the hints read as
+// hints, not primary text.
+const mutedFieldSx = {
+  '& .MuiInputLabel-root': { color: 'rgba(28,27,26,0.45)' },
+  '& .MuiInputBase-input::placeholder': { color: 'rgba(28,27,26,0.38)', opacity: 1 },
 }
 
 export default function SettingsPage() {
@@ -86,6 +143,8 @@ export default function SettingsPage() {
     totpError,
     passkeyLoading,
     passkeyError,
+    passkeys,
+    passkeysLoading,
   } = useSelector((s) => s.auth)
 
   const [tab, setTab] = useState(0)
@@ -94,7 +153,8 @@ export default function SettingsPage() {
 
   const [loadSessionsOpen, setLoadSessionsOpen] = useState(false)
   const [loadSessionsPassword, setLoadSessionsPassword] = useState('')
-  const [revokeDialog, setRevokeDialog] = useState({ open: false, sessionId: null })
+  const [revokeDialog, setRevokeDialog] = useState({ open: false, sessionIds: [], device: '' })
+  const [expandedDevice, setExpandedDevice] = useState(null)
   const [revokePassword, setRevokePassword] = useState('')
   const [revokeAllDialog, setRevokeAllDialog] = useState(false)
   const [revokeAllPassword, setRevokeAllPassword] = useState('')
@@ -140,6 +200,10 @@ export default function SettingsPage() {
   const [passkeyDialogOpen, setPasskeyDialogOpen] = useState(false)
   const [passkeyName, setPasskeyName] = useState('')
   const [passkeyPassword, setPasskeyPassword] = useState('')
+  const [removePasskey, setRemovePasskey] = useState({ open: false, id: null, name: '' })
+  const [removePasskeyPassword, setRemovePasskeyPassword] = useState('')
+  const avatarInputRef = useRef(null)
+  const [avatarUploading, setAvatarUploading] = useState(false)
 
   const [connections, setConnections] = useState({})
   const [connectingProvider, setConnectingProvider] = useState(null)
@@ -324,6 +388,10 @@ export default function SettingsPage() {
     loadConnections()
   }, [loadConnections])
 
+  useEffect(() => {
+    dispatch(listPasskeys())
+  }, [dispatch])
+
   // Surface the outcome of returning from a "Connect" OAuth redirect.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -451,18 +519,22 @@ export default function SettingsPage() {
     setLoadSessionsOpen(true)
   }
 
-  const handleRevokeSession = (id) => {
-    setRevokeDialog({ open: true, sessionId: id })
+  const handleRevokeDevice = (group) => {
+    setRevokeDialog({ open: true, sessionIds: group.revocableIds, device: group.device })
     setRevokePassword('')
     dispatch(clearSettingsError())
   }
 
   const handleRevokeConfirm = async () => {
-    const result = await dispatch(revokeSession({ sessionId: revokeDialog.sessionId, password: revokePassword }))
-    if (revokeSession.fulfilled.match(result)) {
-      setRevokeDialog({ open: false, sessionId: null })
+    let ok = true
+    for (const id of revokeDialog.sessionIds) {
+      const result = await dispatch(revokeSession({ sessionId: id, password: revokePassword }))
+      if (!revokeSession.fulfilled.match(result)) { ok = false; break }
+    }
+    if (ok) {
+      setRevokeDialog({ open: false, sessionIds: [], device: '' })
       setRevokePassword('')
-      showSnackbar('Session revoked')
+      showSnackbar('Signed out of that device')
     }
   }
 
@@ -577,6 +649,40 @@ export default function SettingsPage() {
       setPasskeyName('')
       setPasskeyPassword('')
       showSnackbar('Passkey registered successfully')
+      dispatch(listPasskeys())
+    }
+  }
+
+  const handleAvatarPick = (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (!file.type.startsWith('image/')) { showSnackbar('Please choose an image file'); return }
+    if (file.size > 8 * 1024 * 1024) { showSnackbar('Image is too large (8 MB max)'); return }
+    handleAvatarUpload(file)
+  }
+
+  const handleAvatarUpload = async (file) => {
+    setAvatarUploading(true)
+    const result = await dispatch(updateAvatar(file))
+    setAvatarUploading(false)
+    showSnackbar(updateAvatar.fulfilled.match(result) ? 'Profile photo updated' : (result.payload || 'Failed to upload photo'))
+  }
+
+  const handleAvatarRemove = async () => {
+    const result = await dispatch(removeAvatar())
+    if (removeAvatar.fulfilled.match(result)) showSnackbar('Profile photo removed')
+  }
+
+  const handleRemovePasskey = async () => {
+    dispatch(clearPasskeyError())
+    const result = await dispatch(
+      deletePasskey({ passkeyId: removePasskey.id, password: removePasskeyPassword })
+    )
+    if (deletePasskey.fulfilled.match(result)) {
+      setRemovePasskey({ open: false, id: null, name: '' })
+      setRemovePasskeyPassword('')
+      showSnackbar('Passkey removed')
     }
   }
 
@@ -596,12 +702,46 @@ export default function SettingsPage() {
           {/* Profile Tab */}
           <TabPanel value={activeKey} index="profile">
             <div className="flex items-center gap-6 mb-8">
-              <Avatar sx={{ width: 56, height: 56, bgcolor: 'primary.light', color: 'primary.main', fontSize: 22, fontWeight: 600 }}>
-                {getInitials()}
-              </Avatar>
+              <div className="relative group shrink-0">
+                <Avatar
+                  src={user?.avatar_url || undefined}
+                  sx={{ width: 72, height: 72, bgcolor: 'primary.light', color: 'primary.main', fontSize: 26, fontWeight: 600 }}
+                >
+                  {getInitials()}
+                </Avatar>
+                <button
+                  type="button"
+                  onClick={() => avatarInputRef.current?.click()}
+                  disabled={avatarUploading}
+                  title="Change photo"
+                  className="absolute inset-0 rounded-full flex items-center justify-center bg-black/45 text-white opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-100"
+                >
+                  {avatarUploading ? <CircularProgress size={18} color="inherit" /> : <Camera size={20} />}
+                </button>
+                <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarPick} />
+              </div>
               <div>
                 <p className="text-sm font-semibold text-ink">{user?.name || user?.username || '—'}</p>
-                <p className="text-xs text-ink-tertiary">{user?.email || ''}</p>
+                <p className="text-xs text-ink-tertiary mb-2">{user?.email || ''}</p>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => avatarInputRef.current?.click()}
+                    disabled={avatarUploading}
+                    className="text-[13px] font-medium text-amber hover:underline disabled:opacity-50"
+                  >
+                    {avatarUploading ? 'Uploading…' : user?.avatar_url ? 'Change photo' : 'Upload photo'}
+                  </button>
+                  {user?.avatar_url && (
+                    <button
+                      type="button"
+                      onClick={handleAvatarRemove}
+                      className="text-[13px] font-medium text-ink-tertiary hover:text-ink-secondary"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -614,9 +754,9 @@ export default function SettingsPage() {
 
             <h3 className="text-[15px] font-semibold text-ink mb-4">Change password</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-              <TextField label="Current password" type="password" fullWidth value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
-              <TextField label="New password" type="password" fullWidth placeholder="Min. 12 characters" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
-              <TextField label="Confirm new password" type="password" fullWidth value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
+              <TextField label="Current password" type="password" fullWidth autoComplete="new-password" sx={mutedFieldSx} value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
+              <TextField label="New password" type="password" fullWidth autoComplete="new-password" placeholder="Min. 12 characters" sx={mutedFieldSx} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+              <TextField label="Confirm new password" type="password" fullWidth autoComplete="new-password" sx={mutedFieldSx} value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
             </div>
 
             {settingsError && (
@@ -680,6 +820,7 @@ export default function SettingsPage() {
                   type="password"
                   fullWidth
                   variant="outlined"
+                  autoComplete="new-password"
                   value={deletePassword}
                   onChange={(e) => setDeletePassword(e.target.value)}
                   sx={{ mb: 2 }}
@@ -775,7 +916,7 @@ export default function SettingsPage() {
                     {members.map((m, i) => (
                       <div key={m.id} className={`flex items-center p-3 px-4 ${i < members.length - 1 ? 'border-b border-[rgba(28,27,26,0.06)]' : ''}`}>
                         <div className="flex items-center gap-3 flex-1 min-w-0">
-                          <Avatar sx={{ width: 32, height: 32, fontSize: 12, fontWeight: 600 }}>{initialsOf(m.name)}</Avatar>
+                          <Avatar src={m.avatar_url || undefined} sx={{ width: 32, height: 32, fontSize: 12, fontWeight: 600 }}>{initialsOf(m.name)}</Avatar>
                           <div className="min-w-0">
                             <p className="text-sm font-medium text-ink truncate">
                               {m.name}
@@ -1054,7 +1195,7 @@ export default function SettingsPage() {
             </div>
 
             {/* Passkeys */}
-            <div className="bg-surface-1 border border-[rgba(28,27,26,0.06)] rounded-lg p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+            <div className="bg-surface-1 border border-[rgba(28,27,26,0.06)] rounded-lg p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-lg bg-amber-subtle flex items-center justify-center text-amber">
                   <KeyRound size={20} />
@@ -1073,6 +1214,40 @@ export default function SettingsPage() {
                 Add passkey
               </Button>
             </div>
+
+            {/* Registered passkeys */}
+            {passkeysLoading && passkeys.length === 0 ? (
+              <div className="flex items-center gap-2 text-[13px] text-ink-tertiary mb-6 px-1">
+                <CircularProgress size={14} /> Loading passkeys…
+              </div>
+            ) : passkeys.length > 0 ? (
+              <div className="space-y-2 mb-6">
+                {passkeys.map((p) => (
+                  <div key={p.id} className="bg-surface-1 border border-[rgba(28,27,26,0.06)] rounded-lg p-3 px-4 flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-md bg-amber-subtle flex items-center justify-center text-amber shrink-0">
+                      <KeyRound size={16} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-ink truncate">{p.name}</p>
+                      <p className="text-xs text-ink-tertiary">{describePasskey(p)}</p>
+                    </div>
+                    <Button
+                      variant="text"
+                      size="small"
+                      startIcon={<Trash2 size={14} />}
+                      sx={{ color: 'text.disabled', '&:hover': { color: 'error.main' } }}
+                      onClick={() => { setRemovePasskeyPassword(''); setRemovePasskey({ open: true, id: p.id, name: p.name }) }}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[13px] text-ink-tertiary mb-6 px-1">
+                No passkeys yet. Add one to sign in with Face ID, Touch ID, or a security key.
+              </p>
+            )}
 
             {passkeyError && (
               <Alert severity="error" sx={{ mb: 3 }} onClose={() => dispatch(clearPasskeyError())}>{passkeyError}</Alert>
@@ -1110,32 +1285,54 @@ export default function SettingsPage() {
             )}
 
             <div className="space-y-2 mb-8">
-              {sessions.map((s) => {
-                const { device, location } = describeSession(s)
+              {groupSessions(sessions).map((g) => {
+                const open = expandedDevice === g.key
                 return (
-                  <div key={s.id} className="bg-surface-1 border border-[rgba(28,27,26,0.06)] rounded-lg p-3 px-4 flex items-center gap-3">
-                    <div className="flex-1 cursor-pointer" onClick={() => handleViewSession(s.id)}>
-                      <p className="text-sm font-medium text-ink">{device}</p>
-                      <p className="text-xs text-ink-tertiary">{location}</p>
+                  <div key={g.key} className="bg-surface-1 border border-[rgba(28,27,26,0.06)] rounded-lg p-3 px-4">
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-ink flex items-center gap-2">
+                          {g.device}
+                          {g.current && <Chip label="This device" color="primary" size="small" />}
+                        </p>
+                        <p className="text-xs text-ink-tertiary">
+                          {g.logins.length} sign-in{g.logins.length === 1 ? '' : 's'}
+                          {g.lastActive ? ` · Last active ${new Date(g.lastActive).toLocaleString()}` : ''}
+                        </p>
+                      </div>
+                      {g.logins.length > 1 && (
+                        <Button
+                          variant="text"
+                          size="small"
+                          onClick={() => setExpandedDevice(open ? null : g.key)}
+                        >
+                          {open ? 'Hide history' : 'History'}
+                        </Button>
+                      )}
+                      {g.revocableIds.length > 0 && (
+                        <Button
+                          variant="text"
+                          size="small"
+                          sx={{ color: 'text.disabled', '&:hover': { color: 'error.main' } }}
+                          onClick={() => handleRevokeDevice(g)}
+                        >
+                          {g.current ? 'Revoke others' : 'Revoke'}
+                        </Button>
+                      )}
                     </div>
-                    <Button
-                      variant="text"
-                      size="small"
-                      onClick={() => handleViewSession(s.id)}
-                    >
-                      View
-                    </Button>
-                    {s.current ? (
-                      <Chip label="Current" color="primary" size="small" />
-                    ) : (
-                      <Button
-                        variant="text"
-                        size="small"
-                        sx={{ color: 'text.disabled', '&:hover': { color: 'error.main' } }}
-                        onClick={() => handleRevokeSession(s.id)}
-                      >
-                        Revoke
-                      </Button>
+                    {open && (
+                      <div className="mt-3 pt-3 border-t border-[rgba(28,27,26,0.06)] space-y-1.5">
+                        {g.logins.map((s) => (
+                          <div key={s.id} className="flex items-center justify-between text-xs gap-2">
+                            <span className="text-ink-secondary">
+                              Signed in {s.created_at ? new Date(s.created_at).toLocaleString() : '—'}
+                            </span>
+                            <span className="text-ink-tertiary shrink-0">
+                              {s.current ? 'Current session' : `Active ${s.last_used_at ? new Date(s.last_used_at).toLocaleString() : '—'}`}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </div>
                 )
@@ -1153,7 +1350,7 @@ export default function SettingsPage() {
                   <Alert severity="error" sx={{ mb: 2 }} onClose={() => dispatch(clearSettingsError())}>{settingsError}</Alert>
                 )}
                 <TextField
-                  autoFocus label="Current password" type="password" fullWidth variant="outlined"
+                  autoFocus label="Current password" type="password" fullWidth variant="outlined" autoComplete="new-password"
                   value={loadSessionsPassword} onChange={(e) => setLoadSessionsPassword(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && loadSessionsPassword && handleLoadSessions(loadSessionsPassword)}
                 />
@@ -1172,21 +1369,23 @@ export default function SettingsPage() {
             </Dialog>
 
             {/* Revoke Session Dialog */}
-            <Dialog open={revokeDialog.open} onClose={() => setRevokeDialog({ open: false, sessionId: null })} maxWidth="xs" fullWidth>
-              <DialogTitle>Confirm session revoke</DialogTitle>
+            <Dialog open={revokeDialog.open} onClose={() => setRevokeDialog({ open: false, sessionIds: [], device: '' })} maxWidth="xs" fullWidth>
+              <DialogTitle>Sign out {revokeDialog.device || 'this device'}</DialogTitle>
               <DialogContent>
-                <p className="text-sm text-ink-secondary mb-3">Enter your password to revoke this session.</p>
+                <p className="text-sm text-ink-secondary mb-3">
+                  Enter your password to revoke {revokeDialog.sessionIds.length > 1 ? `${revokeDialog.sessionIds.length} sessions on this device` : 'this session'}.
+                </p>
                 {settingsError && (
                   <Alert severity="error" sx={{ mb: 2 }} onClose={() => dispatch(clearSettingsError())}>{settingsError}</Alert>
                 )}
                 <TextField
-                  autoFocus label="Current password" type="password" fullWidth variant="outlined"
+                  autoFocus label="Current password" type="password" fullWidth variant="outlined" autoComplete="new-password"
                   value={revokePassword} onChange={(e) => setRevokePassword(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleRevokeConfirm()}
                 />
               </DialogContent>
               <DialogActions>
-                <Button onClick={() => setRevokeDialog({ open: false, sessionId: null })}>Cancel</Button>
+                <Button onClick={() => setRevokeDialog({ open: false, sessionIds: [], device: '' })}>Cancel</Button>
                 <Button
                   variant="contained" color="error"
                   disabled={!revokePassword || settingsLoading}
@@ -1209,7 +1408,7 @@ export default function SettingsPage() {
                   <Alert severity="error" sx={{ mb: 2 }} onClose={() => dispatch(clearSettingsError())}>{settingsError}</Alert>
                 )}
                 <TextField
-                  autoFocus label="Current password" type="password" fullWidth variant="outlined"
+                  autoFocus label="Current password" type="password" fullWidth variant="outlined" autoComplete="new-password"
                   value={revokeAllPassword} onChange={(e) => setRevokeAllPassword(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleRevokeAllConfirm()}
                 />
@@ -1261,7 +1460,7 @@ export default function SettingsPage() {
                       Enter your password to continue.
                     </p>
                     <TextField
-                      autoFocus label="Password" type="password" fullWidth
+                      autoFocus label="Password" type="password" fullWidth autoComplete="new-password"
                       value={totpPassword} onChange={(e) => setTotpPassword(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && handleStartTotpSetup()}
                     />
@@ -1273,7 +1472,7 @@ export default function SettingsPage() {
                     </p>
                     <div className="flex justify-center mb-3">
                       <img
-                        src={`data:image/png;base64,${totpSetup.qr}`}
+                        src={totpSetup.qr}
                         alt="TOTP QR"
                         className="w-40 h-40 rounded border border-[rgba(28,27,26,0.10)]"
                       />
@@ -1315,7 +1514,7 @@ export default function SettingsPage() {
                   Enter your password, name this passkey, then follow your browser's prompt.
                 </p>
                 <TextField
-                  label="Current password" type="password" fullWidth sx={{ mb: 2 }}
+                  label="Current password" type="password" fullWidth sx={{ mb: 2 }} autoComplete="new-password"
                   value={passkeyPassword} onChange={(e) => setPasskeyPassword(e.target.value)}
                 />
                 <TextField
@@ -1332,6 +1531,35 @@ export default function SettingsPage() {
                   startIcon={passkeyLoading ? <CircularProgress size={14} color="inherit" /> : null}
                 >
                   Create passkey
+                </Button>
+              </DialogActions>
+            </Dialog>
+
+            {/* Remove Passkey Dialog */}
+            <Dialog open={removePasskey.open} onClose={() => setRemovePasskey({ open: false, id: null, name: '' })} maxWidth="xs" fullWidth>
+              <DialogTitle>Remove passkey</DialogTitle>
+              <DialogContent>
+                <p className="text-sm text-ink-secondary mb-3">
+                  Enter your password to remove <span className="font-medium text-ink">{removePasskey.name}</span>. You won't be able to sign in with it anymore.
+                </p>
+                {passkeyError && (
+                  <Alert severity="error" sx={{ mb: 2 }} onClose={() => dispatch(clearPasskeyError())}>{passkeyError}</Alert>
+                )}
+                <TextField
+                  autoFocus label="Current password" type="password" fullWidth variant="outlined" autoComplete="new-password"
+                  value={removePasskeyPassword} onChange={(e) => setRemovePasskeyPassword(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && removePasskeyPassword && handleRemovePasskey()}
+                />
+              </DialogContent>
+              <DialogActions>
+                <Button onClick={() => setRemovePasskey({ open: false, id: null, name: '' })}>Cancel</Button>
+                <Button
+                  variant="contained" color="error"
+                  disabled={!removePasskeyPassword || passkeyLoading}
+                  startIcon={passkeyLoading ? <CircularProgress size={14} color="inherit" /> : null}
+                  onClick={handleRemovePasskey}
+                >
+                  Remove
                 </Button>
               </DialogActions>
             </Dialog>
