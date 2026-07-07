@@ -1,4 +1,6 @@
 import asyncio
+import secrets
+import threading
 from uuid import UUID
 
 from sqlalchemy import select
@@ -98,6 +100,9 @@ async def _run_ai_reply(channel_id: UUID, question: str, user_id: UUID) -> None:
     from workspace.model import Channel
 
     room = f"channel:{channel_id}"
+    stream_id = secrets.token_hex(8)
+    # `ai_typing` covers the retrieval phase (before any token exists); the
+    # `ai_stream` events then carry the live token-by-token answer bubble.
     await sio.emit("ai_typing", {"channel_id": str(channel_id), "status": "start"}, room=room)
     try:
         with SessionLocal() as db:
@@ -115,19 +120,77 @@ async def _run_ai_reply(channel_id: UUID, question: str, user_id: UUID) -> None:
             global_rag_config.chat_context_cap,
             global_rag_config.chat_context_char_budget,
         )
-        answer = await asyncio.to_thread(
-            _generate, str(workspace_id), channel_id, question, history, tail_ids, user_id
+
+        # Bridge the sync token generator (runs in a worker thread) to this event
+        # loop via a queue, emitting each chunk to the room as it is produced.
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def _produce():
+            try:
+                for chunk in _stream_generate(
+                    str(workspace_id), channel_id, question, history, tail_ids, user_id
+                ):
+                    loop.call_soon_threadsafe(queue.put_nowait, ("delta", chunk))
+            except Exception as exc:
+                loop.call_soon_threadsafe(queue.put_nowait, ("error", exc))
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
+
+        threading.Thread(target=_produce, daemon=True).start()
+
+        await sio.emit(
+            "ai_stream",
+            {"channel_id": str(channel_id), "stream_id": stream_id,
+             "status": "start", "sender_id": str(ai_user_id)},
+            room=room,
         )
+
+        parts: list[str] = []
+        errored = False
+        while True:
+            kind, payload = await queue.get()
+            if kind == "delta":
+                parts.append(payload)
+                await sio.emit(
+                    "ai_stream",
+                    {"channel_id": str(channel_id), "stream_id": stream_id, "delta": payload},
+                    room=room,
+                )
+            elif kind == "error":
+                errored = True
+                logger.error("In-channel AI streaming errored", channel_id=str(channel_id),
+                             error=str(payload)[:300])
+            elif kind == "done":
+                break
+
+        from rag.ingestion import dedupe_sources
+        answer = dedupe_sources("".join(parts).strip())
+        if not answer:
+            answer = ("Sorry — I ran into an error generating a response."
+                      if errored else "I don't have anything to add.")
         message = await store_assistant_message(channel_id, ai_user_id, answer)
-        await sio.send(message.model_dump(mode="json"), room=room)
+        # Final authoritative message replaces the streamed placeholder client-side.
+        await sio.emit(
+            "ai_stream",
+            {"channel_id": str(channel_id), "stream_id": stream_id, "status": "end",
+             "message": message.model_dump(mode="json")},
+            room=room,
+        )
     except Exception:
         logger.exception("In-channel AI reply failed", channel_id=str(channel_id))
+        await sio.emit(
+            "ai_stream",
+            {"channel_id": str(channel_id), "stream_id": stream_id, "status": "end", "error": True},
+            room=room,
+        )
     finally:
         await sio.emit("ai_typing", {"channel_id": str(channel_id), "status": "stop"}, room=room)
 
 
-def _generate(workspace_id: str, channel_id: UUID, question: str,
-              history: list, tail_ids: set[str], user_id: UUID) -> str:
+def _stream_generate(workspace_id: str, channel_id: UUID, question: str,
+                     history: list, tail_ids: set[str], user_id: UUID):
+    """Yield the answer token-by-token (retrieval + LLM streaming)."""
     from rag.access import accessible_file_ids
     from rag.ai_settings import resolve_ai_config
     from rag.rag_chain import RAGChain
@@ -147,4 +210,4 @@ def _generate(workspace_id: str, channel_id: UUID, question: str,
         chat_history=history,
         exclude_message_ids=tail_ids,
     )
-    return rag.query(question)
+    yield from rag.stream_query(question)

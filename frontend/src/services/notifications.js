@@ -4,8 +4,11 @@ import {
   NOTIFICATIONS_READ,
   NOTIFICATIONS_READ_ALL,
   NOTIFICATIONS_UNREAD_COUNT,
+  NOTIFICATIONS_UNREAD_BY_CHANNEL,
+  NOTIFICATIONS_CHANNEL_READ,
   NOTIFICATIONS_VAPID_KEY,
   NOTIFICATIONS_SUBSCRIPTION,
+  NOTIFICATIONS_PREFERENCES,
 } from '../constants/ApiRoutes'
 
 export const notificationsService = {
@@ -21,6 +24,22 @@ export const notificationsService = {
 
   unreadCount() {
     return api.get(NOTIFICATIONS_UNREAD_COUNT)
+  },
+
+  unreadByChannel() {
+    return api.get(NOTIFICATIONS_UNREAD_BY_CHANNEL)
+  },
+
+  markChannelRead(channelId) {
+    return api.post(NOTIFICATIONS_CHANNEL_READ(channelId))
+  },
+
+  getPreferences() {
+    return api.get(NOTIFICATIONS_PREFERENCES)
+  },
+
+  updatePreferences(prefs) {
+    return api.put(NOTIFICATIONS_PREFERENCES, prefs)
   },
 
   markRead(notificationId) {

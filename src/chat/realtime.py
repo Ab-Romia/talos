@@ -249,6 +249,7 @@ async def _notify_channel_members(channel_id: UUID, sender_id: UUID, content: st
                     body=body,
                     data={
                         "channel_id": str(channel_id),
+                        "workspace_id": str(channel.workspace_id),
                         "mention": True,
                         "direct": channel.is_direct,
                         **({"message_id": str(message_id)} if message_id else {}),
@@ -270,6 +271,7 @@ async def _notify_channel_members(channel_id: UUID, sender_id: UUID, content: st
                     body=body,
                     data={
                         "channel_id": str(channel_id),
+                        "workspace_id": str(channel.workspace_id),
                         "direct": channel.is_direct,
                         **({"message_id": str(message_id)} if message_id else {}),
                     },

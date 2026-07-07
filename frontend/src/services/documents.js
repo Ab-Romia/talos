@@ -25,6 +25,22 @@ export const documentService = {
     return api.upload(`/api/workspaces/${workspaceId}/documents`, formData)
   },
 
+  // Private files uploaded through the Talos AI tab — only the uploader can ask
+  // the assistant about them; they never appear in the workspace Documents tab.
+  uploadPrivate(workspaceId, file) {
+    const formData = new FormData()
+    formData.append('file', file)
+    return api.upload(`/api/workspaces/${workspaceId}/ai/documents`, formData)
+  },
+
+  listPrivate(workspaceId) {
+    return api.get(`/api/workspaces/${workspaceId}/ai/documents`)
+  },
+
+  deletePrivate(workspaceId, fileId) {
+    return api.delete(`/api/workspaces/${workspaceId}/ai/documents/${fileId}`)
+  },
+
   listDrive(workspaceId, folderId = null) {
     const params = new URLSearchParams()
     if (folderId) params.set('folder_id', folderId)

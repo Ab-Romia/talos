@@ -71,10 +71,14 @@ def wrap_plain_text(text: str) -> Node:
     """
     Wraps a plain string into a minimal doc Node.
     Use server-side when a bot / API consumer posts a plain string.
+
+    Empty text yields an empty paragraph — ProseMirror forbids empty text
+    nodes, so an attachment-only message (no caption) must not create one.
     """
+    children = [chat_schema.text(text)] if text else []
     return chat_schema.node(
         "doc", {},
-        [chat_schema.node("paragraph", {}, [chat_schema.text(text)])]
+        [chat_schema.node("paragraph", {}, children)]
     )
 
 

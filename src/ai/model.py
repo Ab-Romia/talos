@@ -17,6 +17,9 @@ class AiChatMessage(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
+    # Groups messages into a distinct conversation. A user keeps many saved
+    # conversations per workspace; starting a "new chat" just mints a new id.
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
     role: Mapped[str] = mapped_column(default="user")
     content: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
@@ -25,4 +28,11 @@ class AiChatMessage(Base):
 
     __table_args__ = (
         Index("ix_ai_chat_ws_user_created", "workspace_id", "user_id", "created_at"),
+        Index(
+            "ix_ai_chat_ws_user_conv_created",
+            "workspace_id",
+            "user_id",
+            "conversation_id",
+            "created_at",
+        ),
     )

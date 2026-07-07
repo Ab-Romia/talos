@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import Tabs from '@mui/material/Tabs'
 import Tab from '@mui/material/Tab'
@@ -34,8 +34,10 @@ import { chatService } from '../../services/chat'
 import { permissionsService } from '../../services/permissions'
 import PermissionsManager from '../../components/settings/PermissionsManager'
 import ChannelSettingsDialog from '../../components/settings/ChannelSettingsDialog'
+import MemberSearchAutocomplete from '../../components/workspace/MemberSearchAutocomplete'
 import NotificationsSettingsTab from './NotificationsSettingsTab'
 import SidebarToggle from '../../components/layout/SidebarToggle'
+import { getDevMode, setDevMode } from '../../utils/devMode'
 
 function TabPanel({ value, index: key, children }) {
   if (value !== key) return null
@@ -90,6 +92,8 @@ export default function SettingsPage() {
   const [snackbar, setSnackbar] = useState({ open: false, message: '' })
   const showSnackbar = (message) => setSnackbar({ open: true, message })
 
+  const [loadSessionsOpen, setLoadSessionsOpen] = useState(false)
+  const [loadSessionsPassword, setLoadSessionsPassword] = useState('')
   const [revokeDialog, setRevokeDialog] = useState({ open: false, sessionId: null })
   const [revokePassword, setRevokePassword] = useState('')
   const [revokeAllDialog, setRevokeAllDialog] = useState(false)
@@ -103,12 +107,16 @@ export default function SettingsPage() {
 
   const { activeWorkspaceId, workspaces, membersVersion } = useSelector((s) => s.workspace)
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) || null
+  // Latest active workspace, so async loads can discard responses that arrive
+  // after the user has switched workspaces (otherwise stale members / owner
+  // labels from the previous workspace bleed into the new one).
+  const wsRef = useRef(activeWorkspaceId)
+  wsRef.current = activeWorkspaceId
   const isOwner = Boolean(activeWorkspace && user && activeWorkspace.owner_id === user.id)
 
   const [members, setMembers] = useState([])
   const [membersLoading, setMembersLoading] = useState(false)
   const [inviteOpen, setInviteOpen] = useState(false)
-  const [inviteIdentifier, setInviteIdentifier] = useState('')
   const [inviteSubmitting, setInviteSubmitting] = useState(false)
   const [inviteError, setInviteError] = useState('')
   const [removingId, setRemovingId] = useState(null)
@@ -159,17 +167,20 @@ export default function SettingsPage() {
 
   const loadWorkspaceSettings = useCallback(async () => {
     if (!activeWorkspaceId) return
+    const wsId = activeWorkspaceId
     setWsSettingsLoading(true)
     try {
-      const ws = await chatService.getWorkspaceSettings(activeWorkspaceId)
+      const ws = await chatService.getWorkspaceSettings(wsId)
+      if (wsId !== wsRef.current) return
       setWsName(ws.name || '')
       setWsDescription(ws.description || '')
     } catch {
+      if (wsId !== wsRef.current) return
       // fallback to what we already have
       setWsName(activeWorkspace?.name || '')
       setWsDescription('')
     } finally {
-      setWsSettingsLoading(false)
+      if (wsId === wsRef.current) setWsSettingsLoading(false)
     }
   }, [activeWorkspaceId, activeWorkspace?.name])
 
@@ -226,15 +237,17 @@ export default function SettingsPage() {
   }
 
   const loadChannels = useCallback(async () => {
-    if (!activeWorkspaceId) { setChannels([]); return }
+    const wsId = activeWorkspaceId
+    if (!wsId) { setChannels([]); return }
     setChannelsLoading(true)
     try {
-      const list = await chatService.listChannels(activeWorkspaceId)
+      const list = await chatService.listChannels(wsId)
+      if (wsId !== wsRef.current) return
       setChannels(Array.isArray(list) ? list : [])
     } catch (err) {
-      showSnackbar(err?.detail || 'Could not load channels')
+      if (wsId === wsRef.current) showSnackbar(err?.detail || 'Could not load channels')
     } finally {
-      setChannelsLoading(false)
+      if (wsId === wsRef.current) setChannelsLoading(false)
     }
   }, [activeWorkspaceId])
 
@@ -257,29 +270,35 @@ export default function SettingsPage() {
   }
 
   const loadMembers = useCallback(async () => {
-    if (!activeWorkspaceId) {
+    const wsId = activeWorkspaceId
+    if (!wsId) {
       setMembers([])
       return
     }
     setMembersLoading(true)
     try {
-      const list = await chatService.getMembers(activeWorkspaceId)
+      const list = await chatService.getMembers(wsId)
+      if (wsId !== wsRef.current) return
       setMembers(Array.isArray(list) ? list : [])
     } catch (err) {
-      showSnackbar(err?.detail || 'Could not load members')
+      if (wsId === wsRef.current) showSnackbar(err?.detail || 'Could not load members')
     } finally {
-      setMembersLoading(false)
+      if (wsId === wsRef.current) setMembersLoading(false)
     }
   }, [activeWorkspaceId])
 
   useEffect(() => {
     if (isOwner) { setShowAccessTab(true); return }
     if (!activeWorkspaceId) { setShowAccessTab(false); return }
-    permissionsService.myPermissions(activeWorkspaceId).then((perms) => {
+    const wsId = activeWorkspaceId
+    permissionsService.myPermissions(wsId).then((perms) => {
+      if (wsId !== wsRef.current) return
       const list = Array.isArray(perms) ? perms : []
       setShowAccessTab(list.some((p) => p.resource === 'workspace.role' && p.action === 'view'))
-    }).catch(() => setShowAccessTab(false))
+    }).catch(() => { if (wsId === wsRef.current) setShowAccessTab(false) })
   }, [activeWorkspaceId, isOwner])
+
+  const [devMode, setDevModeState] = useState(getDevMode)
 
   const tabs = [
     { label: 'Profile', key: 'profile' },
@@ -287,6 +306,7 @@ export default function SettingsPage() {
     ...(showAccessTab ? [{ label: 'Access', key: 'access' }] : []),
     { label: 'Security', key: 'security' },
     { label: 'Notifications', key: 'notifications' },
+    { label: 'Advanced', key: 'advanced' },
   ]
   const safeTab = tab < tabs.length ? tab : 0
   const activeKey = tabs[safeTab]?.key || 'profile'
@@ -345,14 +365,16 @@ export default function SettingsPage() {
   }
 
   const loadMemberRoles = useCallback(async () => {
-    if (!activeWorkspaceId) return
+    const wsId = activeWorkspaceId
+    if (!wsId) return
     try {
-      const roles = await permissionsService.getRoles(activeWorkspaceId)
+      const roles = await permissionsService.getRoles(wsId)
       const details = await Promise.all(
         (Array.isArray(roles) ? roles : []).map((r) =>
-          permissionsService.getRole(activeWorkspaceId, r.id),
+          permissionsService.getRole(wsId, r.id),
         ),
       )
+      if (wsId !== wsRef.current) return
       const map = {}
       for (const role of details) {
         if (!role.users) continue
@@ -367,6 +389,14 @@ export default function SettingsPage() {
     }
   }, [activeWorkspaceId])
 
+  // Wipe per-workspace lists the instant the active workspace changes, so the
+  // previous workspace's members / owner labels can't flash before the reload.
+  useEffect(() => {
+    setMembers([])
+    setChannels([])
+    setMemberRolesMap({})
+  }, [activeWorkspaceId])
+
   useEffect(() => {
     if (tab === 1) {
       loadWorkspaceSettings()
@@ -376,19 +406,16 @@ export default function SettingsPage() {
     }
   }, [tab, loadWorkspaceSettings, loadMembers, loadMemberRoles, loadChannels, membersVersion])
 
-  const handleInviteSend = async () => {
-    const identifier = inviteIdentifier.trim()
-    if (!identifier || !activeWorkspaceId) return
+  const handleAddMemberFromSearch = async (u) => {
+    if (!activeWorkspaceId) return
     setInviteSubmitting(true)
     setInviteError('')
     try {
-      await chatService.addMember(activeWorkspaceId, identifier)
-      setInviteOpen(false)
-      setInviteIdentifier('')
-      showSnackbar('Member added')
-      loadMembers()
+      await chatService.addMember(activeWorkspaceId, u.username)
+      await loadMembers()
+      showSnackbar(`Added ${u.name || u.username}`)
     } catch (err) {
-      setInviteError(err?.detail || 'Could not add member')
+      setInviteError(err?.detail || `Could not add ${u.username}`)
     } finally {
       setInviteSubmitting(false)
     }
@@ -411,8 +438,17 @@ export default function SettingsPage() {
   const handleLoadSessions = async (password) => {
     const result = await dispatch(listSessions({ password }))
     if (listSessions.fulfilled.match(result)) {
+      setLoadSessionsOpen(false)
+      setLoadSessionsPassword('')
       showSnackbar(`Loaded ${result.payload.length} session(s)`)
     }
+  }
+
+  const openLoadSessions = () => {
+    // Already loaded → refresh silently (no re-prompt needed within the session).
+    setLoadSessionsPassword('')
+    dispatch(clearSettingsError())
+    setLoadSessionsOpen(true)
   }
 
   const handleRevokeSession = (id) => {
@@ -778,31 +814,30 @@ export default function SettingsPage() {
 
                 <Dialog open={inviteOpen} onClose={() => setInviteOpen(false)} maxWidth="xs" fullWidth>
                   <DialogTitle>Add member</DialogTitle>
-                  <DialogContent>
+                  <DialogContent sx={{ minHeight: 300 }}>
                     <p className="text-sm text-ink-secondary mb-3">
-                      Enter the email address or username of an existing account to add them to this workspace.
+                      Search for an existing account by username or email to add them to this workspace.
                     </p>
                     {inviteError && <Alert severity="error" sx={{ mb: 2 }}>{inviteError}</Alert>}
-                    <TextField
-                      autoFocus label="Email or username" fullWidth variant="outlined"
-                      value={inviteIdentifier} onChange={(e) => setInviteIdentifier(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && inviteIdentifier.trim() && handleInviteSend()}
+                    <MemberSearchAutocomplete
+                      excludeIds={members.map((m) => m.id)}
+                      onSelect={handleAddMemberFromSearch}
+                      autoFocus
                     />
+                    {inviteSubmitting && (
+                      <div className="mt-3 flex items-center gap-2 text-[13px] text-ink-tertiary">
+                        <CircularProgress size={14} /> Adding…
+                      </div>
+                    )}
                   </DialogContent>
                   <DialogActions>
-                    <Button onClick={() => setInviteOpen(false)}>Cancel</Button>
-                    <Button
-                      variant="contained"
-                      disabled={!inviteIdentifier.trim() || inviteSubmitting}
-                      startIcon={inviteSubmitting ? <CircularProgress size={14} color="inherit" /> : null}
-                      onClick={handleInviteSend}
-                    >
-                      Add
-                    </Button>
+                    <Button onClick={() => setInviteOpen(false)}>Done</Button>
                   </DialogActions>
                 </Dialog>
 
-                {/* Channels management */}
+                {/* Channels management — owners only. Non-owners already see the
+                    channels they can access in the sidebar, so this adds nothing. */}
+                {isOwner && (
                 <div className="mt-10 pt-6 border-t border-[rgba(28,27,26,0.06)]">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-[15px] font-semibold text-ink">
@@ -850,6 +885,7 @@ export default function SettingsPage() {
                     </div>
                   )}
                 </div>
+                )}
 
 
                 <ChannelSettingsDialog
@@ -1059,10 +1095,7 @@ export default function SettingsPage() {
                 <Button
                   size="small"
                   variant="outlined"
-                  onClick={() => {
-                    const pw = window.prompt('Enter your password to load active sessions:') || ''
-                    if (pw) handleLoadSessions(pw)
-                  }}
+                  onClick={openLoadSessions}
                   disabled={sessionsLoading}
                 >
                   {sessionsLoading ? 'Loading…' : sessions.length ? 'Refresh' : 'Load sessions'}
@@ -1108,6 +1141,35 @@ export default function SettingsPage() {
                 )
               })}
             </div>
+
+            {/* Load Sessions Dialog */}
+            <Dialog open={loadSessionsOpen} onClose={() => setLoadSessionsOpen(false)} maxWidth="xs" fullWidth>
+              <DialogTitle>Confirm your password</DialogTitle>
+              <DialogContent>
+                <p className="text-sm text-ink-secondary mb-3">
+                  Enter your password to view the devices signed into your account.
+                </p>
+                {settingsError && (
+                  <Alert severity="error" sx={{ mb: 2 }} onClose={() => dispatch(clearSettingsError())}>{settingsError}</Alert>
+                )}
+                <TextField
+                  autoFocus label="Current password" type="password" fullWidth variant="outlined"
+                  value={loadSessionsPassword} onChange={(e) => setLoadSessionsPassword(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && loadSessionsPassword && handleLoadSessions(loadSessionsPassword)}
+                />
+              </DialogContent>
+              <DialogActions>
+                <Button onClick={() => setLoadSessionsOpen(false)}>Cancel</Button>
+                <Button
+                  variant="contained"
+                  disabled={!loadSessionsPassword || sessionsLoading}
+                  startIcon={sessionsLoading ? <CircularProgress size={14} color="inherit" /> : null}
+                  onClick={() => handleLoadSessions(loadSessionsPassword)}
+                >
+                  Load sessions
+                </Button>
+              </DialogActions>
+            </Dialog>
 
             {/* Revoke Session Dialog */}
             <Dialog open={revokeDialog.open} onClose={() => setRevokeDialog({ open: false, sessionId: null })} maxWidth="xs" fullWidth>
@@ -1319,6 +1381,32 @@ export default function SettingsPage() {
 
           <TabPanel value={activeKey} index="notifications">
             <NotificationsSettingsTab />
+          </TabPanel>
+
+          {/* Advanced Tab */}
+          <TabPanel value={activeKey} index="advanced">
+            <div className="bg-surface-1 border border-[rgba(28,27,26,0.06)] rounded-lg p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-amber-subtle flex items-center justify-center text-amber">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <polyline points="4 17 10 11 4 5" />
+                    <line x1="12" y1="19" x2="20" y2="19" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-ink">Developer mode</p>
+                  <p className="text-[13px] text-ink-secondary max-w-md">
+                    Show the full retrieval trace (sources, chunks and the exact prompt) under every
+                    Talos AI answer in chat. Useful for debugging RAG results.
+                  </p>
+                </div>
+              </div>
+              <Switch
+                checked={devMode}
+                onChange={(e) => { const on = e.target.checked; setDevMode(on); setDevModeState(on) }}
+                color="primary"
+              />
+            </div>
           </TabPanel>
 
         </div>

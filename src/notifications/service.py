@@ -1,7 +1,7 @@
 import uuid
 from typing import Any, Sequence, Iterable
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from sqlalchemy.orm import Session
 
 from utils.datetime import utcnow
@@ -71,13 +71,17 @@ async def push_notification(
                 )
 
             # Fall back to email so an offline user still gets reached even
-            # without a push subscription.
-            email_delivery = NotificationDelivery(
-                notification_id=n.id,
-                channel=NotificationsChannel.EMAIL,
-            )
-            db.add(email_delivery)
-            await tasks.email.kiq(notification=NotificationSchema.model_validate(n))
+            # without a push subscription — unless they've opted out.
+            from auth.model import User
+            recipient = db.get(User, n.user_id)
+            email_enabled = bool((recipient.data or {}).get("email_notifications", True)) if recipient else True
+            if email_enabled:
+                email_delivery = NotificationDelivery(
+                    notification_id=n.id,
+                    channel=NotificationsChannel.EMAIL,
+                )
+                db.add(email_delivery)
+                await tasks.email.kiq(notification=NotificationSchema.model_validate(n))
 
         db.commit()
 
@@ -139,3 +143,33 @@ def get_unread_count(db: Session, user_id: uuid.UUID) -> int:
         )
     )
     return count or 0
+
+
+def get_unread_counts_by_channel(db: Session, user_id: uuid.UUID) -> dict[str, int]:
+    """Unread notification counts keyed by the channel they belong to, so the
+    sidebar can show per-conversation badges that survive a reload."""
+    channel_id = Notification.data["channel_id"].astext
+    rows = db.execute(
+        select(channel_id, func.count())
+        .where(
+            Notification.user_id == user_id,
+            Notification.read_at.is_(None),
+            channel_id.isnot(None),
+        )
+        .group_by(channel_id)
+    ).all()
+    return {cid: count for cid, count in rows if cid}
+
+
+def mark_channel_as_read(db: Session, user_id: uuid.UUID, channel_id: uuid.UUID) -> int:
+    result = db.execute(
+        update(Notification)
+        .where(
+            Notification.user_id == user_id,
+            Notification.read_at.is_(None),
+            Notification.data["channel_id"].astext == str(channel_id),
+        )
+        .values(read_at=utcnow())
+    )
+    db.commit()
+    return result.rowcount

@@ -66,6 +66,11 @@ class File(Base):
     processing_error: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     chunk_count: Mapped[int] = mapped_column(default=0)
 
+    # Private files are uploaded through the Talos AI tab: retrievable ONLY by
+    # their uploader in the AI assistant, never listed in workspace Documents,
+    # never surfaced in shared channels.
+    is_private: Mapped[bool] = mapped_column(nullable=False, server_default=sql.text("false"), default=False)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(),
                                                  onupdate=func.now())

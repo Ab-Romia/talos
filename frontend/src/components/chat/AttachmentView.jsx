@@ -1,11 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import Dialog from '@mui/material/Dialog'
 import IconButton from '@mui/material/IconButton'
 import CircularProgress from '@mui/material/CircularProgress'
 import { FileText, Download, X, Maximize2 } from 'lucide-react'
 import { chatService } from '../../services/chat'
-
-const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
 function formatSize(bytes) {
   if (!bytes && bytes !== 0) return ''
@@ -34,6 +32,10 @@ function useMediaUrl(channelId, attachment) {
 function ImageAttachment({ channelId, attachment }) {
   const url = useMediaUrl(channelId, attachment)
   const [open, setOpen] = useState(false)
+  const [failed, setFailed] = useState(false)
+  // Some accepted image formats (tiff, heic) can't be decoded by browsers —
+  // fall back to a download chip instead of showing a broken image.
+  if (failed) return <FileAttachment channelId={channelId} attachment={attachment} />
   if (!url) return <MediaPlaceholder label={attachment.filename} />
   return (
     <>
@@ -42,6 +44,7 @@ function ImageAttachment({ channelId, attachment }) {
           src={url}
           alt={attachment.filename}
           loading="lazy"
+          onError={() => setFailed(true)}
           className="max-h-[260px] w-auto max-w-full sm:max-w-[360px] rounded-xl border border-[rgba(28,27,26,0.10)] object-cover hover:brightness-95 transition"
         />
       </button>
@@ -57,39 +60,20 @@ function ImageAttachment({ channelId, attachment }) {
   )
 }
 
-function VideoPlayer({ url, autoPlay = false, className = '' }) {
-  const ref = useRef(null)
-  const [speed, setSpeed] = useState(1)
-  const applySpeed = (s) => {
-    setSpeed(s)
-    if (ref.current) ref.current.playbackRate = s
-  }
+function VideoPlayer({ url, autoPlay = false, className = '', onError }) {
+  // Playback speed lives in the browser's native video controls menu, so we
+  // don't render a custom speed bar.
   return (
-    <div className={`flex flex-col gap-1 ${className}`.trim()}>
+    <div className={className}>
       <video
-        ref={ref}
         src={url}
         controls
         preload="metadata"
         autoPlay={autoPlay}
         playsInline
+        onError={onError}
         className="w-full rounded-xl bg-black outline-none"
       />
-      <div className="flex items-center gap-1 self-end">
-        <span className="text-[11px] text-ink-tertiary mr-0.5">Speed</span>
-        {SPEEDS.map((s) => (
-          <button
-            key={s}
-            type="button"
-            onClick={() => applySpeed(s)}
-            className={`px-1.5 h-5 rounded text-[11px] font-medium transition-colors ${
-              speed === s ? 'bg-amber text-white' : 'text-ink-tertiary hover:bg-surface-3'
-            }`}
-          >
-            {s}×
-          </button>
-        ))}
-      </div>
     </div>
   )
 }
@@ -97,10 +81,13 @@ function VideoPlayer({ url, autoPlay = false, className = '' }) {
 function VideoAttachment({ channelId, attachment }) {
   const url = useMediaUrl(channelId, attachment)
   const [expanded, setExpanded] = useState(false)
+  const [failed, setFailed] = useState(false)
+  // Containers the browser can't play (e.g. mkv, avi) fall back to download.
+  if (failed) return <FileAttachment channelId={channelId} attachment={attachment} />
   if (!url) return <MediaPlaceholder label={attachment.filename} />
   return (
     <div className="relative max-w-[420px]">
-      <VideoPlayer url={url} />
+      <VideoPlayer url={url} onError={() => setFailed(true)} />
       <button
         type="button"
         onClick={() => setExpanded(true)}

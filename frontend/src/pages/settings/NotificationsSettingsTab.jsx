@@ -1,16 +1,17 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import Switch from '@mui/material/Switch'
 import Alert from '@mui/material/Alert'
 import CircularProgress from '@mui/material/CircularProgress'
 import Chip from '@mui/material/Chip'
-import { Bell, BellOff, ShieldAlert } from 'lucide-react'
+import { Bell, BellOff, ShieldAlert, Mail } from 'lucide-react'
 import {
   enablePush,
   disablePush,
   syncPushStatus,
   clearPushError,
 } from '../../store/notificationsSlice'
+import { notificationsService } from '../../services/notifications'
 
 function permissionLabel(permission) {
   if (permission === 'granted') return { label: 'Allowed', color: 'success' }
@@ -28,9 +29,37 @@ export default function NotificationsSettingsTab() {
     pushError,
   } = useSelector((s) => s.notifications)
 
+  const [emailEnabled, setEmailEnabled] = useState(true)
+  const [emailLoading, setEmailLoading] = useState(true)
+  const [emailSaving, setEmailSaving] = useState(false)
+
   useEffect(() => {
     dispatch(syncPushStatus())
   }, [dispatch])
+
+  useEffect(() => {
+    let cancelled = false
+    notificationsService
+      .getPreferences()
+      .then((p) => { if (!cancelled) setEmailEnabled(p?.email_notifications !== false) })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setEmailLoading(false) })
+    return () => { cancelled = true }
+  }, [])
+
+  const handleEmailToggle = async () => {
+    if (emailSaving) return
+    const next = !emailEnabled
+    setEmailEnabled(next) // optimistic
+    setEmailSaving(true)
+    try {
+      await notificationsService.updatePreferences({ email_notifications: next })
+    } catch {
+      setEmailEnabled(!next) // revert on failure
+    } finally {
+      setEmailSaving(false)
+    }
+  }
 
   const enabled = Boolean(pushEndpoint)
   const blocked = pushPermission === 'denied'
@@ -121,12 +150,31 @@ export default function NotificationsSettingsTab() {
         )}
       </div>
 
-      <div className="rounded-lg border border-dashed border-[rgba(28,27,26,0.12)] bg-surface-2 p-4">
-        <p className="text-sm font-medium text-ink-primary">Email notifications</p>
-        <p className="text-xs text-ink-tertiary mt-1">
-          Coming soon. Per-channel preferences will appear here once the backend
-          supports them.
-        </p>
+      <div className="rounded-lg border border-[rgba(28,27,26,0.08)] bg-surface-2 p-4">
+        <div className="flex items-start gap-3">
+          <div
+            className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${
+              emailEnabled ? 'bg-amber-subtle text-amber' : 'bg-surface-3 text-ink-tertiary'
+            }`}
+          >
+            <Mail size={18} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-ink-primary">Email notifications</p>
+            <p className="text-xs text-ink-tertiary mt-1">
+              When you're offline, Talos emails you about new mentions, messages,
+              and alerts so nothing slips by.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {(emailLoading || emailSaving) && <CircularProgress size={16} />}
+            <Switch
+              checked={emailEnabled}
+              onChange={handleEmailToggle}
+              disabled={emailLoading || emailSaving}
+            />
+          </div>
+        </div>
       </div>
     </div>
   )

@@ -54,6 +54,7 @@ class CreateWorkspaceRequest(BaseModel):
     name: Annotated[str, AfterValidator(_strip_nonempty)] = Field(min_length=1, max_length=100)
     channels: list[str] | None = Field(default=None, max_length=50)
     members: list[str] | None = Field(default=None, max_length=100)
+    description: str | None = Field(default=None, max_length=500)
 
 
 class CreateChannelRequest(BaseModel):
@@ -76,6 +77,7 @@ def _serialize(db, ws: Workspace, accessible_channel_ids: set | None = None) -> 
     return {
         "id": str(ws.id),
         "name": ws.name,
+        "description": ws.description,
         "owner_id": str(ws.owner_id),
         "channels": [{"id": str(c.id), "name": c.name} for c in channels],
     }
@@ -144,10 +146,17 @@ def _link_member(db, workspace_id: uuid.UUID, base_role: Role, user: User):
         db.commit()
 
 
-def provision_workspace(db, owner: User, name: str, channels: list[str] | None = None) -> Workspace:
+def _default_workspace_description(name: str) -> str:
+    return f"{name} — a shared space for your team's channels, conversations and documents."
+
+
+def provision_workspace(
+    db, owner: User, name: str, channels: list[str] | None = None, description: str | None = None
+) -> Workspace:
     """Create a workspace with its base role, permissions, owner membership and channels.
 
     ``channels`` defaults to DEFAULT_CHANNELS; blank names and duplicates are dropped.
+    ``description`` falls back to a sensible default so every workspace has one.
     """
     channel_names, seen = [], set()
     for raw in channels or DEFAULT_CHANNELS:
@@ -165,7 +174,8 @@ def provision_workspace(db, owner: User, name: str, channels: list[str] | None =
             db.add(role)
     db.commit()
 
-    ws = Workspace(name=name, owner_id=owner.id)
+    description = (description or "").strip() or _default_workspace_description(name)
+    ws = Workspace(name=name, owner_id=owner.id, description=description)
     db.add(ws)
     try:
         db.commit()
@@ -233,7 +243,7 @@ def list_my_workspaces(user: UserDep, db: DatabaseDep):
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_workspace(payload: CreateWorkspaceRequest, user: UserDep, db: DatabaseDep):
     """Create a new workspace owned by the current user, with optional channels and members."""
-    ws = provision_workspace(db, user, payload.name.strip(), payload.channels)
+    ws = provision_workspace(db, user, payload.name.strip(), payload.channels, payload.description)
 
     skipped = []
     if payload.members:

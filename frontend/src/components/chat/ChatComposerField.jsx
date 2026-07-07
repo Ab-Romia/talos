@@ -184,6 +184,7 @@ export function ChatComposerField({
   value,
   onChange,
   onKeyDown,
+  onPaste,
   inputRef: inputRefFromParent,
   placeholder = 'Message Talos…',
   className = '',
@@ -249,6 +250,7 @@ export function ChatComposerField({
         value={value}
         onChange={onChange}
         onKeyDown={onKeyDown}
+        onPaste={onPaste}
         onScroll={scrollSync}
         rows={1}
         placeholder=""

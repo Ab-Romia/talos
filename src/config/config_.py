@@ -60,6 +60,7 @@ class FilesConfig(BaseModel):
         # Documents
         "application/pdf",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "text/plain",
         "text/markdown",
         # Images
@@ -71,6 +72,7 @@ class FilesConfig(BaseModel):
     document_mime_types: set[str] = {
         "application/pdf",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "text/plain",
         "text/markdown",
     }
@@ -79,6 +81,12 @@ class FilesConfig(BaseModel):
         "image/png",
         "image/jpeg",
         "image/webp",
+        "image/gif",
+        "image/bmp",
+        "image/tiff",
+        "image/heic",
+        "image/heif",
+        "image/avif",
     }
 
     video_mime_types: set[str] = {
@@ -86,6 +94,11 @@ class FilesConfig(BaseModel):
         "video/webm",
         "video/quicktime",
         "video/ogg",
+        "video/x-msvideo",
+        "video/x-matroska",
+        "video/x-m4v",
+        "video/mpeg",
+        "video/3gpp",
     }
 
     # Chat attachments: documents + images + videos; never RAG-indexed.

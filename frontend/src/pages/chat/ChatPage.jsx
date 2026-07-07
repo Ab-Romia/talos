@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo, Fragment } from 'react'
 import Avatar from '@mui/material/Avatar'
 import IconButton from '@mui/material/IconButton'
 import Tooltip from '@mui/material/Tooltip'
@@ -12,16 +12,17 @@ import ListItem from '@mui/material/ListItem'
 import ListItemAvatar from '@mui/material/ListItemAvatar'
 import ListItemText from '@mui/material/ListItemText'
 import {
-  Search, Users, Bold, Code, ArrowUp, X, Sparkles, Bug, Reply, Paperclip, FileText, FolderOpen,
+  Search, Users, Bold, Code, ArrowUp, X, Sparkles, Reply, Paperclip, FileText, FolderOpen,
+  MessageSquare, Hash,
 } from 'lucide-react'
 
 import { useSearchParams } from 'react-router-dom'
 import { useSelector, useDispatch as useReduxDispatch } from 'react-redux'
-import { markChannelUnread, loadDms, setActiveChatroom } from '../../store/workspaceSlice'
 import { usePermissions } from '../../contexts/PermissionsContext'
+import { markChannelRead, setActiveChatroom, switchWorkspace } from '../../store/workspaceSlice'
 import { chatService } from '../../services/chat'
 import { getBotIdentity } from '../../services/ai'
-import { onChatMessage, onAiTyping, getSocket } from '../../services/socket'
+import { onChatMessage, onAiTyping, onAiStream, getSocket } from '../../services/socket'
 import { RagTracePanel } from '../../components/chat/RagTracePanel'
 import { askService } from '../../services/ask'
 import { AiTypingIndicator } from '../../components/chat/AiTypingIndicator'
@@ -33,6 +34,7 @@ import { RichMessageBody } from '../../components/chat/RichMessageBody'
 import { AttachmentView } from '../../components/chat/AttachmentView'
 import { docText } from '../../utils/prosemirrorText'
 import { buildMessageDoc, activeMentions } from '../../utils/mentionDoc'
+import { getDevMode, onDevModeChange } from '../../utils/devMode'
 
 function fmtTime(iso) {
   if (!iso) return ''
@@ -54,6 +56,34 @@ function initialsOf(name) {
     .toUpperCase()
 }
 
+// Friendly day label for the in-thread date separators.
+function dayLabelOf(dayKey) {
+  if (!dayKey) return ''
+  const d = new Date(dayKey)
+  if (Number.isNaN(d.getTime())) return ''
+  const today = new Date()
+  const yesterday = new Date()
+  yesterday.setDate(today.getDate() - 1)
+  if (d.toDateString() === today.toDateString()) return 'Today'
+  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday'
+  const sameYear = d.getFullYear() === today.getFullYear()
+  return d.toLocaleDateString([], {
+    weekday: 'short', month: 'short', day: 'numeric',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  })
+}
+
+// Stable, pleasant colour for a sender's name in group chats (WhatsApp style).
+const NAME_COLORS = ['#B4703A', '#3C7A6A', '#8A5A9E', '#4A6FA5', '#A85454', '#5C7A3A', '#9E6A3A', '#4E7E8A']
+function nameColor(id) {
+  const s = String(id || '')
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0
+  return NAME_COLORS[h % NAME_COLORS.length]
+}
+
+const GROUP_GAP_MS = 5 * 60 * 1000
+
 
 export default function ChatPage() {
   const reduxDispatch = useReduxDispatch()
@@ -71,7 +101,7 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false)
   const [chatroomName, setChatroomName] = useState('')
   const [aiThinking, setAiThinking] = useState(false)
-  const [debugTrace, setDebugTrace] = useState(false)
+  const [debugTrace, setDebugTrace] = useState(getDevMode)
   const [bot, setBot] = useState(null)
   const [mentionQuery, setMentionQuery] = useState(null) // { start, query } while typing @…
   const [mentionIndex, setMentionIndex] = useState(0)
@@ -96,6 +126,13 @@ export default function ChatPage() {
     () => dms.find((d) => d.id === chatroomId) || null,
     [dms, chatroomId],
   )
+  // Channels render Slack-style (grouped rows). DMs and group chats render
+  // WhatsApp-style bubbles — own messages right, everyone else left.
+  const bubbleMode = Boolean(activeDm)
+  const isGroupChat = Boolean(activeDm?.is_group)
+
+  // Keep the in-chat trace display in sync with the Settings "Developer mode".
+  useEffect(() => onDevModeChange(setDebugTrace), [])
 
   const { hasChannelPerm, channelPermsLoaded } = usePermissions()
   const canSend = hasChannelPerm('channel.message', 'send')
@@ -110,6 +147,10 @@ export default function ChatPage() {
   const textareaRef = useRef(null)
   const nextIdRef = useRef(1)
   const membersMapRef = useRef(new Map())
+  // Latest workspace, so a slow member fetch can't overwrite the new
+  // workspace's roster after a quick switch.
+  const wsRef = useRef(workspaceId)
+  wsRef.current = workspaceId
   const aiThinkingTimer = useRef(null)
   const firstSearchHitRef = useRef(null)
   const lastScrolledFirstMatchId = useRef(null)
@@ -144,6 +185,7 @@ export default function ChatPage() {
         name,
         initials: initialsOf(name),
         time: fmtTime(m.sent_at),
+        sentAt: m.sent_at || null,
         body: docText(m.content),
         content: m.content,
         replyToId: m.reply_to_id || null,
@@ -220,15 +262,35 @@ export default function ChatPage() {
 
   const highlightedMessageId = useRef(null)
 
-  const scrollToMessage = useCallback((msgId) => {
+  const scrollToMessage = useCallback((msgId, attempt = 0) => {
     highlightedMessageId.current = msgId
     const el = document.querySelector(`[data-msg-id="${msgId}"]`)
     if (el) {
       el.scrollIntoView({ block: 'center', behavior: 'smooth' })
       el.classList.add('search-highlight')
       setTimeout(() => el.classList.remove('search-highlight'), 2000)
+    } else if (attempt < 12) {
+      // The target may not be mounted yet (just fetched / still rendering) —
+      // retry briefly so the jump lands once it paints.
+      setTimeout(() => scrollToMessage(msgId, attempt + 1), 100)
     }
   }, [])
+
+  // Jump to a message by its SERVER id (data-msg-id). Used by search results and
+  // reply previews. If it isn't in the loaded window, fetch and insert it first.
+  const jumpToMessage = useCallback(async (serverId) => {
+    if (!serverId) return
+    if (!document.querySelector(`[data-msg-id="${serverId}"]`)) {
+      try {
+        const m = await chatService.getMessage(chatroomId, serverId)
+        if (m) {
+          const uiMsg = toUiMessage(m)
+          setMessages((prev) => (prev.some((x) => x.serverId === serverId) ? prev : [uiMsg, ...prev]))
+        }
+      } catch { /* message may have been deleted */ }
+    }
+    scrollToMessage(serverId)
+  }, [chatroomId, toUiMessage, scrollToMessage])
 
   useEffect(() => {
     const cr = chatrooms.find((c) => c.id === chatroomId)
@@ -249,6 +311,12 @@ export default function ChatPage() {
     setMessages([])
   }, [chatroomId])
 
+  // Opening a conversation clears its unread badge and marks its notifications
+  // read on the server, so the count doesn't reappear on the next reload.
+  useEffect(() => {
+    if (chatroomId) reduxDispatch(markChannelRead(chatroomId))
+  }, [chatroomId, reduxDispatch])
+
   useEffect(() => {
     if (!chatroomId) return
     let cancelled = false
@@ -267,6 +335,28 @@ export default function ChatPage() {
       cancelled = true
     }
   }, [chatroomId, toUiMessage])
+
+  // Deep-link from a notification (email "Open in Talos" or in-app click):
+  // ?channel=<id>&workspace=<id> — switch to that workspace (if needed) and open
+  // the conversation. ?msg is left in place for the message-jump effect below.
+  const pendingChannelId = searchParams.get('channel')
+  const pendingWorkspaceId = searchParams.get('workspace')
+  useEffect(() => {
+    if (!pendingChannelId) return
+    let cancelled = false
+    ;(async () => {
+      if (pendingWorkspaceId && pendingWorkspaceId !== workspaceId) {
+        await reduxDispatch(switchWorkspace(pendingWorkspaceId))
+      }
+      if (cancelled) return
+      reduxDispatch(setActiveChatroom(pendingChannelId))
+      setSearchParams(
+        (prev) => { prev.delete('channel'); prev.delete('workspace'); return prev },
+        { replace: true },
+      )
+    })()
+    return () => { cancelled = true }
+  }, [pendingChannelId, pendingWorkspaceId, workspaceId, reduxDispatch, setSearchParams])
 
   // Deep-link: if ?msg=UUID is present, scroll to that message (fetch it if not loaded).
   useEffect(() => {
@@ -310,37 +400,16 @@ export default function ChatPage() {
       }
       if (!m) return
 
-      // Track unread + OS notification for messages from others in different channels
-      if (m.sender_id && m.sender_id !== user?.id && m.channel_id !== chatroomId) {
-        // A message in a conversation we don't know yet = a peer just opened a
-        // DM with us; refresh the DM list so it appears in the sidebar.
-        if (
-          !chatrooms.some((c) => c.id === m.channel_id) &&
-          !dms.some((d) => d.id === m.channel_id) &&
-          workspaceId
-        ) {
-          reduxDispatch(loadDms(workspaceId))
-        }
-        reduxDispatch(markChannelUnread(m.channel_id))
-        if ('Notification' in window && Notification.permission === 'granted') {
-          try {
-            const senderName = membersMapRef.current.get(String(m.sender_id)) || 'Someone'
-            const chName = chatrooms.find((c) => c.id === m.channel_id)?.name
-            const notif = new Notification(chName ? `${senderName} in #${chName}` : senderName, {
-              body: docText(m.content).slice(0, 200),
-              icon: '/favicon.svg',
-              tag: m.id || `msg-${Date.now()}`,
-            })
-            notif.onclick = () => {
-              window.focus()
-              reduxDispatch(setActiveChatroom(m.channel_id))
-              if (m.id) setSearchParams({ msg: m.id }, { replace: true })
-            }
-          } catch { /* ignore */ }
-        }
-      }
-
+      // Unread badges, DM-list refresh and OS notifications for messages in
+      // other conversations are handled app-wide in useNotificationsSocket.
+      // Here we only care about the conversation currently open.
       if (m.channel_id !== chatroomId) return
+
+      // A message arrived in the conversation the user is actively viewing —
+      // mark it read on the server so its badge/bell count doesn't linger.
+      if (m.sender_id && m.sender_id !== user?.id && document.visibilityState === 'visible') {
+        reduxDispatch(markChannelRead(chatroomId))
+      }
 
       // The assistant's reply has landed — retire any "thinking" indicator
       // even if the stop signal was dropped.
@@ -397,6 +466,73 @@ export default function ChatPage() {
       }
     }
   }, [chatroomId])
+
+  // Realtime: token-by-token streaming of the in-channel AI reply. A placeholder
+  // assistant message is created on `start`, grown on each `delta`, and finalised
+  // (real serverId + content) on `end` so it streams in live like a typical assistant.
+  useEffect(() => {
+    if (!chatroomId) return
+    getSocket()
+    const off = onAiStream((payload) => {
+      if (!payload || payload.channel_id !== chatroomId) return
+      const sid = payload.stream_id
+
+      if (payload.status === 'start') {
+        setAiThinking(false) // the streaming bubble now carries the feedback
+        setMessages((prev) => {
+          if (prev.some((m) => m.streamId === sid)) return prev
+          return [...prev, {
+            id: nextIdRef.current++,
+            streamId: sid,
+            streaming: true,
+            serverId: null,
+            senderId: payload.sender_id || null,
+            role: 'assistant',
+            isAI: true,
+            mine: false,
+            name: 'Talos AI',
+            initials: 'AI',
+            time: nowTime(),
+            sentAt: new Date().toISOString(),
+            body: '',
+            content: null,
+            attachments: [],
+          }]
+        })
+        return
+      }
+
+      if (payload.delta) {
+        setMessages((prev) => prev.map((m) =>
+          m.streamId === sid ? { ...m, body: (m.body || '') + payload.delta } : m,
+        ))
+        return
+      }
+
+      if (payload.status === 'end') {
+        setAiThinking(false)
+        setMessages((prev) => {
+          const idx = prev.findIndex((m) => m.streamId === sid)
+          if (payload.message) {
+            const finalMsg = { ...toUiMessage(payload.message), streaming: false }
+            if (idx === -1) {
+              if (prev.some((m) => m.serverId === payload.message.id)) return prev
+              return [...prev, finalMsg]
+            }
+            const next = [...prev]
+            next[idx] = finalMsg
+            return next
+          }
+          // errored / no message — just stop the cursor on whatever streamed.
+          if (idx === -1) return prev
+          const next = [...prev]
+          next[idx] = { ...next[idx], streaming: false }
+          return next
+        })
+      }
+    })
+    return () => off()
+  }, [chatroomId, toUiMessage])
 
   useEffect(() => {
     if (threadRef.current) {
@@ -467,6 +603,18 @@ export default function ChatPage() {
     }
   }, [chatroomId, showSnackbar])
 
+  // Paste (Ctrl+V) an image/file directly into the message composer → attach it.
+  const handleComposerPaste = useCallback((e) => {
+    const files = Array.from(e.clipboardData?.items || [])
+      .filter((it) => it.kind === 'file')
+      .map((it) => it.getAsFile())
+      .filter(Boolean)
+    if (files.length) {
+      e.preventDefault()
+      handleAttachFiles(files)
+    }
+  }, [handleAttachFiles])
+
   const sendText = useCallback(async (rawText) => {
     const text = (rawText ?? '').trim()
     const attachments = pendingAttachments
@@ -490,6 +638,12 @@ export default function ChatPage() {
       attachments,
     }
     setMessages((prev) => [...prev, optimistic])
+    // Instant feedback: if this message addresses the AI, show the thinking
+    // indicator right away (before the server's ai_typing/ai_stream signals).
+    const triggersAi =
+      /(^|\s)[@/]talos/i.test(text) ||
+      mentions.some((m) => bot && String(m.user_id) === String(bot.user_id))
+    if (triggersAi) setAiThinking(true)
     setInput('')
     setReplyTo(null)
     setMentionQuery(null)
@@ -526,7 +680,7 @@ export default function ChatPage() {
     } finally {
       setSending(false)
     }
-  }, [sending, chatroomId, user, showSnackbar, replyTo, pendingAttachments])
+  }, [sending, chatroomId, user, showSnackbar, replyTo, pendingAttachments, bot])
 
   const handleSend = useCallback(() => sendText(input), [sendText, input])
 
@@ -629,22 +783,27 @@ export default function ChatPage() {
   }, [displayName])
 
   const loadMembers = useCallback(async () => {
-    if (!workspaceId) return
+    const wsId = workspaceId
+    if (!wsId) return
     setMembersLoading(true)
     try {
-      const list = await chatService.getMembers(workspaceId)
+      const list = await chatService.getMembers(wsId)
+      if (wsId !== wsRef.current) return
       setMembers(Array.isArray(list) ? list : [])
     } catch (err) {
+      if (wsId !== wsRef.current) return
       setMembers([])
       showSnackbar(err?.detail || 'Could not load members')
     } finally {
-      setMembersLoading(false)
+      if (wsId === wsRef.current) setMembersLoading(false)
     }
     if (chatroomId) {
       try {
         const res = await chatService.getOnline(chatroomId)
+        if (wsId !== wsRef.current) return
         setOnlineIds(new Set((res?.online_users || []).map(String)))
       } catch {
+        if (wsId !== wsRef.current) return
         setOnlineIds(new Set())
       }
     }
@@ -709,11 +868,41 @@ export default function ChatPage() {
     [input],
   )
 
+  // Walk the thread once, attaching grouping + date-divider metadata so both
+  // the Slack (channel) and WhatsApp (DM/group) renderers can share it.
+  const decorated = useMemo(() => {
+    // Carry forward the last calendar day we actually saw so an optimistic /
+    // streaming message with no timestamp can't reset it and print a second
+    // "Today" divider.
+    let lastDayKey = null
+    const rows = messages.map((m, i) => {
+      const prev = messages[i - 1] || null
+      const tCur = m.sentAt ? new Date(m.sentAt).getTime() : null
+      const tPrev = prev?.sentAt ? new Date(prev.sentAt).getTime() : null
+      const dayKey = m.sentAt && !Number.isNaN(tCur) ? new Date(m.sentAt).toDateString() : null
+      const showDate = m.role !== 'system' && Boolean(dayKey) && dayKey !== lastDayKey
+      if (dayKey) lastDayKey = dayKey
+      const sameSender =
+        prev && prev.role !== 'system' && m.role !== 'system' &&
+        prev.senderId === m.senderId && prev.isAI === m.isAI
+      const closeInTime = tPrev != null && tCur != null ? tCur - tPrev < GROUP_GAP_MS : true
+      const startsGroup = !sameSender || !closeInTime || showDate || Boolean(m.replyToId)
+      return { msg: m, showDate, dayKey, startsGroup, endsGroup: true }
+    })
+    for (let i = 0; i < rows.length; i++) {
+      rows[i].endsGroup = i === rows.length - 1 ? true : rows[i + 1].startsGroup
+    }
+    return rows
+  }, [messages])
+
   const headerIcons = canViewPresence ? [Search, Users] : [Search]
   const toolbarIcons = [Bold, Code]
 
   return (
     <div className="flex flex-col h-full bg-base">
+      <style>{`
+        @keyframes talosIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+      `}</style>
       {/* Header */}
       <header className="h-14 bg-surface-1 border-b border-[rgba(28,27,26,0.08)] flex items-center justify-between px-3 sm:px-5 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
@@ -820,19 +1009,9 @@ export default function ChatPage() {
                       key={msg.id}
                       className="w-full text-left px-4 py-3 hover:bg-surface-2 transition-colors border-b border-[rgba(28,27,26,0.04)] last:border-b-0 flex gap-3 items-start"
                       onClick={() => {
-                        const sid = msg.serverId || msg.id
                         setSearchOpen(false)
                         setSearchQuery('')
-                        const el = document.querySelector(`[data-msg-id="${sid}"]`)
-                        if (el) {
-                          scrollToMessage(sid)
-                        } else {
-                          setMessages((prev) => {
-                            if (prev.some((m) => m.serverId === sid)) return prev
-                            return [msg, ...prev]
-                          })
-                          requestAnimationFrame(() => scrollToMessage(sid))
-                        }
+                        jumpToMessage(msg.serverId || msg.id)
                       }}
                     >
                       <Avatar
@@ -869,102 +1048,229 @@ export default function ChatPage() {
 
       {/* Thread */}
       <div ref={threadRef} className="flex-1 overflow-y-auto">
-        <div className="max-w-[1000px] mx-auto px-4 sm:px-5 py-6">
-          {/* Date divider */}
-          <div className="flex items-center gap-4 mb-6">
-            <span className="flex-1 h-px bg-[rgba(28,27,26,0.06)]" />
-            <span className="text-[11px] font-medium text-ink-tertiary uppercase tracking-wider">Today</span>
-            <span className="flex-1 h-px bg-[rgba(28,27,26,0.06)]" />
-          </div>
-
+        <div className="w-full px-4 sm:px-6 lg:px-8 py-6">
           {!chatroomId && (
-            <p className="text-center text-sm text-ink-tertiary py-10 px-4">
-              No channel selected yet.
-            </p>
+            <div className="flex flex-col items-center justify-center text-center py-24 px-4 gap-3">
+              <div className="w-14 h-14 rounded-2xl bg-surface-2 flex items-center justify-center text-ink-tertiary">
+                <Users size={24} />
+              </div>
+              <p className="text-sm font-medium text-ink-secondary">No conversation selected</p>
+              <p className="text-[13px] text-ink-tertiary max-w-xs">
+                Pick a channel or a direct message from the sidebar to start chatting.
+              </p>
+            </div>
           )}
 
           {chatroomId && messages.length === 0 && (
-            <p className="text-center text-sm text-ink-tertiary py-10 px-4">
-              No messages yet — say hello 👋
-            </p>
+            <div
+              className="flex flex-col items-center justify-center text-center py-24 px-4 gap-3"
+              style={{ animation: 'talosIn .4s ease-out' }}
+            >
+              <div className="w-16 h-16 rounded-2xl bg-amber/10 flex items-center justify-center text-amber">
+                {bubbleMode ? <MessageSquare size={26} /> : <Hash size={26} />}
+              </div>
+              <p className="text-[15px] font-semibold text-ink">
+                {bubbleMode
+                  ? (isGroupChat ? `Welcome to ${chatroomName || 'the group'}` : `Chat with ${chatroomName || 'this person'}`)
+                  : `Welcome to #${chatroomName || 'the channel'}`}
+              </p>
+              <p className="text-[13px] text-ink-tertiary max-w-sm leading-relaxed">
+                {bubbleMode
+                  ? 'This is the very beginning of your conversation. Say hello 👋'
+                  : 'This is the start of the channel. Share updates, ask questions, and keep everyone in the loop.'}
+              </p>
+            </div>
           )}
 
-          {messages.map((msg) => {
+          {decorated.map((d) => {
+            const msg = d.msg
+            const key = msg.id
+
             if (msg.role === 'system') {
               return (
-                <div
-                  key={msg.id}
-                  data-msg-id={msg.serverId || msg.id}
-                  className="flex justify-center mb-4"
-                >
-                  <span className="text-[12px] text-ink-tertiary italic">{msg.body}</span>
+                <div key={key} data-msg-id={msg.serverId || msg.id} className="flex justify-center my-5">
+                  <span className="text-[12px] text-ink-tertiary bg-surface-2 px-3 py-1 rounded-full">{msg.body}</span>
                 </div>
               )
             }
-            const repliedTo = msg.replyToId
-              ? messages.find((x) => x.serverId === msg.replyToId)
-              : null
-            return (
-              <div
-                key={msg.id}
-                data-msg-id={msg.id}
-                className="relative flex gap-3 mb-6 group transition-colors duration-500"
-              >
-                <div className="pt-0.5">
-                  <Avatar
-                    sx={{
-                      width: 34,
-                      height: 34,
-                      bgcolor: msg.isAI ? 'rgba(196,145,58,0.15)' : msg.mine ? 'primary.light' : '#EEEDEA',
-                      color: msg.isAI ? '#C4913A' : msg.mine ? 'primary.main' : 'text.secondary',
-                      fontSize: 13,
-                      fontWeight: 600,
-                      flexShrink: 0,
-                    }}
-                  >
-                    {msg.isAI ? <Sparkles size={16} /> : msg.initials}
-                  </Avatar>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-[13px] font-semibold text-ink">{msg.isAI ? 'Talos AI' : displayName(msg.senderId)}</span>
-                    <span className="text-[12px] text-ink-muted">{msg.time}</span>
-                  </div>
-                  {msg.replyToId && (
-                    <button
-                      type="button"
-                      onClick={() => repliedTo && scrollToMessage(repliedTo.id)}
-                      className="flex items-start gap-1.5 mb-1 max-w-full text-left group/quote"
-                      title={repliedTo ? 'Jump to original message' : undefined}
-                    >
-                      <span className="w-[3px] self-stretch rounded-full bg-amber/50 shrink-0" />
-                      <span className="text-[12px] text-ink-tertiary truncate py-0.5">
-                        <span className="font-semibold text-ink-secondary group-hover/quote:text-amber transition-colors">
-                          {repliedTo ? (repliedTo.isAI ? 'Talos AI' : displayName(repliedTo.senderId)) : 'Original message'}
-                        </span>
-                        {repliedTo && (
-                          <span className="ml-1.5">{(repliedTo.body || '').slice(0, 90)}</span>
-                        )}
-                      </span>
-                    </button>
-                  )}
-                  <RichMessageBody content={msg.content} fallbackText={msg.body || ''} />
-                  <AttachmentView channelId={chatroomId} attachments={msg.attachments} />
-                  {msg.trace && <RagTracePanel trace={msg.trace} />}
-                </div>
-                <div className="absolute -top-2.5 right-0 flex sm:hidden sm:group-hover:flex items-center bg-base border border-[rgba(28,27,26,0.10)] rounded-lg shadow-sm">
-                  <Tooltip title="Reply">
-                    <IconButton
-                      size="small"
-                      onClick={() => startReply(msg)}
-                      disabled={!msg.serverId}
-                      sx={{ width: 28, height: 28, color: 'text.secondary', '&:hover': { color: '#C4913A' } }}
-                    >
-                      <Reply size={15} />
-                    </IconButton>
-                  </Tooltip>
-                </div>
+
+            const repliedTo = msg.replyToId ? messages.find((x) => x.serverId === msg.replyToId) : null
+            const dateDivider = d.showDate ? (
+              <div className="flex items-center gap-4 my-6 first:mt-0">
+                <span className="flex-1 h-px bg-[rgba(28,27,26,0.06)]" />
+                <span className="text-[11px] font-semibold text-ink-tertiary tracking-wide px-3 py-1 rounded-full bg-surface-2 shadow-sm">
+                  {dayLabelOf(d.dayKey)}
+                </span>
+                <span className="flex-1 h-px bg-[rgba(28,27,26,0.06)]" />
               </div>
+            ) : null
+
+            const replyBtn = (
+              <div className="self-center opacity-0 group-hover:opacity-100 transition-opacity">
+                <Tooltip title="Reply">
+                  <IconButton
+                    size="small"
+                    onClick={() => startReply(msg)}
+                    disabled={!msg.serverId}
+                    sx={{ width: 26, height: 26, color: 'text.secondary', '&:hover': { color: '#C4913A' } }}
+                  >
+                    <Reply size={14} />
+                  </IconButton>
+                </Tooltip>
+              </div>
+            )
+
+            // ── WhatsApp-style bubbles: DMs + group chats (own → right, others → left) ──
+            if (bubbleMode) {
+              const mine = msg.mine
+              let round = 'rounded-2xl'
+              if (mine) {
+                if (!d.startsGroup) round += ' rounded-tr-md'
+                if (!d.endsGroup) round += ' rounded-br-md'
+              } else {
+                if (!d.startsGroup) round += ' rounded-tl-md'
+                if (!d.endsGroup) round += ' rounded-bl-md'
+              }
+              // AI replies always identify themselves (name + avatar) even in a
+              // 1:1 DM, so it's clear "the other side" is Talos, and get a
+              // distinct amber tint.
+              const showIdentity = !mine && (isGroupChat || msg.isAI)
+              const bubbleTone = mine
+                ? 'bg-amber/15 border border-amber/25'
+                : msg.isAI
+                  ? 'bg-amber/[0.06] border border-amber/20'
+                  : 'bg-white border border-[rgba(28,27,26,0.07)]'
+              return (
+                <Fragment key={key}>
+                  {dateDivider}
+                  <div
+                    data-msg-id={msg.serverId || msg.id}
+                    className={`group flex items-end gap-2 ${mine ? 'justify-end' : 'justify-start'} ${d.startsGroup ? 'mt-3' : 'mt-[3px]'}`}
+                    style={{ animation: 'talosIn .26s ease-out' }}
+                  >
+                    {showIdentity && (
+                      <div className="w-7 shrink-0 self-end mb-1">
+                        {d.endsGroup && (
+                          <Avatar
+                            sx={{
+                              width: 28, height: 28, fontSize: 11, fontWeight: 600,
+                              bgcolor: msg.isAI ? 'rgba(196,145,58,0.15)' : '#EEEDEA',
+                              color: msg.isAI ? '#C4913A' : 'text.secondary',
+                            }}
+                          >
+                            {msg.isAI ? <Sparkles size={14} /> : msg.initials}
+                          </Avatar>
+                        )}
+                      </div>
+                    )}
+                    {mine && replyBtn}
+                    <div className={`relative max-w-[82%] sm:max-w-[68%] flex flex-col ${mine ? 'items-end' : 'items-start'}`}>
+                      {showIdentity && d.startsGroup && (
+                        <span className="text-[12px] font-semibold mb-0.5 px-1" style={{ color: msg.isAI ? '#C4913A' : nameColor(msg.senderId) }}>
+                          {msg.isAI ? 'Talos AI' : displayName(msg.senderId)}
+                        </span>
+                      )}
+                      <div className={`px-3 py-2 shadow-sm ${bubbleTone} ${round}`}>
+                        {msg.replyToId && (
+                          <button
+                            type="button"
+                            onClick={() => jumpToMessage(msg.replyToId)}
+                            className="flex items-stretch gap-1.5 mb-1.5 w-full text-left rounded-md bg-[rgba(28,27,26,0.04)] hover:bg-[rgba(28,27,26,0.07)] transition-colors overflow-hidden"
+                            title="Jump to original message"
+                          >
+                            <span className="w-[3px] bg-amber/60 shrink-0" />
+                            <span className="min-w-0 py-1 pr-2">
+                              <span className="block text-[11px] font-semibold text-amber-700 truncate">
+                                {repliedTo ? (repliedTo.isAI ? 'Talos AI' : displayName(repliedTo.senderId)) : 'Original message'}
+                              </span>
+                              {repliedTo && (
+                                <span className="block text-[12px] text-ink-tertiary truncate">{(repliedTo.body || '').slice(0, 80)}</span>
+                              )}
+                            </span>
+                          </button>
+                        )}
+                        <RichMessageBody content={msg.content} fallbackText={msg.body || ''} renderCursor={Boolean(msg.streaming)} />
+                        <AttachmentView channelId={chatroomId} attachments={msg.attachments} />
+                        <div className="flex justify-end mt-0.5 -mb-0.5">
+                          <span className="text-[10px] tabular-nums text-ink-muted">{msg.time}</span>
+                        </div>
+                      </div>
+                      {msg.trace && <RagTracePanel trace={msg.trace} />}
+                    </div>
+                    {!mine && replyBtn}
+                  </div>
+                </Fragment>
+              )
+            }
+
+            // ── Slack-style grouped rows: channels ──
+            return (
+              <Fragment key={key}>
+                {dateDivider}
+                <div
+                  data-msg-id={msg.serverId || msg.id}
+                  className={`relative flex gap-3 group -mx-2 px-2 rounded-lg hover:bg-[rgba(28,27,26,0.025)] transition-colors ${d.startsGroup ? 'mt-4 pt-1' : 'mt-0.5'} ${d.endsGroup ? 'pb-1' : ''}`}
+                  style={d.startsGroup ? { animation: 'talosIn .26s ease-out' } : undefined}
+                >
+                  <div className="w-[34px] shrink-0 pt-0.5">
+                    {d.startsGroup ? (
+                      <Avatar
+                        sx={{
+                          width: 34, height: 34,
+                          bgcolor: msg.isAI ? 'rgba(196,145,58,0.15)' : msg.mine ? 'primary.light' : '#EEEDEA',
+                          color: msg.isAI ? '#C4913A' : msg.mine ? 'primary.main' : 'text.secondary',
+                          fontSize: 13, fontWeight: 600,
+                        }}
+                      >
+                        {msg.isAI ? <Sparkles size={16} /> : msg.initials}
+                      </Avatar>
+                    ) : (
+                      <span className="hidden group-hover:block text-[10px] leading-5 text-ink-muted text-right tabular-nums pr-1">
+                        {msg.time}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    {d.startsGroup && (
+                      <div className="flex items-baseline gap-2 mb-0.5">
+                        <span className="text-[13px] font-semibold text-ink">{msg.isAI ? 'Talos AI' : displayName(msg.senderId)}</span>
+                        <span className="text-[11px] text-ink-muted">{msg.time}</span>
+                      </div>
+                    )}
+                    {msg.replyToId && (
+                      <button
+                        type="button"
+                        onClick={() => jumpToMessage(msg.replyToId)}
+                        className="flex items-start gap-1.5 mb-1 max-w-full text-left group/quote cursor-pointer"
+                        title="Jump to original message"
+                      >
+                        <span className="w-[3px] self-stretch rounded-full bg-amber/50 shrink-0" />
+                        <span className="text-[12px] text-ink-tertiary truncate py-0.5">
+                          <span className="font-semibold text-ink-secondary group-hover/quote:text-amber transition-colors">
+                            {repliedTo ? (repliedTo.isAI ? 'Talos AI' : displayName(repliedTo.senderId)) : 'Original message'}
+                          </span>
+                          {repliedTo && <span className="ml-1.5">{(repliedTo.body || '').slice(0, 90)}</span>}
+                        </span>
+                      </button>
+                    )}
+                    <RichMessageBody content={msg.content} fallbackText={msg.body || ''} renderCursor={Boolean(msg.streaming)} />
+                    <AttachmentView channelId={chatroomId} attachments={msg.attachments} />
+                    {msg.trace && <RagTracePanel trace={msg.trace} />}
+                  </div>
+                  <div className="absolute -top-3 right-2 hidden group-hover:flex items-center bg-base border border-[rgba(28,27,26,0.10)] rounded-lg shadow-sm">
+                    <Tooltip title="Reply">
+                      <IconButton
+                        size="small"
+                        onClick={() => startReply(msg)}
+                        disabled={!msg.serverId}
+                        sx={{ width: 28, height: 28, color: 'text.secondary', '&:hover': { color: '#C4913A' } }}
+                      >
+                        <Reply size={15} />
+                      </IconButton>
+                    </Tooltip>
+                  </div>
+                </div>
+              </Fragment>
             )
           })}
 
@@ -975,7 +1281,7 @@ export default function ChatPage() {
       {/* Input */}
       {canSend ? (
       <div className="border-t border-[rgba(28,27,26,0.06)] bg-surface-1">
-        <div className="max-w-[1000px] mx-auto px-4 sm:px-5 py-4">
+        <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
           <div className="relative bg-base border border-[rgba(28,27,26,0.10)] rounded-2xl p-3 px-4 flex flex-col gap-0 focus-within:border-amber focus-within:shadow-[0_0_0_3px_rgba(196,145,58,0.12)] transition-all">
             {mentionQuery && mentionCandidates.length > 0 && (
               <MentionPicker
@@ -1047,7 +1353,7 @@ export default function ChatPage() {
                     ref={attachInputRef}
                     type="file"
                     multiple
-                    accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime,video/ogg,.pdf,.docx,.txt,.md"
+                    accept="image/*,video/*,.pdf,.docx,.pptx,.txt,.md"
                     style={{ display: 'none' }}
                     onChange={(e) => {
                       handleAttachFiles(e.target.files)
@@ -1055,15 +1361,6 @@ export default function ChatPage() {
                     }}
                   />
                   <div className="flex-1" />
-                  <button
-                    onClick={() => setDebugTrace((v) => !v)}
-                    className={`flex items-center gap-1 h-7 px-2 rounded-lg text-[12px] font-medium transition-colors ${
-                      debugTrace ? 'text-amber bg-amber-subtle' : 'text-ink-muted hover:text-ink-secondary'
-                    }`}
-                    title="Debug mode: show the full RAG trace with the answer"
-                  >
-                    <Bug size={13} />
-                  </button>
                   <button
                     onClick={handleAskAI}
                     disabled={!input.trim() || !chatroomId || sending}
@@ -1078,6 +1375,7 @@ export default function ChatPage() {
                   value={input}
                   onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
+                  onPaste={handleComposerPaste}
                   placeholder={chatroomName ? (activeDm ? `Message ${chatroomName}` : `Message #${chatroomName}`) : 'Message…'}
                 />
               </div>

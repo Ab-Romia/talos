@@ -104,6 +104,23 @@ export function onAiTyping(handler) {
   }
 }
 
+// Live token stream for an in-channel AI reply. Payload variants:
+//   { channel_id, stream_id, status: 'start', sender_id }
+//   { channel_id, stream_id, delta: '<chunk>' }
+//   { channel_id, stream_id, status: 'end', message? , error? }
+export function onAiStream(handler) {
+  const s = getSocket()
+  if (!s) return () => {}
+  s.on('ai_stream', handler)
+  return () => {
+    try {
+      s.off('ai_stream', handler)
+    } catch {
+      /* socket gone */
+    }
+  }
+}
+
 // Workspace-level realtime sync: membership, channel-list, DM and permission
 // changes made by other users. Payload: { resource, workspace_id, action?, name? }.
 export function onWorkspaceSync(handler) {

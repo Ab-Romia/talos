@@ -16,6 +16,7 @@ from sqlalchemy import select, or_
 from config import cfg
 from database import DatabaseDep
 from utils.email import send_email
+from utils.email_templates import verification_email
 from utils.exceptions import ExceptionMapper
 from utils.ratelimit import email_ratelimit
 from .dependencies import sudo, UserDep
@@ -80,13 +81,12 @@ async def initiate_signup(email: Annotated[str, Form()], db: DatabaseDep):
 
     frontend_origin = os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173").rstrip("/")
     verify_url = f"{frontend_origin}/signup/complete?token={token}"
+    html, text = verification_email(verify_url)
     await send_email(
         email,
-        "Welcome to Talos!\n\n"
-        "Click the link below to verify your email and finish creating your account:\n\n"
-        f"{verify_url}\n\n"
-        "This link expires in 1 hour.",
+        html,
         subject="Verify your Talos account",
+        text=text,
     )
 
     return {"message": "Please check your email to verify your account."}

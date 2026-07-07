@@ -11,6 +11,7 @@ const CompleteSignupPage = lazy(() => import('./pages/auth/CompleteSignupPage'))
 const ForgotPasswordPage = lazy(() => import('./pages/auth/ForgotPasswordPage'))
 const ResetPasswordPage = lazy(() => import('./pages/auth/ResetPasswordPage'))
 const OnboardingPage = lazy(() => import('./pages/onboarding/OnboardingPage'))
+const WorkspaceSelectPage = lazy(() => import('./pages/workspace/WorkspaceSelectPage'))
 const ChatPage = lazy(() => import('./pages/chat/ChatPage'))
 const AIChatPage = lazy(() => import('./pages/ai/AIChatPage'))
 const DocumentsPage = lazy(() => import('./pages/documents/DocumentsPage'))
@@ -27,7 +28,7 @@ function ProtectedRoute({ children }) {
 function GuestRoute({ children }) {
   const { isAuthenticated, sessionChecked } = useSelector((state) => state.auth)
   if (!sessionChecked) return <Fallback />
-  if (isAuthenticated) return <Navigate to={R.CHAT_PAGE} replace />
+  if (isAuthenticated) return <Navigate to={R.SELECT_WORKSPACE} replace />
   return children
 }
 
@@ -91,10 +92,13 @@ export default function App() {
       <Route path={R.LOGIN} element={<GuestRoute><LoginPage /></GuestRoute>} />
       <Route path={R.SIGNUP} element={<GuestRoute><SignupPage /></GuestRoute>} />
       <Route path={R.FORGOT_PASSWORD} element={<GuestRoute><ForgotPasswordPage /></GuestRoute>} />
-      <Route path={R.RESET_PASSWORD} element={<GuestRoute><ResetPasswordPage /></GuestRoute>} />
+      {/* Reset must work even if a session is still active (email link opened in a
+          logged-in browser) — resetting revokes sessions anyway, so no GuestRoute. */}
+      <Route path={R.RESET_PASSWORD} element={<ResetPasswordPage />} />
       {/* Not a GuestRoute: completion logs the user in, then redirects to onboarding. */}
       <Route path={R.SIGNUP_COMPLETE} element={<CompleteSignupPage />} />
       <Route path={R.ONBOARDING} element={<ProtectedRoute><OnboardingPage /></ProtectedRoute>} />
+      <Route path={R.SELECT_WORKSPACE} element={<ProtectedRoute><WorkspaceSelectPage /></ProtectedRoute>} />
 
       <Route path="/" element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
         <Route index element={<Navigate to={R.CHAT_PAGE} replace />} />

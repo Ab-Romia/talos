@@ -29,7 +29,10 @@ replies (including your own) claimed otherwise.
 
 If you cannot answer based on the context provided, say so clearly.
 
-Do not write a "Sources" or citations section yourself; one is appended automatically after your answer.
+IMPORTANT: Do NOT write a "Sources", "References", or citations section, and do
+NOT cite file names or page numbers yourself. A Sources section is appended
+automatically after your answer — writing your own creates a duplicate. End your
+answer with the last sentence of content, nothing more.
 
 Context:
 {context}""",

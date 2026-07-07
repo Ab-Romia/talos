@@ -5,13 +5,14 @@ from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import String, select, and_, func
+from sqlalchemy.orm import selectinload
 
 from database import AsyncSessionLocal
 from utils.exceptions import handle_exceptions
 from .model import MessageSchema, Message
 
 
-@handle_exceptions("Failed to search messages", default_return=[])
+@handle_exceptions("Failed to search messages", default_return=([], 0))
 async def search_messages(
     channel_id: UUID,
     text: Optional[str] = None,
@@ -66,8 +67,15 @@ async def search_messages(
         )
         total = await db.scalar(count_query) or 0
 
-        # Apply ordering and pagination
-        query = query.order_by(Message.sent_at.desc()).limit(limit).offset(offset)
+        # Apply ordering and pagination. Eager-load files: MessageSchema reads the
+        # `attachments` property, which walks the files relationship — a lazy load
+        # there would fail under the async session (MissingGreenlet).
+        query = (
+            query.options(selectinload(Message.files))
+            .order_by(Message.sent_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
 
         rows = await db.scalars(query)
         messages = [MessageSchema.model_validate(row) for row in rows]

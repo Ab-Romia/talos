@@ -1,3 +1,4 @@
+import os
 import uuid
 
 from pywebpush import webpush_async, WebPushException
@@ -10,6 +11,7 @@ from config import cfg
 from database import SessionLocal
 from utils.datetime import utcnow
 from utils.email import send_email
+from utils.email_templates import notification_email
 from utils.logger import get_logger
 from .model import NotificationsChannel, NotificationDelivery, DeliveryStatus, NotificationSchema, \
     PushSubscriptionSchema, PushSubscription
@@ -131,7 +133,21 @@ async def email(notification: NotificationSchema):
         logger.info(f"No email address for user {notification.user_id}; marked delivery FAILED")
         return
 
-    body = f"{notification.body}\n\n— Talos"
-    await send_email(to, body, subject=notification.title)
+    frontend_origin = os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173").rstrip("/")
+    data = notification.data or {}
+    link = frontend_origin
+    channel_id = data.get("channel_id")
+    if channel_id:
+        query = f"?channel={channel_id}"
+        if data.get("workspace_id"):
+            query += f"&workspace={data['workspace_id']}"
+        if data.get("message_id"):
+            query += f"&msg={data['message_id']}"
+        link = f"{frontend_origin}/chat{query}"
+    elif data.get("url"):
+        link = f"{frontend_origin}{data['url']}"
+
+    html, text = notification_email(notification.title, notification.body, url=link)
+    await send_email(to, html, subject=notification.title, text=text)
     _mark_email(notification.id, DeliveryStatus.SENT)
     logger.info(f"Marked notification {notification.id} email delivery as SENT")

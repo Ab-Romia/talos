@@ -10,6 +10,7 @@ import LinearProgress from '@mui/material/LinearProgress'
 import CircularProgress from '@mui/material/CircularProgress'
 import { Eye, EyeOff, CheckCircle } from 'lucide-react'
 import { resetPassword, clearError } from '../../store/authSlice'
+import { setSessionToken } from '../../services/api'
 import * as R from '../../constants/Routes'
 
 const MIN_PASSWORD = 12
@@ -53,6 +54,10 @@ export default function ResetPasswordPage() {
     dispatch(clearError())
     const result = await dispatch(resetPassword({ token, password }))
     if (resetPassword.fulfilled.match(result)) {
+      // The reset revoked every session server-side; drop the stale client
+      // session so "Sign in" lands on the login page (not bounced into the app).
+      setSessionToken(null)
+      dispatch({ type: 'auth/logout/fulfilled' })
       setSuccess(true)
     }
   }

@@ -26,8 +26,9 @@ RUN apt-get update && \
         tesseract-ocr && \
     rm -rf /var/lib/apt/lists/*
 
-# OCR extras (kept out of the lockfile: pure additions, no version interplay)
-RUN uv pip install --no-cache pytesseract pypdfium2
+# OCR + Office-format extras (kept out of the lockfile: pure additions, no
+# version interplay). python-pptx powers PowerPoint (.pptx) text extraction.
+RUN uv pip install --no-cache pytesseract pypdfium2 python-pptx
 
 # Copy source code
 COPY app.py ./

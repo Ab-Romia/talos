@@ -56,8 +56,11 @@ export const NOTIFICATIONS = '/api/notifications/'
 export const NOTIFICATIONS_READ = (id) => `/api/notifications/${id}/read`
 export const NOTIFICATIONS_READ_ALL = '/api/notifications/read-all'
 export const NOTIFICATIONS_UNREAD_COUNT = '/api/notifications/unread-count'
+export const NOTIFICATIONS_UNREAD_BY_CHANNEL = '/api/notifications/unread-by-channel'
+export const NOTIFICATIONS_CHANNEL_READ = (channelId) => `/api/notifications/channel/${channelId}/read`
 export const NOTIFICATIONS_VAPID_KEY = '/api/notifications/vapid-public-key'
 export const NOTIFICATIONS_SUBSCRIPTION = '/api/notifications/subscription'
+export const NOTIFICATIONS_PREFERENCES = '/api/notifications/preferences'
 
 // Files
 export const FILES = (wsId) => `/api/workspaces/${wsId}/files`

@@ -2,8 +2,6 @@ import { useState, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import Avatar from '@mui/material/Avatar'
-import IconButton from '@mui/material/IconButton'
-import Tooltip from '@mui/material/Tooltip'
 import Dialog from '@mui/material/Dialog'
 import DialogTitle from '@mui/material/DialogTitle'
 import DialogContent from '@mui/material/DialogContent'
@@ -27,10 +25,11 @@ import {
   setActiveChatroom,
   clearWorkspaceError,
   loadDms,
+  loadUnreadByChannel,
+  markChannelRead,
   openDm,
   createGroup,
 } from '../../store/workspaceSlice'
-import { markRead } from '../../store/notificationsSlice'
 import * as R from '../../constants/Routes'
 import NotificationsBell from './NotificationsBell'
 import { usePermissions } from '../../contexts/PermissionsContext'
@@ -44,7 +43,7 @@ export default function Sidebar({ onNavigate } = {}) {
   const go = (path) => { navigate(path); onNavigate?.() }
 
   const {
-    workspaces, chatrooms, dms, activeWorkspaceId, activeChatroomId, unreadChannels, loading, error,
+    workspaces, chatrooms, dms, activeWorkspaceId, activeChatroomId, unreadCounts, loading, error,
   } = useSelector((s) => s.workspace)
   const user = useSelector((s) => s.auth.user)
   const { hasPerm } = usePermissions()
@@ -63,9 +62,12 @@ export default function Sidebar({ onNavigate } = {}) {
   const [groupName, setGroupName] = useState('')
   const [groupSelected, setGroupSelected] = useState([])
 
-  // Keep the DM list fresh for the active workspace.
+  // Keep the DM list and unread badges fresh for the active workspace.
   useEffect(() => {
-    if (activeWorkspaceId) dispatch(loadDms(activeWorkspaceId))
+    if (activeWorkspaceId) {
+      dispatch(loadDms(activeWorkspaceId))
+      dispatch(loadUnreadByChannel())
+    }
   }, [activeWorkspaceId, dispatch])
 
   const handleOpenDmPicker = async (e) => {
@@ -85,6 +87,15 @@ export default function Sidebar({ onNavigate } = {}) {
     const res = await dispatch(openDm({ workspaceId: activeWorkspaceId, userId: memberId }))
     if (openDm.fulfilled.match(res)) go(R.CHAT_PAGE)
   }
+
+  // "Message someone" should only offer members you don't already have a 1:1 DM
+  // with; groups can still include anyone, so they use the full candidate list.
+  const existingDmPeerIds = new Set(
+    (dms || []).filter((d) => !d.is_group && d.peer).map((d) => String(d.peer.id)),
+  )
+  const dmMessageCandidates = dmCandidates.filter(
+    (m) => !existingDmPeerIds.has(String(m.id)),
+  )
 
   const handleOpenGroupDialog = async () => {
     setDmPickerAnchor(null)
@@ -166,13 +177,9 @@ export default function Sidebar({ onNavigate } = {}) {
     }
   }
 
-  const notifications = useSelector((s) => s.notifications.items)
-
   const handleSelectChatroom = (id) => {
     dispatch(setActiveChatroom(id))
-    notifications
-      .filter((n) => !n.read_at && n.data?.channel_id === id)
-      .forEach((n) => dispatch(markRead(n.id)))
+    dispatch(markChannelRead(id))
     go(R.CHAT_PAGE)
   }
 
@@ -222,7 +229,7 @@ export default function Sidebar({ onNavigate } = {}) {
             <Layers size={14} style={{ marginRight: 8 }} /> {ws.name}
           </MenuItem>
         ))}
-        <MenuItem onClick={() => { handleWorkspaceClose(); setCreateWorkspaceOpen(true) }}>
+        <MenuItem onClick={() => { handleWorkspaceClose(); navigate(R.ONBOARDING) }}>
           <Plus size={14} style={{ marginRight: 8 }} /> Create workspace
         </MenuItem>
         <MenuItem onClick={handleSignOut}>
@@ -277,7 +284,7 @@ export default function Sidebar({ onNavigate } = {}) {
                   icon={<Hash size={15} />}
                   label={ch.name}
                   active={ch.id === activeChatroomId && currentPath === R.CHAT_PAGE}
-                  unread={unreadChannels.includes(ch.id)}
+                  count={unreadCounts[ch.id] || 0}
                   onClick={() => handleSelectChatroom(ch.id)}
                 />
               ))}
@@ -311,7 +318,7 @@ export default function Sidebar({ onNavigate } = {}) {
                     }
                     label={d.is_group ? (d.name || 'Group') : (d.peer?.name || 'Unknown')}
                     active={d.id === activeChatroomId && currentPath === R.CHAT_PAGE}
-                    unread={unreadChannels.includes(d.id)}
+                    count={unreadCounts[d.id] || 0}
                     onClick={() => handleSelectChatroom(d.id)}
                   />
                 ))}
@@ -333,10 +340,10 @@ export default function Sidebar({ onNavigate } = {}) {
         <div className="px-3 pt-2 pb-1 text-[11px] font-semibold text-ink-tertiary uppercase tracking-[0.06em]">
           Message someone
         </div>
-        {dmCandidates.length === 0 ? (
-          <MenuItem disabled>No other members</MenuItem>
+        {dmMessageCandidates.length === 0 ? (
+          <MenuItem disabled>No one left to message</MenuItem>
         ) : (
-          dmCandidates.map((m) => (
+          dmMessageCandidates.map((m) => (
             <MenuItem key={m.id} onClick={() => handleStartDm(m.id)}>
               <Avatar sx={{ width: 22, height: 22, fontSize: 10, fontWeight: 600, mr: 1, bgcolor: '#EEEDEA', color: 'text.secondary' }}>
                 {(m.name || '?').charAt(0).toUpperCase()}
@@ -431,11 +438,6 @@ export default function Sidebar({ onNavigate } = {}) {
         </div>
         <div className="flex items-center gap-0.5">
           <NotificationsBell />
-          <Tooltip title="Settings">
-            <IconButton size="small" onClick={() => navigate(R.SETTINGS)} sx={{ color: 'text.secondary' }}>
-              <Settings size={15} />
-            </IconButton>
-          </Tooltip>
         </div>
       </div>
 
@@ -507,6 +509,7 @@ function SectionHeader({ label, onAdd }) {
       <span className="text-[11px] font-semibold text-ink-tertiary uppercase tracking-[0.06em]">{label}</span>
       <button
         onClick={onAdd}
+        aria-label={`Add ${label}`}
         className="w-5 h-5 flex items-center justify-center rounded text-ink-tertiary hover:bg-surface-3 hover:text-ink-secondary transition-colors"
       >
         <Plus size={13} />
@@ -515,7 +518,8 @@ function SectionHeader({ label, onAdd }) {
   )
 }
 
-function NavItem({ icon, label, active, unread, onClick }) {
+function NavItem({ icon, label, active, count = 0, onClick }) {
+  const unread = count > 0
   return (
     <li
       className={`flex items-center gap-2.5 h-8 px-2.5 rounded-lg cursor-pointer transition-colors mb-0.5 ${
@@ -524,7 +528,12 @@ function NavItem({ icon, label, active, unread, onClick }) {
       onClick={onClick}
     >
       <span className="text-ink-tertiary w-4 text-center shrink-0">{icon}</span>
-      <span className={`text-[13px] flex-1 truncate ${unread ? 'font-bold text-ink' : 'font-medium'}`}>{label}</span>
+      <span className={`text-[13px] flex-1 truncate ${unread && !active ? 'font-bold text-ink' : 'font-medium'}`}>{label}</span>
+      {unread && !active && (
+        <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-amber text-white text-[11px] font-semibold flex items-center justify-center leading-none">
+          {count > 99 ? '99+' : count}
+        </span>
+      )}
     </li>
   )
 }

@@ -7,7 +7,21 @@ from langchain_unstructured import UnstructuredLoader
 
 from config import global_rag_config
 
-__all__ = ["load_documents", "format_citations", "ingest_file_chunks", "ingest_chat_messages"]
+__all__ = ["load_documents", "format_citations", "ingest_file_chunks", "ingest_chat_messages", "dedupe_sources"]
+
+
+def dedupe_sources(text: str) -> str:
+    """Collapse duplicate "Sources:" blocks. The authoritative citations are
+    appended last; if the model also wrote its own (despite the prompt), keep the
+    answer body + only the final block."""
+    import re
+
+    parts = re.split(r"\n+\s*Sources:\s*", text)
+    if len(parts) <= 2:
+        return text
+    body = parts[0].rstrip()
+    last = parts[-1].strip()
+    return f"{body}\n\nSources:\n{last}"
 
 
 async def load_documents(file_paths: str | Path | list[str] | list[Path]):
@@ -111,13 +125,10 @@ def format_citations(documents: Iterable[Document]) -> Iterable[str]:
     for i, doc in enumerate(documents, 1):
         # For workspace files, use filename; for CLI docs, use source
         filename = doc.metadata.get("filename")
-        file_id = doc.metadata.get("file_id")
         if filename:
             page = doc.metadata.get("page_number", "")
             page_str = f", p.{page}" if page else ""
             citation = f"{filename}{page_str}"
-            if file_id:
-                citation += f" (file:{file_id})"
         else:
             citation = cast(
                 str, doc.metadata.get("source", "unknown"))  # pyright: ignore[reportUnknownMemberType]; fmt: skip

@@ -13,6 +13,24 @@ import { documentService } from '../../services/documents'
 
 const GOOGLE_NATIVE = 'application/vnd.google-apps.'
 
+function formatSize(bytes) {
+  const n = Number(bytes)
+  if (!n) return ''
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+function formatDate(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+}
+
+const isNativeEntry = (e) => (e.mime_type || '').startsWith(GOOGLE_NATIVE)
+
 export function DriveImportDialog({ workspaceId, open, onClose, onImported }) {
   const [loading, setLoading] = useState(false)
   const [connected, setConnected] = useState(true)
@@ -23,6 +41,20 @@ export function DriveImportDialog({ workspaceId, open, onClose, onImported }) {
   const [error, setError] = useState('')
 
   const folderId = stack.length ? stack[stack.length - 1].id : null
+
+  // Files in the current folder that can actually be imported (Google-native
+  // docs like Sheets/Slides can't be).
+  const importable = entries.filter((e) => !e.is_folder && !isNativeEntry(e))
+  const allSelected = importable.length > 0 && importable.every((e) => selected.has(e.id))
+
+  const toggleSelectAll = () => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (allSelected) importable.forEach((e) => next.delete(e.id))
+      else importable.forEach((e) => next.add(e.id))
+      return next
+    })
+  }
 
   const load = useCallback(async () => {
     if (!workspaceId) return
@@ -124,6 +156,26 @@ export function DriveImportDialog({ workspaceId, open, onClose, onImported }) {
 
             {error && <p className="text-[13px] text-red-600 mb-2">{error}</p>}
 
+            {!loading && importable.length > 0 && (
+              <div className="flex items-center justify-between px-2 pb-1 mb-1 border-b border-[rgba(28,27,26,0.06)]">
+                <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                  <Checkbox
+                    size="small"
+                    checked={allSelected}
+                    indeterminate={!allSelected && importable.some((e) => selected.has(e.id))}
+                    onChange={toggleSelectAll}
+                    sx={{ p: 0.5 }}
+                  />
+                  <span className="text-[12px] text-ink-secondary">
+                    Select all in this folder ({importable.length})
+                  </span>
+                </label>
+                {selected.size > 0 && (
+                  <span className="text-[12px] text-amber font-medium">{selected.size} selected</span>
+                )}
+              </div>
+            )}
+
             {loading ? (
               <div className="flex justify-center py-16"><CircularProgress size={26} /></div>
             ) : entries.length === 0 ? (
@@ -131,7 +183,8 @@ export function DriveImportDialog({ workspaceId, open, onClose, onImported }) {
             ) : (
               <ul className="flex flex-col">
                 {entries.map((e) => {
-                  const isNative = (e.mime_type || '').startsWith(GOOGLE_NATIVE)
+                  const isNative = isNativeEntry(e)
+                  const meta = [formatDate(e.modified), formatSize(e.size)].filter(Boolean).join(' · ')
                   if (e.is_folder) {
                     return (
                       <li key={e.id}>
@@ -142,7 +195,10 @@ export function DriveImportDialog({ workspaceId, open, onClose, onImported }) {
                         >
                           <Folder size={18} className="text-amber shrink-0" />
                           <span className="text-[14px] text-ink truncate flex-1">{e.name}</span>
-                          <ChevronRight size={16} className="text-ink-tertiary" />
+                          {formatDate(e.modified) && (
+                            <span className="text-[11px] text-ink-tertiary shrink-0">{formatDate(e.modified)}</span>
+                          )}
+                          <ChevronRight size={16} className="text-ink-tertiary shrink-0" />
                         </button>
                       </li>
                     )
@@ -161,8 +217,12 @@ export function DriveImportDialog({ workspaceId, open, onClose, onImported }) {
                           onChange={() => toggle(e.id)}
                         />
                         <FileText size={17} className="text-ink-tertiary shrink-0" />
-                        <span className="text-[14px] text-ink truncate flex-1">{e.name}</span>
-                        {isNative && <span className="text-[11px] text-ink-tertiary">not importable</span>}
+                        <span className="text-[14px] text-ink truncate flex-1 min-w-0">{e.name}</span>
+                        {isNative ? (
+                          <span className="text-[11px] text-ink-tertiary shrink-0">not importable</span>
+                        ) : (
+                          meta && <span className="text-[11px] text-ink-tertiary shrink-0 tabular-nums">{meta}</span>
+                        )}
                       </label>
                     </li>
                   )

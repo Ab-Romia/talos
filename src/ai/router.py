@@ -23,6 +23,7 @@ class AiQueryRequest(BaseModel):
     question: str = Field(min_length=1)
     history: list[AiMessage] = []
     file_ids: list[uuid.UUID] | None = None
+    conversation_id: uuid.UUID | None = None
 
 
 def _build_chain(
@@ -33,17 +34,18 @@ def _build_chain(
 ):
     from langchain_core.messages import AIMessage, HumanMessage
     from database import SessionLocal
-    from rag.access import accessible_file_ids
+    from rag.access import accessible_file_ids, private_file_ids
     from rag.ai_settings import resolve_ai_config
     from rag.rag_chain import RAGChain
     from rag.vector_store import WORKSPACE_COLLECTION
 
     # The standalone Talos AI page is a workspace-level assistant: it is grounded
-    # in the workspace documents plus this AI conversation's own history — nothing
-    # else. It deliberately does NOT recall other channels'/DMs' chat or files.
+    # in the workspace documents, the caller's own private AI-tab uploads, and
+    # this conversation's history — nothing else. It deliberately does NOT recall
+    # other channels'/DMs' chat or files.
     with SessionLocal() as db:
         resolved, provenance = resolve_ai_config(workspace_id, None, db)
-        allowed_files = accessible_file_ids(db, user_id, workspace_id)
+        allowed_files = accessible_file_ids(db, user_id, workspace_id) | private_file_ids(db, user_id, workspace_id)
 
     if requested_file_ids:
         allowed_files = allowed_files & set(requested_file_ids)
@@ -81,18 +83,42 @@ async def get_bot_identity(workspace_id: uuid.UUID):
     return {"user_id": bot_id, "username": AI_USERNAME, "name": "Talos AI"}
 
 
-def _save_message(workspace_id: uuid.UUID, user_id: uuid.UUID, role: str, content: str):
+def _save_message(
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    role: str,
+    content: str,
+):
     from database import SessionLocal
     from .model import AiChatMessage
 
     with SessionLocal() as db:
-        db.add(AiChatMessage(workspace_id=workspace_id, user_id=user_id, role=role, content=content))
+        db.add(
+            AiChatMessage(
+                workspace_id=workspace_id,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                role=role,
+                content=content,
+            )
+        )
         db.commit()
 
 
-@router.get("/messages", dependencies=[require_perms("files:read")])
-async def get_ai_messages(workspace_id: uuid.UUID, user_id: UserIdDep):
-    """The current user's saved AI conversation in this workspace."""
+def _conversation_title(rows) -> str:
+    """A short label for a conversation — its first user turn, trimmed."""
+    for r in rows:
+        if r.role == "user" and r.content.strip():
+            text = " ".join(r.content.split())
+            return text[:80] + ("…" if len(text) > 80 else "")
+    return "New chat"
+
+
+@router.get("/conversations", dependencies=[require_perms("files:read")])
+async def list_conversations(workspace_id: uuid.UUID, user_id: UserIdDep):
+    """The current user's saved AI conversations in this workspace, newest first."""
+    from itertools import groupby
     from sqlalchemy import select
     from database import SessionLocal
     from .model import AiChatMessage
@@ -104,6 +130,46 @@ async def get_ai_messages(workspace_id: uuid.UUID, user_id: UserIdDep):
                 .where(
                     AiChatMessage.workspace_id == workspace_id,
                     AiChatMessage.user_id == user_id,
+                    AiChatMessage.conversation_id.is_not(None),
+                )
+                .order_by(AiChatMessage.conversation_id, AiChatMessage.created_at, AiChatMessage.id)
+            ).all()
+
+            convos = []
+            for cid, group in groupby(rows, key=lambda r: r.conversation_id):
+                msgs = list(group)
+                convos.append(
+                    {
+                        "id": str(cid),
+                        "title": _conversation_title(msgs),
+                        "message_count": len(msgs),
+                        "created_at": msgs[0].created_at.isoformat(),
+                        "updated_at": msgs[-1].created_at.isoformat(),
+                    }
+                )
+            convos.sort(key=lambda c: c["updated_at"], reverse=True)
+            return convos
+
+    return await asyncio.to_thread(_load)
+
+
+@router.get("/conversations/{conversation_id}/messages", dependencies=[require_perms("files:read")])
+async def get_conversation_messages(
+    workspace_id: uuid.UUID, conversation_id: uuid.UUID, user_id: UserIdDep
+):
+    """Messages of one saved conversation for the current user."""
+    from sqlalchemy import select
+    from database import SessionLocal
+    from .model import AiChatMessage
+
+    def _load():
+        with SessionLocal() as db:
+            rows = db.scalars(
+                select(AiChatMessage)
+                .where(
+                    AiChatMessage.workspace_id == workspace_id,
+                    AiChatMessage.user_id == user_id,
+                    AiChatMessage.conversation_id == conversation_id,
                 )
                 .order_by(AiChatMessage.created_at, AiChatMessage.id)
             ).all()
@@ -115,9 +181,13 @@ async def get_ai_messages(workspace_id: uuid.UUID, user_id: UserIdDep):
     return await asyncio.to_thread(_load)
 
 
-@router.delete("/messages", dependencies=[require_perms("files:read")], status_code=204)
-async def clear_ai_messages(workspace_id: uuid.UUID, user_id: UserIdDep):
-    """Delete the current user's AI conversation in this workspace (New chat)."""
+@router.delete(
+    "/conversations/{conversation_id}", dependencies=[require_perms("files:read")], status_code=204
+)
+async def delete_conversation(
+    workspace_id: uuid.UUID, conversation_id: uuid.UUID, user_id: UserIdDep
+):
+    """Delete one saved conversation belonging to the current user."""
     from sqlalchemy import delete
     from database import SessionLocal
     from .model import AiChatMessage
@@ -128,6 +198,7 @@ async def clear_ai_messages(workspace_id: uuid.UUID, user_id: UserIdDep):
                 delete(AiChatMessage).where(
                     AiChatMessage.workspace_id == workspace_id,
                     AiChatMessage.user_id == user_id,
+                    AiChatMessage.conversation_id == conversation_id,
                 )
             )
             db.commit()
@@ -138,9 +209,10 @@ async def clear_ai_messages(workspace_id: uuid.UUID, user_id: UserIdDep):
 @router.post("/query", dependencies=[require_perms("files:read")])
 async def query(workspace_id: uuid.UUID, req: AiQueryRequest, user_id: UserIdDep):
     """Stream a RAG answer grounded in the workspace's documents and chat history."""
+    conversation_id = req.conversation_id or uuid.uuid7()
     rag = await asyncio.to_thread(_build_chain, workspace_id, user_id, req.file_ids, req.history)
 
-    await asyncio.to_thread(_save_message, workspace_id, user_id, "user", req.question)
+    await asyncio.to_thread(_save_message, workspace_id, user_id, conversation_id, "user", req.question)
 
     def sync_gen():
         answer_parts: list[str] = []
@@ -154,15 +226,21 @@ async def query(workspace_id: uuid.UUID, req: AiQueryRequest, user_id: UserIdDep
             answer_parts.append(failure)
             yield failure
         finally:
-            answer = "".join(answer_parts)
+            from rag.ingestion import dedupe_sources
+            answer = dedupe_sources("".join(answer_parts))
             if answer.strip():
                 try:
-                    _save_message(workspace_id, user_id, "assistant", answer)
+                    _save_message(workspace_id, user_id, conversation_id, "assistant", answer)
                 except Exception:
                     pass
 
     return StreamingResponse(
         iterate_in_threadpool(sync_gen()),
         media_type="text/plain; charset=utf-8",
-        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+            "X-Conversation-Id": str(conversation_id),
+            "Access-Control-Expose-Headers": "X-Conversation-Id",
+        },
     )

@@ -219,8 +219,9 @@ def list_files(
         q = q.where(File.channel_id == channel_id)
     else:
         # Workspace scope = the Documents library. Chat attachments are
-        # channel-bound (incl. DMs) and must not surface here.
-        q = q.where(File.channel_id.is_(None))
+        # channel-bound (incl. DMs) and must not surface here; private AI-tab
+        # uploads are never listed anywhere.
+        q = q.where(File.channel_id.is_(None), File.is_private.is_(False))
 
     if content_type is not None:
         # Support prefix match: "image/" matches "image/png", "image/jpeg", etc.
@@ -371,6 +372,7 @@ def search_files(
             select(File)
             .where(File.workspace_id == workspace_id)
             .where(File.deleted_at.is_(None))
+            .where(File.is_private.is_(False))
             .order_by(File.created_at.desc())
             .limit(limit)
         )
@@ -438,6 +440,7 @@ def search_files(
             File.id.in_(uuids),
             File.workspace_id == workspace_id,
             File.deleted_at.is_(None),
+            File.is_private.is_(False),
         )
     )
     if uploader_id is not None:

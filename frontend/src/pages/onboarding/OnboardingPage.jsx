@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import { useNavigate } from 'react-router-dom'
 import TextField from '@mui/material/TextField'
@@ -8,7 +8,7 @@ import IconButton from '@mui/material/IconButton'
 import CircularProgress from '@mui/material/CircularProgress'
 import { Hash, Plus, X, ArrowLeft } from 'lucide-react'
 import { createWorkspace } from '../../store/workspaceSlice'
-import { chatService } from '../../services/chat'
+import MemberSearchAutocomplete from '../../components/workspace/MemberSearchAutocomplete'
 import * as R from '../../constants/Routes'
 
 const STEPS = [
@@ -30,92 +30,20 @@ export default function OnboardingPage() {
   const [channels, setChannels] = useState(DEFAULT_CHANNELS)
   const [channelInput, setChannelInput] = useState('')
   const [members, setMembers] = useState([])
-  const [memberQuery, setMemberQuery] = useState('')
-  const [suggestions, setSuggestions] = useState([])
-  const [suggestionsLoading, setSuggestionsLoading] = useState(false)
-  const [highlightIdx, setHighlightIdx] = useState(-1)
-  const [showDropdown, setShowDropdown] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
-  const debounceRef = useRef(null)
-  const dropdownRef = useRef(null)
-  const inputRef = useRef(null)
 
   const clearError = () => { if (error) setError('') }
 
-  const searchUsers = useCallback((query) => {
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    if (query.length < 2) {
-      setSuggestions([])
-      setShowDropdown(false)
-      return
-    }
-    setSuggestionsLoading(true)
-    debounceRef.current = setTimeout(async () => {
-      try {
-        const results = await chatService.searchUsers(query)
-        const alreadyAdded = new Set(members.map((m) => m.id))
-        setSuggestions(results.filter((u) => !alreadyAdded.has(u.id)))
-        setShowDropdown(true)
-        setHighlightIdx(-1)
-      } catch {
-        setSuggestions([])
-      } finally {
-        setSuggestionsLoading(false)
-      }
-    }, 250)
-  }, [members])
-
-  useEffect(() => {
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
-  }, [])
-
-  useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target) &&
-          inputRef.current && !inputRef.current.contains(e.target)) {
-        setShowDropdown(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
-
   const selectUser = (userObj) => {
     if (members.some((m) => m.id === userObj.id)) return
-    setMembers([...members, userObj])
-    setMemberQuery('')
-    setSuggestions([])
-    setShowDropdown(false)
-    setHighlightIdx(-1)
+    setMembers((prev) => [...prev, userObj])
     clearError()
-    inputRef.current?.focus()
   }
 
   const removeMember = (id) => {
     setMembers(members.filter((m) => m.id !== id))
     clearError()
-  }
-
-  const handleMemberKeyDown = (e) => {
-    if (!showDropdown || !suggestions.length) {
-      if (e.key === 'Escape') setShowDropdown(false)
-      return
-    }
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setHighlightIdx((prev) => (prev + 1) % suggestions.length)
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      setHighlightIdx((prev) => (prev <= 0 ? suggestions.length - 1 : prev - 1))
-    } else if (e.key === 'Enter') {
-      e.preventDefault()
-      if (highlightIdx >= 0 && highlightIdx < suggestions.length) {
-        selectUser(suggestions[highlightIdx])
-      }
-    } else if (e.key === 'Escape') {
-      setShowDropdown(false)
-    }
   }
 
   const goToChannels = (e) => {
@@ -269,58 +197,13 @@ export default function OnboardingPage() {
           {/* Step 3: invite members with autocomplete */}
           {step === 2 && (
             <>
-              <div className="relative mb-3">
-                <TextField
-                  ref={inputRef}
-                  autoFocus
-                  fullWidth
-                  size="small"
+              <div className="mb-3">
+                <MemberSearchAutocomplete
+                  excludeIds={members.map((m) => m.id)}
+                  onSelect={selectUser}
                   placeholder="Search by username or email"
-                  value={memberQuery}
-                  onChange={(e) => {
-                    setMemberQuery(e.target.value)
-                    searchUsers(e.target.value)
-                    clearError()
-                  }}
-                  onFocus={() => { if (suggestions.length) setShowDropdown(true) }}
-                  onKeyDown={handleMemberKeyDown}
-                  InputProps={{
-                    endAdornment: suggestionsLoading ? <CircularProgress size={16} /> : null,
-                  }}
+                  autoFocus
                 />
-
-                {showDropdown && suggestions.length > 0 && (
-                  <div
-                    ref={dropdownRef}
-                    className="absolute z-50 left-0 right-0 mt-1 bg-surface-1 border border-[rgba(28,27,26,0.12)] rounded-lg shadow-lg overflow-hidden max-h-[200px] overflow-y-auto"
-                  >
-                    {suggestions.map((u, i) => (
-                      <button
-                        key={u.id}
-                        type="button"
-                        className={`w-full flex items-center gap-3 px-3 py-2 text-left transition-colors ${
-                          i === highlightIdx ? 'bg-amber/10' : 'hover:bg-surface-2'
-                        }`}
-                        onMouseDown={(e) => { e.preventDefault(); selectUser(u) }}
-                        onMouseEnter={() => setHighlightIdx(i)}
-                      >
-                        <div className="w-7 h-7 rounded-full bg-surface-2 flex items-center justify-center text-[12px] font-semibold text-ink-secondary shrink-0">
-                          {(u.name || u.username)[0].toUpperCase()}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-[13px] font-medium text-ink truncate">{u.name || u.username}</p>
-                          <p className="text-[11px] text-ink-tertiary truncate">@{u.username} &middot; {u.email}</p>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {showDropdown && !suggestionsLoading && memberQuery.length >= 2 && suggestions.length === 0 && (
-                  <div className="absolute z-50 left-0 right-0 mt-1 bg-surface-1 border border-[rgba(28,27,26,0.12)] rounded-lg shadow-lg px-3 py-3">
-                    <p className="text-[13px] text-ink-tertiary">No users found matching &ldquo;{memberQuery}&rdquo;</p>
-                  </div>
-                )}
               </div>
 
               {members.length > 0 ? (

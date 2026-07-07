@@ -36,7 +36,8 @@ export const authService = {
   },
 
   changePassword(newPassword) {
-    return api.putQuery('/api/auth/password/change', { new_password: newPassword })
+    // The endpoint reads new_password as a form field, so send a form body.
+    return api.putForm('/api/auth/password/change', { new_password: newPassword })
   },
 
   forgotPassword(email) {

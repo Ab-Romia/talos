@@ -155,6 +155,18 @@ async def process_document(file_record: File, db: Session, storage: AsyncFileSys
             chunks = build_chunk_documents(elements, base_metadata=base_metadata)
         except ImportError:
             logger.warning("unstructured not installed, using fallback text extraction")
+            chunks = []
+        except Exception:
+            # A malformed office file makes unstructured/python-pptx raise rather
+            # than return empty; don't fail the file — fall through to the stdlib
+            # extractor below, which handles docx/pptx/pdf/text on its own.
+            logger.warning("primary extraction failed, using fallback text extraction", file_id=str(file_record.id))
+            chunks = []
+
+        if not chunks:
+            # unstructured missing, empty, or raised: try the stdlib zip/xml +
+            # pdfminer extractor before OCR — it rescues docx/pptx unstructured
+            # couldn't read.
             docs = [
                 Document(page_content=text, metadata={**base_metadata, "page_number": meta.get("page_number", 0)})
                 for text, meta in _fallback_extract(tmp_path, file_record.content_type)
@@ -267,6 +279,31 @@ def _fallback_extract(file_path: str, content_type: str) -> list[tuple[str, dict
         text = re.sub(r"[ \t]+\n", "\n", text)
         text = re.sub(r"\n{3,}", "\n\n", text).strip()
         return [(text, {"page_number": 0})] if text else []
+
+    if (
+        content_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        or ext == ".pptx"
+    ):
+        import html
+        import re
+        import zipfile
+
+        results: list[tuple[str, dict]] = []
+        with zipfile.ZipFile(file_path) as archive:
+            slides = sorted(
+                (n for n in archive.namelist()
+                 if re.match(r"ppt/slides/slide\d+\.xml$", n)),
+                key=lambda n: int(re.search(r"(\d+)", n).group(1)),
+            )
+            for page_number, name in enumerate(slides, start=1):
+                xml = archive.read(name).decode("utf-8", errors="replace")
+                # Each text run lives in <a:t>…</a:t>; paragraphs end at </a:p>.
+                xml = re.sub(r"</a:p>", "\n", xml)
+                runs = re.findall(r"<a:t>(.*?)</a:t>", xml, flags=re.DOTALL)
+                text = html.unescape(" ".join(runs)).strip()
+                if text:
+                    results.append((text, {"page_number": page_number}))
+        return results
 
     with open(file_path, "r", encoding="utf-8", errors="replace") as f:
         text = f.read()

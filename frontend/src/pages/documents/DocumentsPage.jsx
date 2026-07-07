@@ -165,6 +165,22 @@ export default function DocumentsPage() {
     }
   }
 
+  // Paste (Ctrl+V) an image or file straight into the Documents library.
+  useEffect(() => {
+    const onPaste = (e) => {
+      const target = e.target
+      // Don't hijack paste inside a text field.
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+      const files = Array.from(e.clipboardData?.items || [])
+        .filter((it) => it.kind === 'file')
+        .map((it) => it.getAsFile())
+        .filter(Boolean)
+      if (files.length) { e.preventDefault(); handleFiles(files) }
+    }
+    document.addEventListener('paste', onPaste)
+    return () => document.removeEventListener('paste', onPaste)
+  }, [handleFiles])
+
   const handleDrop = (e) => {
     e.preventDefault()
     setDragOver(false)
@@ -223,7 +239,7 @@ export default function DocumentsPage() {
         ref={fileInputRef}
         type="file"
         multiple
-        accept=".pdf,.docx,.txt,.md"
+        accept=".pdf,.docx,.pptx,.txt,.md,image/*"
         onChange={handleFileInput}
         style={{ display: 'none' }}
       />
@@ -287,7 +303,7 @@ export default function DocumentsPage() {
           <p className="text-[15px] text-ink-secondary mb-1">
             Drag files here or <span className="text-amber font-medium">browse</span>
           </p>
-          <p className="text-[13px] text-ink-tertiary">Supports PDF, DOCX, TXT, MD — up to 50MB</p>
+          <p className="text-[13px] text-ink-tertiary">Supports PDF, DOCX, PPTX, TXT, MD & images — paste or drop, up to 50MB</p>
         </div>
         )}
 

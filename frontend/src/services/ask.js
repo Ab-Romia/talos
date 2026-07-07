@@ -1,4 +1,5 @@
 import { getSessionToken } from './api'
+import { dedupeSources } from '../utils/sources'
 
 // The /ask endpoint streams the answer; with debug=true it appends
 // "__ASK_DEBUG__" + the full RagTrace JSON after the answer text.
@@ -26,8 +27,8 @@ export const askService = {
     }
     const raw = await res.text()
     const idx = raw.indexOf(DEBUG_MARKER)
-    if (idx === -1) return { answer: raw.trim(), trace: null }
-    const answer = raw.slice(0, idx).trim()
+    if (idx === -1) return { answer: dedupeSources(raw.trim()), trace: null }
+    const answer = dedupeSources(raw.slice(0, idx).trim())
     let trace = null
     try {
       trace = JSON.parse(raw.slice(idx + DEBUG_MARKER.length))

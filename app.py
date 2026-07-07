@@ -36,6 +36,7 @@ async def lifespan(app: FastAPI):
 
     with Session(engine) as session:
         session.execute(text("CREATE EXTENSION IF NOT EXISTS citext;"))
+        session.execute(text('CREATE EXTENSION IF NOT EXISTS "pgcrypto";'))
         session.commit()
 
     Base.metadata.create_all(engine)
@@ -45,6 +46,36 @@ async def lifespan(app: FastAPI):
     with Session(engine) as session:
         session.execute(text(
             "ALTER TABLE channels ADD COLUMN IF NOT EXISTS is_group boolean NOT NULL DEFAULT false"
+        ))
+        session.execute(text(
+            "ALTER TABLE files ADD COLUMN IF NOT EXISTS is_private boolean NOT NULL DEFAULT false"
+        ))
+        session.execute(text(
+            "ALTER TABLE ai_chat_messages ADD COLUMN IF NOT EXISTS conversation_id uuid"
+        ))
+        # Fold legacy single-thread history into one conversation per (workspace,
+        # user) so pre-existing chats survive the move to multiple conversations.
+        session.execute(text(
+            "UPDATE ai_chat_messages m SET conversation_id = g.cid "
+            "FROM (SELECT workspace_id, user_id, gen_random_uuid() AS cid "
+            "FROM ai_chat_messages WHERE conversation_id IS NULL "
+            "GROUP BY workspace_id, user_id) g "
+            "WHERE m.workspace_id = g.workspace_id AND m.user_id = g.user_id "
+            "AND m.conversation_id IS NULL"
+        ))
+        session.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_ai_chat_messages_conversation_id "
+            "ON ai_chat_messages (conversation_id)"
+        ))
+        session.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_ai_chat_ws_user_conv_created "
+            "ON ai_chat_messages (workspace_id, user_id, conversation_id, created_at)"
+        ))
+        # Give every workspace a description so the settings screen isn't blank.
+        session.execute(text(
+            "UPDATE workspaces SET description = "
+            "name || ' — a shared space for your team''s channels, conversations and documents.' "
+            "WHERE description IS NULL OR description = ''"
         ))
         session.commit()
 

@@ -1,5 +1,7 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit'
 import { chatService } from '../services/chat'
+import { notificationsService } from '../services/notifications'
+import { loadUnreadCount } from './notificationsSlice'
 import { reconnectSocket } from '../services/socket'
 import { login, logout } from './authSlice'
 
@@ -14,7 +16,7 @@ function resetToInitial(state) {
   state.dms = []
   state.activeWorkspaceId = null
   state.activeChatroomId = null
-  state.unreadChannels = []
+  state.unreadCounts = {}
   state.loading = false
   state.error = null
   state.membersVersion = 0
@@ -50,6 +52,34 @@ export const loadDms = createAsyncThunk(
     } catch (err) {
       return rejectWithValue(err.detail || 'Failed to load direct messages')
     }
+  },
+)
+
+// Per-conversation unread counts, derived from the user's unread notifications
+// so the sidebar badges are correct even right after a reload / fresh login.
+export const loadUnreadByChannel = createAsyncThunk(
+  'workspace/loadUnreadByChannel',
+  async (_, { rejectWithValue }) => {
+    try {
+      const counts = await notificationsService.unreadByChannel()
+      return counts && typeof counts === 'object' ? counts : {}
+    } catch (err) {
+      return rejectWithValue(err.detail || 'Failed to load unread counts')
+    }
+  },
+)
+
+// Clear a conversation's badge locally and mark its notifications read on the
+// server so the count doesn't come back on the next reload.
+export const markChannelRead = createAsyncThunk(
+  'workspace/markChannelRead',
+  async (channelId, { dispatch }) => {
+    dispatch(clearChannelUnread(channelId))
+    try {
+      await notificationsService.markChannelRead(channelId)
+      dispatch(loadUnreadCount())
+    } catch {}
+    return channelId
   },
 )
 
@@ -187,7 +217,8 @@ const workspaceSlice = createSlice({
     activeWorkspaceId: (() => { try { return localStorage.getItem(ACTIVE_WS_KEY) } catch { return null } })(),
     activeChatroomId: (() => { try { return localStorage.getItem(ACTIVE_CR_KEY) } catch { return null } })(),
     dms: [],
-    unreadChannels: [],
+    // Per-conversation unread message counts: { [channelId]: number }.
+    unreadCounts: {},
     loading: false,
     error: null,
     // Bumped when another user changes this workspace's roster / permissions, so
@@ -201,15 +232,20 @@ const workspaceSlice = createSlice({
   reducers: {
     setActiveChatroom(state, action) {
       state.activeChatroomId = action.payload
-      state.unreadChannels = state.unreadChannels.filter((id) => id !== action.payload)
+      delete state.unreadCounts[action.payload]
       try {
         localStorage.setItem(ACTIVE_CR_KEY, action.payload)
       } catch {}
     },
+    // Increment the unread counter for a conversation (a message arrived while
+    // it wasn't the active one). Payload is the channel/DM/group id.
     markChannelUnread(state, action) {
-      if (!state.unreadChannels.includes(action.payload)) {
-        state.unreadChannels.push(action.payload)
-      }
+      const id = action.payload
+      if (id === state.activeChatroomId) return
+      state.unreadCounts[id] = (state.unreadCounts[id] || 0) + 1
+    },
+    clearChannelUnread(state, action) {
+      delete state.unreadCounts[action.payload]
     },
     clearWorkspaceError(state) {
       state.error = null
@@ -237,6 +273,7 @@ const workspaceSlice = createSlice({
         state.chatrooms = next ? next.channels || [] : []
         state.activeChatroomId = state.chatrooms[0]?.id ?? null
         state.dms = []
+        state.unreadCounts = {}
         try {
           if (state.activeWorkspaceId) localStorage.setItem(ACTIVE_WS_KEY, state.activeWorkspaceId)
           else localStorage.removeItem(ACTIVE_WS_KEY)
@@ -274,6 +311,7 @@ const workspaceSlice = createSlice({
         state.chatrooms = action.payload.chatrooms
         state.activeChatroomId = action.payload.chatroomId
         state.dms = []
+        state.unreadCounts = {}
         try {
           localStorage.setItem(ACTIVE_WS_KEY, action.payload.workspaceId)
           if (action.payload.chatroomId)
@@ -283,11 +321,18 @@ const workspaceSlice = createSlice({
       .addCase(loadDms.fulfilled, (state, action) => {
         state.dms = action.payload
       })
+      .addCase(loadUnreadByChannel.fulfilled, (state, action) => {
+        // Keep the currently-open conversation at zero — the server may still
+        // count a just-arrived message the user is already looking at.
+        const counts = { ...action.payload }
+        if (state.activeChatroomId) delete counts[state.activeChatroomId]
+        state.unreadCounts = counts
+      })
       .addCase(openDm.fulfilled, (state, action) => {
         const dm = action.payload
         if (!state.dms.some((d) => d.id === dm.id)) state.dms.push(dm)
         state.activeChatroomId = dm.id
-        state.unreadChannels = state.unreadChannels.filter((id) => id !== dm.id)
+        delete state.unreadCounts[dm.id]
         try {
           localStorage.setItem(ACTIVE_CR_KEY, dm.id)
         } catch {}
@@ -299,7 +344,7 @@ const workspaceSlice = createSlice({
         const group = action.payload
         if (!state.dms.some((d) => d.id === group.id)) state.dms.push(group)
         state.activeChatroomId = group.id
-        state.unreadChannels = state.unreadChannels.filter((id) => id !== group.id)
+        delete state.unreadCounts[group.id]
         try {
           localStorage.setItem(ACTIVE_CR_KEY, group.id)
         } catch {}
@@ -372,6 +417,7 @@ const workspaceSlice = createSlice({
 export const {
   setActiveChatroom,
   markChannelUnread,
+  clearChannelUnread,
   clearWorkspaceError,
   bumpMembersVersion,
   bumpPermissionsVersion,

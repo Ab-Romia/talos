@@ -10,7 +10,6 @@ import {
   markAllRead,
   clearNotificationsError,
 } from '../../store/notificationsSlice'
-import { setActiveChatroom } from '../../store/workspaceSlice'
 import NotificationItem from '../notifications/NotificationItem'
 
 export default function NotificationsDropdown({ anchorEl, open, onClose }) {
@@ -31,9 +30,12 @@ export default function NotificationsDropdown({ anchorEl, open, onClose }) {
     if (!n.is_read) dispatch(markRead(n.id))
     onClose?.()
     if (n.data?.channel_id) {
-      dispatch(setActiveChatroom(n.data.channel_id))
-      const msgParam = n.data.message_id ? `?msg=${n.data.message_id}` : ''
-      navigate(`/chat${msgParam}`)
+      // Hand off to ChatPage's deep-link handler so it can switch workspace too.
+      const params = new URLSearchParams()
+      params.set('channel', n.data.channel_id)
+      if (n.data.workspace_id) params.set('workspace', n.data.workspace_id)
+      if (n.data.message_id) params.set('msg', n.data.message_id)
+      navigate(`/chat?${params.toString()}`)
     } else if (n.data?.url) {
       navigate(n.data.url)
     }

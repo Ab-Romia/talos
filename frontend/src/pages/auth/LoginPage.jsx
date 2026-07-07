@@ -30,7 +30,7 @@ export default function LoginPage() {
   }, [])
 
   useEffect(() => {
-    if (isAuthenticated) navigate(R.CHAT_PAGE)
+    if (isAuthenticated) navigate(R.SELECT_WORKSPACE)
   }, [isAuthenticated, navigate])
 
   const handleSubmit = async (e) => {
@@ -44,7 +44,7 @@ export default function LoginPage() {
     dispatch(clearError())
     const result = await dispatch(verifyTotp({ otp }))
     if (verifyTotp.fulfilled.match(result)) {
-      navigate(R.CHAT_PAGE)
+      navigate(R.SELECT_WORKSPACE)
     }
   }
 
@@ -52,7 +52,7 @@ export default function LoginPage() {
     dispatch(clearError())
     const result = await dispatch(loginWithPasskey())
     if (loginWithPasskey.fulfilled.match(result)) {
-      navigate(R.CHAT_PAGE)
+      navigate(R.SELECT_WORKSPACE)
     }
   }
 

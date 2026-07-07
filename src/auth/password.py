@@ -10,10 +10,12 @@ from sqlalchemy import select, or_, update
 from config import cfg
 from database import DatabaseDep
 from utils.email import send_email
+from utils.email_templates import password_reset_email
 from .dependencies import sudo
 from .model import User, IdentityProvider, Issuer, Session as DBSession
 from .utils import errors, jwt
 from .utils.session import revoke_by_uid, SessionDep, NewSessionDep
+from utils.types import UUID
 
 router = APIRouter()
 
@@ -84,7 +86,7 @@ def password_authenticate(
 
 class ForgotPasswordClaims(jwt.BaseJWTClaims):
     requires_totp: bool
-    identity_provider_id: uuid.UUID
+    identity_provider_id: UUID
 
 
 @router.post("/forgot")
@@ -113,14 +115,12 @@ async def forgot_password_request(email: Annotated[str, Form()], db: DatabaseDep
 
     frontend_origin = os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173").rstrip("/")
     reset_url = f"{frontend_origin}/reset-password?token={token}"
+    html, text = password_reset_email(reset_url)
     await send_email(
         email,
-        "You requested a password reset for your Talos account.\n\n"
-        "Click the link below to set a new password:\n\n"
-        f"{reset_url}\n\n"
-        "If you didn't request this, you can safely ignore this email.\n"
-        "This link will expire shortly.",
+        html,
         subject="Reset your Talos password",
+        text=text,
     )
 
 

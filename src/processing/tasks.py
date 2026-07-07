@@ -83,6 +83,7 @@ async def process_file(file_id: uuid.UUID):
                 )
 
             file_record.processing_status = FileStatus.INDEXED
+            file_record.processing_error = None  # clear any stale error from a prior failed attempt
             db.commit()
             logger.info("File processing complete", file_id=file_id)
 
