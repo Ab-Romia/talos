@@ -24,10 +24,14 @@ for _fn in MCP_TOOLS:
 
 
 def main() -> None:
-    # Chat tools persist through the storage backend Protocol; bind the Postgres
-    # implementation for this standalone process (mirrors worker startup in broker.py).
+    # Register all SQLAlchemy models first: mapper configuration needs every
+    # related class (e.g. Message -> Channel) and this process doesn't import
+    # the full app. Then bind the Postgres chat storage for the chat tools
+    # (mirrors worker startup in broker.py).
+    from utils.import_sa_models import import_sa_models
     from chat.storage import bind_chat_storage, DatabaseStorageBackend
 
+    import_sa_models()
     bind_chat_storage(DatabaseStorageBackend())
     mcp.run(transport=cfg().mcp.transport)
 
