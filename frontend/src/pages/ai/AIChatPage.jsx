@@ -46,7 +46,9 @@ export default function AIChatPage() {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
-  const [historyLoading, setHistoryLoading] = useState(false)
+  // Starts true so the first paint shows a loader instead of flashing the
+  // empty-state prompt before the saved conversation is fetched.
+  const [historyLoading, setHistoryLoading] = useState(true)
   const [conversationId, setConversationId] = useState(null)
   const [conversations, setConversations] = useState([])
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -134,7 +136,7 @@ export default function AIChatPage() {
     setConversations([])
     setConversationId(null)
     setHistoryOpen(false)
-    if (!workspaceId) return
+    if (!workspaceId) { setHistoryLoading(false); return }
     let cancelled = false
     setHistoryLoading(true)
     ;(async () => {
@@ -325,7 +327,11 @@ export default function AIChatPage() {
       <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0">
         <div className="max-w-[1000px] mx-auto px-4 sm:px-5 py-6">
           {messages.length === 0 ? (
-            historyLoading ? null : <EmptyState onPick={send} disabled={!workspaceId} />
+            historyLoading ? (
+              <div className="flex justify-center py-20">
+                <CircularProgress size={22} sx={{ color: '#C4913A' }} />
+              </div>
+            ) : <EmptyState onPick={send} disabled={!workspaceId} />
           ) : (
             <div className="flex flex-col gap-5">
               {messages.map((m) =>

@@ -13,6 +13,7 @@ import DialogTitle from '@mui/material/DialogTitle'
 import DialogContent from '@mui/material/DialogContent'
 import DialogActions from '@mui/material/DialogActions'
 import Snackbar from '@mui/material/Snackbar'
+import CircularProgress from '@mui/material/CircularProgress'
 import Table from '@mui/material/Table'
 import TableBody from '@mui/material/TableBody'
 import TableCell from '@mui/material/TableCell'
@@ -53,6 +54,8 @@ function formatFileSize(bytes) {
 export default function DocumentsPage() {
   const [view, setView] = useState('grid')
   const [docs, setDocs] = useState([])
+  // Starts true so the first paint shows a loader, not the "no documents" state.
+  const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [filterType, setFilterType] = useState('All types')
   const [filterAnchorEl, setFilterAnchorEl] = useState(null)
@@ -83,6 +86,7 @@ export default function DocumentsPage() {
     if (!workspaceId) {
       setDocs([])
       lastWorkspaceIdRef.current = null
+      setLoading(false)
       return
     }
     if (lastWorkspaceIdRef.current !== workspaceId) {
@@ -90,6 +94,7 @@ export default function DocumentsPage() {
       lastWorkspaceIdRef.current = workspaceId
     }
     const gen = ++loadGenRef.current
+    setLoading(true)
     try {
       const result = await documentService.list(workspaceId, { limit: 100 })
       if (loadGenRef.current !== gen) return
@@ -109,6 +114,8 @@ export default function DocumentsPage() {
         console.error('Documents load failed:', err)
         setSnackbar({ open: true, message: err?.detail || 'Failed to load documents' })
       }
+    } finally {
+      if (loadGenRef.current === gen) setLoading(false)
     }
   }, [workspaceId])
 
@@ -448,12 +455,16 @@ export default function DocumentsPage() {
           </TableContainer>
         )}
 
-        {/* Empty state */}
-        {filteredDocs.length === 0 && (
+        {/* Loading / empty state */}
+        {loading ? (
+          <div className="flex justify-center py-16">
+            <CircularProgress size={22} sx={{ color: '#C4913A' }} />
+          </div>
+        ) : filteredDocs.length === 0 ? (
           <div className="text-center py-16 text-ink-tertiary text-sm">
             No documents found.
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* Document Detail Dialog */}

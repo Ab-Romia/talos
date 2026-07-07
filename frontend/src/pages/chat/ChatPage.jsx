@@ -91,6 +91,9 @@ export default function ChatPage() {
   const pendingMsgId = searchParams.get('msg')
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState([])
+  // True while a conversation's initial history is loading, so the "welcome"
+  // empty state isn't shown for a frame before existing messages arrive.
+  const [messagesLoading, setMessagesLoading] = useState(true)
   const [snackbar, setSnackbar] = useState({ open: false, message: '' })
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -320,6 +323,7 @@ export default function ChatPage() {
   // Clear messages when switching channels.
   useEffect(() => {
     setMessages([])
+    setMessagesLoading(Boolean(chatroomId))
   }, [chatroomId])
 
   // Opening a conversation clears its unread badge and marks its notifications
@@ -340,6 +344,8 @@ export default function ChatPage() {
         setMessages(mapped)
       } catch (err) {
         if (!cancelled) console.error('Load messages failed:', err)
+      } finally {
+        if (!cancelled) setMessagesLoading(false)
       }
     })()
     return () => {
@@ -1074,7 +1080,13 @@ export default function ChatPage() {
             </div>
           )}
 
-          {chatroomId && messages.length === 0 && (
+          {chatroomId && messagesLoading && messages.length === 0 && (
+            <div className="flex justify-center py-24">
+              <div className="w-6 h-6 border-2 border-amber border-t-transparent rounded-full animate-spin" />
+            </div>
+          )}
+
+          {chatroomId && !messagesLoading && messages.length === 0 && (
             <div
               className="flex flex-col items-center justify-center text-center py-24 px-4 gap-3"
               style={{ animation: 'talosIn .4s ease-out' }}

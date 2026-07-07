@@ -44,7 +44,10 @@ export default function Sidebar({ onNavigate } = {}) {
 
   const {
     workspaces, chatrooms, dms, activeWorkspaceId, activeChatroomId, unreadCounts, loading, error,
+    bootstrapped, dmsLoaded,
   } = useSelector((s) => s.workspace)
+  // Initial workspace load hasn't settled yet — show loaders, not empty states.
+  const initializing = loading || (workspaces.length === 0 && !bootstrapped)
   const user = useSelector((s) => s.auth.user)
   const { hasPerm } = usePermissions()
   const canViewChannels = hasPerm('channel', 'view')
@@ -209,7 +212,7 @@ export default function Sidebar({ onNavigate } = {}) {
           </div>
           <div className="text-left">
             <span className="text-sm font-semibold text-ink block leading-tight">
-              {activeWorkspace?.name || (loading ? 'Loading…' : 'No workspace')}
+              {activeWorkspace?.name || (initializing ? 'Loading…' : 'No workspace')}
             </span>
             <span className="text-[11px] text-ink-tertiary">
               {workspaces.length} workspace{workspaces.length === 1 ? '' : 's'}
@@ -268,12 +271,12 @@ export default function Sidebar({ onNavigate } = {}) {
             {/* Channels */}
             <SectionHeader label="Channels" onAdd={() => setCreateChannelOpen(true)} />
             <ul className="list-none mb-4">
-              {loading && !chatrooms.length && (
+              {initializing && !chatrooms.length && (
                 <li className="px-2.5 py-2 text-[12px] text-ink-tertiary flex items-center gap-2">
                   <CircularProgress size={12} /> Loading…
                 </li>
               )}
-              {!loading && filteredChannels.length === 0 && (
+              {!initializing && filteredChannels.length === 0 && (
                 <li className="px-2.5 py-2 text-[12px] text-ink-tertiary">
                   {chatrooms.length === 0 ? 'No channels yet' : 'No matches'}
                 </li>
@@ -295,7 +298,7 @@ export default function Sidebar({ onNavigate } = {}) {
             <ul className="list-none mb-4">
               {dms.length === 0 && (
                 <li className="px-2.5 py-2 text-[12px] text-ink-tertiary">
-                  No conversations yet
+                  {dmsLoaded ? 'No conversations yet' : 'Loading…'}
                 </li>
               )}
               {dms

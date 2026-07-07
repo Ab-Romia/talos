@@ -18,6 +18,8 @@ function resetToInitial(state) {
   state.activeChatroomId = null
   state.unreadCounts = {}
   state.loading = false
+  state.bootstrapped = false
+  state.dmsLoaded = false
   state.error = null
   state.membersVersion = 0
   state.permissionsVersion = 0
@@ -220,6 +222,11 @@ const workspaceSlice = createSlice({
     // Per-conversation unread message counts: { [channelId]: number }.
     unreadCounts: {},
     loading: false,
+    // False until the first workspace bootstrap settles — lets the sidebar/pages
+    // show a loader on the initial frame instead of flashing an empty state.
+    bootstrapped: false,
+    // False until the active workspace's DMs have been fetched at least once.
+    dmsLoaded: false,
     error: null,
     // Bumped when another user changes this workspace's roster / permissions, so
     // views that fetch members or effective permissions re-run their effects.
@@ -295,6 +302,7 @@ const workspaceSlice = createSlice({
         state.activeWorkspaceId = action.payload.activeWorkspaceId
         state.activeChatroomId = action.payload.activeChatroomId
         state.loading = false
+        state.bootstrapped = true
         try {
           if (action.payload.activeWorkspaceId)
             localStorage.setItem(ACTIVE_WS_KEY, action.payload.activeWorkspaceId)
@@ -304,6 +312,8 @@ const workspaceSlice = createSlice({
       })
       .addCase(bootstrapWorkspaces.rejected, (state, action) => {
         state.loading = false
+        // The initial load settled (even on failure) — stop showing the loader.
+        state.bootstrapped = true
         state.error = action.payload
       })
       .addCase(switchWorkspace.fulfilled, (state, action) => {
@@ -311,6 +321,7 @@ const workspaceSlice = createSlice({
         state.chatrooms = action.payload.chatrooms
         state.activeChatroomId = action.payload.chatroomId
         state.dms = []
+        state.dmsLoaded = false
         state.unreadCounts = {}
         try {
           localStorage.setItem(ACTIVE_WS_KEY, action.payload.workspaceId)
@@ -320,6 +331,12 @@ const workspaceSlice = createSlice({
       })
       .addCase(loadDms.fulfilled, (state, action) => {
         state.dms = action.payload
+        state.dmsLoaded = true
+      })
+      .addCase(loadDms.rejected, (state) => {
+        // Failed load still counts as "attempted" so the list can show its
+        // empty state instead of spinning forever.
+        state.dmsLoaded = true
       })
       .addCase(loadUnreadByChannel.fulfilled, (state, action) => {
         // Keep the currently-open conversation at zero — the server may still
