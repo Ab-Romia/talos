@@ -56,7 +56,7 @@ async def answer(text: str) -> str:
                 if asyncio.iscoroutine(result):
                     result = await result
             except Exception as exc:  # surface tool errors back to the model
-                logger.exception("Tool %s failed", call["name"])
+                logger.exception("Tool failed", tool=call["name"])
                 result = f"ERROR: {exc}"
             messages.append(ToolMessage(content=str(result), tool_call_id=call["id"]))
 

@@ -17,7 +17,7 @@ async def run_agent_turn(
 ) -> None:
     """Run the embedded agent for one Slack message and reply in-thread."""
     talos_user = service.resolve_talos_user(slack_user)
-    logger.info("Slack turn: slack_user=%s talos_user=%s channel=%s", slack_user, talos_user, channel)
+    logger.info("Slack turn", slack_user=slack_user, talos_user=talos_user, channel=channel)
 
     try:
         reply = await agent.answer(text)
