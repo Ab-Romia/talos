@@ -35,6 +35,19 @@ def _build():
 
     async def _enqueue(event: dict) -> None:
         text = _MENTION.sub("", event.get("text", "")).strip()
+
+        # Shared files ingest regardless of whether the message has text.
+        for f in event.get("files", []):
+            await tasks.ingest_slack_file.kiq(
+                file_id=f.get("id", ""),
+                filename=f.get("name") or "unnamed",
+                mimetype=f.get("mimetype") or "",
+                size=int(f.get("size") or 0),
+                url=f.get("url_private_download") or f.get("url_private") or "",
+                channel=event["channel"],
+                thread_ts=event.get("thread_ts") or event.get("ts"),
+            )
+
         if not text:
             return
         await tasks.run_agent_turn.kiq(
