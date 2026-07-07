@@ -1,7 +1,9 @@
 """Single source of truth for tool functions, shared by both "brains".
 
-``MCP_TOOLS``   — exposed by the FastMCP server to an external coding agent
-                  (Jira + GitHub primitives + read-only Talos context).
+``MCP_TOOLS``   — exposed by the FastMCP server to an external coding agent,
+                  covering all four domains: external apps (Jira + GitHub),
+                  filesystem, chat, and RAG — still pinned to the configured
+                  bot scope.
 ``AGENT_TOOLS`` — bound to the embedded LangChain agent that powers the Slack bot.
 
 Each entry is a plain async (or sync) function whose type hints + docstring become the
@@ -28,7 +30,8 @@ from integrations.talos_tools import (
 )
 
 # Tools the external coding agent uses to read tickets, write code, and open PRs.
-# Read-only Talos tools are included so the host can pull project context.
+# All four Talos domains are exposed — external apps (Jira/GitHub), filesystem,
+# chat, and RAG — with every Talos tool pinned to the configured bot scope.
 MCP_TOOLS = [
     jira_list_issues,
     jira_get_issue,
@@ -40,6 +43,9 @@ MCP_TOOLS = [
     github_open_pr,
     talos_list_files,
     talos_get_file,
+    rag_ask,
+    talos_read_messages,
+    talos_post_message,
 ]
 
 # Tools the embedded Slack agent binds — mirrors what Talos does in the app.

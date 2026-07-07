@@ -1,4 +1,5 @@
-"""FastMCP server exposing Talos's Jira/GitHub integration tools.
+"""FastMCP server exposing Talos's integration tools: Jira/GitHub, filesystem,
+chat, and RAG — all pinned to the configured bot scope.
 
 Run as a standalone process (separate from the FastAPI app):
 
@@ -23,6 +24,11 @@ for _fn in MCP_TOOLS:
 
 
 def main() -> None:
+    # Chat tools persist through the storage backend Protocol; bind the Postgres
+    # implementation for this standalone process (mirrors worker startup in broker.py).
+    from chat.storage import bind_chat_storage, DatabaseStorageBackend
+
+    bind_chat_storage(DatabaseStorageBackend())
     mcp.run(transport=cfg().mcp.transport)
 
 

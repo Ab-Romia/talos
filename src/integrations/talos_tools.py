@@ -1,9 +1,10 @@
 """Talos capabilities exposed as tools, reusing the existing service layer in-process.
 
-These let the embedded Slack agent (and read-only MCP clients) do "what Talos does"
-without re-implementing anything. The bot acts as a single configured service-user
-(``cfg().bot``) pinned to one workspace/channel — workspace/channel ids are never taken
-from untrusted (Slack) input.
+These let the embedded Slack agent and external MCP hosts do "what Talos does"
+without re-implementing anything — including chat writes and RAG execution, not just
+reads. The bot acts as a single configured service-user (``cfg().bot``) pinned to one
+workspace/channel — workspace/channel ids are never taken from tool arguments or other
+untrusted input.
 """
 import asyncio
 import uuid
