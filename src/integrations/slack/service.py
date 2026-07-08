@@ -49,6 +49,20 @@ async def fetch_thread(channel: str, thread_ts: str, limit: int = 20) -> list[di
         return []
 
 
+async def fetch_channel_history(channel: str, limit: int = 15) -> list[dict]:
+    """Recent top-level messages of a channel, oldest first.
+
+    Used to give the agent context on top-level mentions (which have no
+    thread of their own). Same ``channels:history`` scope as threads.
+    """
+    try:
+        resp = await _web().conversations_history(channel=channel, limit=limit)
+        return list(reversed(resp.get("messages") or []))  # newest-first -> oldest-first
+    except Exception:
+        logger.exception("Could not fetch Slack channel history", channel=channel)
+        return []
+
+
 async def download_file(url: str) -> bytes:
     """Download a Slack-hosted file. ``url_private*`` URLs require the bot token."""
     headers = {"Authorization": f"Bearer {cfg().slack.bot_token.get_secret_value()}"}

@@ -23,19 +23,26 @@ _HISTORY_LIMIT = 12  # prior turns fed to the agent
 _HISTORY_MSG_CHARS = 2000
 
 
-async def _thread_history(
+async def _conversation_history(
     channel: str, thread_ts: str | None, msg_ts: str | None
 ) -> list[tuple[str, str]]:
-    """Prior thread messages as (role, content) pairs, oldest first.
+    """Prior conversation as (role, content) pairs, oldest first.
 
-    The current message (matched by ts) is excluded — it's passed to the
-    agent separately as the live turn.
+    Inside a thread, that's the thread so far; for a top-level mention
+    (whose "thread" is just itself), fall back to the channel's recent
+    messages so the bot still has context. The current message (matched
+    by ts) is excluded — it's passed to the agent separately.
     """
     if not thread_ts:
         return []
 
+    if msg_ts is not None and thread_ts != msg_ts:
+        messages = await service.fetch_thread(channel, thread_ts)
+    else:
+        messages = await service.fetch_channel_history(channel)
+
     history: list[tuple[str, str]] = []
-    for msg in await service.fetch_thread(channel, thread_ts):
+    for msg in messages:
         if msg_ts is not None and msg.get("ts") == msg_ts:
             continue
         content = _MENTION.sub("", msg.get("text", "")).strip()
@@ -58,7 +65,7 @@ async def run_agent_turn(
     talos_user = service.resolve_talos_user(slack_user)
     logger.info("Slack turn", slack_user=slack_user, talos_user=talos_user, channel=channel)
 
-    history = await _thread_history(channel, thread_ts, msg_ts)
+    history = await _conversation_history(channel, thread_ts, msg_ts)
 
     try:
         # Hard deadline so a stalled upstream (LLM/tool) never leaves the
