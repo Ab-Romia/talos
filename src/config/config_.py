@@ -33,6 +33,7 @@ class AuthConfig(BaseModel):
     password_reset_token_expiry: timedelta = timedelta(hours=1)
 
     session_cookie_key: str = "user_session"
+    session_cookie_secure: bool = True
 
     permission_bitstring_length: int = 64
 
@@ -59,6 +60,7 @@ class FilesConfig(BaseModel):
         # Documents
         "application/pdf",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "text/plain",
         "text/markdown",
         # Images
@@ -70,6 +72,7 @@ class FilesConfig(BaseModel):
     document_mime_types: set[str] = {
         "application/pdf",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "text/plain",
         "text/markdown",
     }
@@ -78,7 +81,28 @@ class FilesConfig(BaseModel):
         "image/png",
         "image/jpeg",
         "image/webp",
+        "image/gif",
+        "image/bmp",
+        "image/tiff",
+        "image/heic",
+        "image/heif",
+        "image/avif",
     }
+
+    video_mime_types: set[str] = {
+        "video/mp4",
+        "video/webm",
+        "video/quicktime",
+        "video/ogg",
+        "video/x-msvideo",
+        "video/x-matroska",
+        "video/x-m4v",
+        "video/mpeg",
+        "video/3gpp",
+    }
+
+    # Chat attachments: documents + images + videos; never RAG-indexed.
+    attachment_max_size: int = 200 * 1024 * 1024  # 200 MiB (videos)
 
     thumbnail_size: tuple[int, int] = (300, 300)
 

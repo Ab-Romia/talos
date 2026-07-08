@@ -6,8 +6,8 @@ from sqlalchemy import DateTime, ForeignKey, func, Uuid, event, UniqueConstraint
 from sqlalchemy.ext.orderinglist import ordering_list
 from sqlalchemy.orm import mapped_column, Mapped, relationship, object_session
 
+from database import Base
 from filesystem.model import File
-from model import Base
 
 if TYPE_CHECKING:
     from chat.model import Message
@@ -24,7 +24,13 @@ class Workspace(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid7)
     name: Mapped[str] = mapped_column(unique=True, index=True)
+    description: Mapped[str | None] = mapped_column()
     owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    # use_alter breaks the workspaces<->files FK cycle (files.workspace_id points
+    # back at workspaces) so create_all/drop_all can order the tables.
+    icon_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("files.id", ondelete="SET NULL", use_alter=True, name="fk_workspaces_icon_id_files"), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column()
@@ -32,7 +38,8 @@ class Workspace(Base):
     owner = relationship("User")
     channels: Mapped[list[Channel]] = relationship("Channel", back_populates="workspace", cascade="all, delete-orphan")
     members = relationship("User", secondary="workspace_members", back_populates="workspaces")
-    files: Mapped[list[File]] = relationship("File", back_populates="workspace")
+    files: Mapped[list[File]] = relationship("File", back_populates="workspace", foreign_keys="File.workspace_id")
+    icon = relationship("File", foreign_keys=[icon_id])
 
     roles: Mapped[list[Role]] = relationship(  # type: ignore[forward-reference]
         "Role",
@@ -43,12 +50,35 @@ class Workspace(Base):
     )
 
 
+class DMParticipant(Base):
+    """The two members of a direct-message conversation. Access to a DM channel
+    is granted by rows here and NOTHING else — roles (and even the workspace
+    owner) do not apply."""
+    __tablename__ = "dm_participants"
+    channel_id = mapped_column(ForeignKey("channels.id", ondelete="CASCADE"), primary_key=True)
+    user_id = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True)
+
+
 class Channel(Base):
     __tablename__ = "channels"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid7)
     name: Mapped[str] = mapped_column(index=True)
+    description: Mapped[str | None] = mapped_column()
     workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
+    is_public: Mapped[bool] = mapped_column(default=True)
+    is_muted: Mapped[bool] = mapped_column(default=False)
+    is_archived: Mapped[bool] = mapped_column(default=False)
+
+    # Direct-message conversation between exactly two workspace members.
+    # dm_key = "min_uuid:max_uuid" makes the pair unique per workspace via the
+    # (name, workspace_id) constraint (name is set to the key on creation).
+    # Group conversations set both is_direct and is_group: they reuse the DM
+    # participant/permission machinery (access is by DMParticipant rows only)
+    # but hold N members and carry a display name in `description`.
+    is_direct: Mapped[bool] = mapped_column(default=False)
+    is_group: Mapped[bool] = mapped_column(default=False)
+    dm_key: Mapped[str | None] = mapped_column(nullable=True, default=None)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column()

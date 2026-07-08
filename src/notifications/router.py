@@ -2,18 +2,22 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Query, HTTPException, Body
+from pydantic import BaseModel
 from sqlalchemy import select, delete
 from starlette import status
 
 from auth.dependencies import UserDep
+from auth.model import User
 from config import cfg
-from model import DatabaseDep
+from database import DatabaseDep
 from utils.datetime import utcnow
 from .model import Notification, PushSubscription, NotificationSchema, PushSubscriptionRequest
 from .service import (
     get_user_notifications,
     mark_as_read,
     get_unread_count as get_unread_count_service,
+    get_unread_counts_by_channel,
+    mark_channel_as_read,
 )
 
 notifications = APIRouter(prefix="/notifications", tags=["Notifications"])
@@ -68,6 +72,39 @@ def get_unread_count(db: DatabaseDep, current_user: UserDep):
     )
 
     return {"unread_count": count}
+
+
+@notifications.get("/unread-by-channel", description="Unread notification counts grouped by channel.")
+def get_unread_by_channel(db: DatabaseDep, current_user: UserDep):
+    return get_unread_counts_by_channel(db=db, user_id=current_user.id)
+
+
+@notifications.post("/channel/{channel_id}/read", description="Mark all of a channel's notifications as read.")
+def mark_channel_read(channel_id: uuid.UUID, db: DatabaseDep, current_user: UserDep):
+    marked = mark_channel_as_read(db=db, user_id=current_user.id, channel_id=channel_id)
+    return {"marked": marked}
+
+
+class NotificationPreferences(BaseModel):
+    email_notifications: bool = True
+
+
+@notifications.get("/preferences", response_model=NotificationPreferences,
+                   description="Get the current user's notification preferences.")
+def get_preferences(current_user: UserDep):
+    data = current_user.data or {}
+    return NotificationPreferences(email_notifications=bool(data.get("email_notifications", True)))
+
+
+@notifications.put("/preferences", response_model=NotificationPreferences,
+                   description="Update the current user's notification preferences.")
+def update_preferences(prefs: NotificationPreferences, current_user: UserDep, db: DatabaseDep):
+    user = db.get(User, current_user.id)
+    # Reassign the dict so SQLAlchemy notices the JSON change (in-place edits
+    # aren't tracked).
+    user.data = {**(user.data or {}), "email_notifications": prefs.email_notifications}
+    db.commit()
+    return prefs
 
 
 @notifications.post("/read-all", description="Mark all notifications as read for the current user.")

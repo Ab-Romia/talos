@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
 
 from auth import active_user
-from model import DatabaseDep
+from database import DatabaseDep
 from utils.logger import get_logger
 from workspace import require_perms
 from . import service
@@ -29,6 +29,17 @@ class GetResponse(BaseModel):
 class FileListResponse(BaseModel):
     files: list[FileMetadata]
     next_cursor: str | None
+
+
+class FileSearchHit(BaseModel):
+    file: FileMetadata
+    snippet: str | None = None
+    score: float | None = None
+
+
+class FileSearchResponse(BaseModel):
+    hits: list[FileSearchHit]
+    total: int
 
 
 class FileCreateRequest(BaseModel):
@@ -155,6 +166,49 @@ def make_files_router(
             files=[FileMetadata.model_validate(f) for f in files],
             next_cursor=next_cursor,
         )
+
+    @router.get(
+        "/{protocol_abbr}/search",
+        operation_id=f"{name_prefix}_search",
+        response_model=FileSearchResponse,
+        dependencies=[require_perms("files:read")],
+    )
+    async def search_files(
+            protocol_abbr: Literal["g", "m"],
+            scope: Annotated[FilesScope, Depends(scope_dep)],
+            db: DatabaseDep,
+            q: Annotated[str | None, Query(description="Text query to search file content")] = None,
+            uploader_id: Annotated[uuid.UUID | None, Query()] = None,
+            filename: Annotated[str | None, Query()] = None,
+            content_type: Annotated[str | None, Query()] = None,
+            limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    ):
+        """Search files by metadata and/or content. If `q` is provided, semantic search will be performed;
+        otherwise metadata-only search is executed."""
+        ws_id, ch_id = scope
+        hits, total = service.search_files(
+            db=db,
+            workspace_id=ws_id,
+            text_query=q,
+            uploader_id=uploader_id,
+            channel_id=ch_id,
+            filename=filename,
+            content_type=content_type,
+            limit=limit,
+        )
+
+        # Convert to response models
+        response_hits = []
+        for h in hits:
+            response_hits.append(
+                FileSearchHit(
+                    file=FileMetadata.model_validate(h["file"]),
+                    snippet=h.get("snippet"),
+                    score=h.get("score"),
+                )
+            )
+
+        return FileSearchResponse(hits=response_hits, total=total)
 
     @router.get(
         "/{protocol_abbr}/{file_or_dir_id}",

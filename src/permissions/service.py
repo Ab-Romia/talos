@@ -9,7 +9,7 @@ from sqlalchemy.dialects.postgresql import BitString
 
 from auth.dependencies import UserIdDep
 from config import cfg
-from model import DatabaseDep
+from database import DatabaseDep
 from .model import Role, ChannelRoleOverride as Override, STATIC_ROLE_ID, PermissionScope, Permission, PermissionSet, \
     ScopedPermission
 
@@ -21,7 +21,18 @@ def user_perms(
         workspace_id: Annotated[uuid.UUID | None, Path(default_factory=lambda: None)],
         channel_id: Annotated[uuid.UUID | None, Path(default_factory=lambda: None)],
 ):
-    from workspace.model import Channel
+    from workspace.model import Channel, DMParticipant
+
+    # Direct messages bypass the role system entirely: the two participants
+    # hold every permission, everyone else (workspace owner included) holds
+    # none. Roles/overrides must never leak another member into a DM.
+    if channel_id is not None:
+        is_direct = db.scalar(select(Channel.is_direct).where(Channel.id == channel_id))
+        if is_direct:
+            member = db.get(DMParticipant, {"channel_id": channel_id, "user_id": user_id})
+            if member is not None:
+                return PermissionSet(0).as_owner(True)
+            return PermissionSet(0)
 
     zero_bits = BitString.from_int(0, length=cfg().auth.permission_bitstring_length)
     channel_override_deny = func.coalesce(Override.deny_mask, zero_bits)
@@ -42,7 +53,7 @@ def user_perms(
         .select_from(Role)
         .join(Channel, Channel.id == channel_id, isouter=True)
         .join(Override, (Override.role_id == Role.id) & (Override.channel_id == channel_id), isouter=True)
-        .where(Role.users.any(id=user_id) | (Role.id == Role.workspace_id))  # Include workspace base permissions
+        .where(Role.users.any(id=user_id))
         .where(Role.workspace_id == func.coalesce(workspace_id, Channel.workspace_id))
         .group_by()
     )
@@ -94,14 +105,22 @@ class Bidict(bidict):
 _permission_registry = Bidict()
 
 
-@cached(_permission_registry.inverse, key=lambda db, permission: permission)
 def bit_offset(db: orm.Session, permission: ScopedPermission) -> int | None:
+    # Manual caching (not @cached): a miss must NOT be cached, or a lookup made
+    # before the permissions table is seeded poisons the registry with None
+    # for the process lifetime.
+    try:
+        return _permission_registry.inverse[permission]
+    except KeyError:
+        pass
     perm = db_permission(db, permission.resource, permission.action, permission.scope)
 
     if perm is None:
         return None
 
-    return perm.bit_offset + permission.scope.offset
+    offset = perm.bit_offset + permission.scope.offset
+    _permission_registry.inverse[permission] = offset
+    return offset
 
 
 @cached(_permission_registry, key=lambda db, key: key)

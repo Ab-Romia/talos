@@ -4,13 +4,13 @@ from typing import Iterable, Self, Generator
 
 from pydantic import BaseModel
 from pydantic_core import core_schema
-from sqlalchemy import Enum, Table, Uuid, Column, ForeignKey, Boolean, orm
+from sqlalchemy import Enum, Table, Uuid, Column, ForeignKey, Boolean, orm, and_
 from sqlalchemy import UniqueConstraint, Sequence, update, event, select, CheckConstraint, func
 from sqlalchemy.dialects.postgresql import BIT, BitString, ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship, foreign
 
 from config import cfg
-from model import Base
+from database import Base
 
 STATIC_ROLE_ID = uuid.UUID(int=0)
 DEFAULT_EVERYONE_ROLE_ID = uuid.UUID(int=1)
@@ -89,15 +89,9 @@ class PermissionSet(int):
             bit_pos += 1
 
     def as_owner(self, is_owner: bool) -> "PermissionSet":
-        """Set OWN permissions as ANY permissions if the user is an owner."""
+        """Workspace owners have all permissions; bypass bitfield checks entirely."""
         if is_owner:
-            b = int(self)
-            b |= (
-                    (b & PermissionScope.OWN.mask)
-                    >> PermissionScope.OWN.offset
-                    << PermissionScope.ANY.offset
-            )
-            return PermissionSet(b)
+            return PermissionSet((1 << cfg().auth.permission_bitstring_length) - 1)
         return self
 
     @classmethod
@@ -223,7 +217,7 @@ class RolePermission(Base):
     )
 
     permission = relationship("Permission", backref="role_associations")
-    role = relationship("Role", back_populates="permissions", overlaps="permissions,permission_overrides")
+    role = relationship("Role", overlaps="permissions,permission_overrides")
     channel = relationship("Channel")
 
 
@@ -264,7 +258,10 @@ class Role(Base):
     users = relationship("User", secondary=users_roles, back_populates="roles")
     permissions: Mapped[list[RolePermission]] = relationship(
         RolePermission,
-        back_populates="role",
+        primaryjoin=lambda: and_(
+            foreign(RolePermission.role_id) == Role.id,
+            RolePermission.channel_id.is_(None),
+        ),
         cascade="all, delete-orphan",
         overlaps="role,permission_overrides",
     )

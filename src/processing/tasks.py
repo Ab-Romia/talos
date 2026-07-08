@@ -2,13 +2,13 @@
 
 import uuid
 
-import fsspec
 from sqlalchemy import update as sa_update
 
 from broker import broker
 from config import cfg
-from files.model import File, FileStatus
-from model import AsyncSessionLocal
+from database import SessionLocal
+from filesystem.model import File, FileStatus
+from filesystem.storage.minio import MinIOFileSystem
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -18,9 +18,9 @@ logger = get_logger(__name__)
 @broker.task()
 async def process_file(file_id: uuid.UUID):
     """Main task dispatcher. Routes to document or image processor by MIME type."""
-    storage = fsspec.filesystem("minio", config=cfg().minio)
-
-    with AsyncSessionLocal() as db:
+    # The body is written sync-style (plain execute/commit, and the processors
+    # take a sync Session) — use the sync factory, not AsyncSessionLocal.
+    with SessionLocal() as db:
         """
         Atomically claim the file: flip status to PROCESSING only when the
         current state is workable (UPLOADED or FAILED). rowcount == 0 means
@@ -49,7 +49,7 @@ async def process_file(file_id: uuid.UUID):
                 logger.info(
                     "File not in processable state, skipping",
                     file_id=file_id,
-                    status=file_record.status.value,
+                    status=file_record.processing_status.value,
                 )
             return
 
@@ -57,6 +57,16 @@ async def process_file(file_id: uuid.UUID):
         if file_record is None:
             logger.warning("File row vanished after claim", file_id=file_id)
             return
+
+        # Workspace-scoped storage: on this branch File.uri is a RELATIVE
+        # virtual path ("minio://<parent>/<name>"); MinIOFileSystem.split_path
+        # re-prepends {bucket}/{workspace}/{channel} — so the filesystem must
+        # be constructed per file with the file's own scope.
+        storage = MinIOFileSystem(
+            cfg().minio,
+            workspace_id=file_record.workspace_id,
+            channel_id=file_record.channel_id,
+        )
 
         try:
             if file_record.content_type in cfg().files.document_mime_types:
@@ -72,7 +82,8 @@ async def process_file(file_id: uuid.UUID):
                     f"No processor registered for MIME type {file_record.content_type}"
                 )
 
-            file_record.status = FileStatus.INDEXED
+            file_record.processing_status = FileStatus.INDEXED
+            file_record.processing_error = None  # clear any stale error from a prior failed attempt
             db.commit()
             logger.info("File processing complete", file_id=file_id)
 
@@ -87,7 +98,7 @@ async def process_file(file_id: uuid.UUID):
                     underlying_error=str(e)[:500],
                 )
                 return
-            file_record.status = FileStatus.PROCESSING_FAILED
+            file_record.processing_status = FileStatus.PROCESSING_FAILED
             file_record.processing_error = str(e)[:2048]
             db.commit()
             raise

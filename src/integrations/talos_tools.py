@@ -14,7 +14,7 @@ from chat.service import get_messages
 from chat.storage import get_storage
 from config import cfg
 from filesystem.service import file_info, list_files
-from model import SessionLocal
+from database import SessionLocal
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -57,12 +57,14 @@ async def talos_post_message(content: str) -> dict:
     Args:
         content: The message text.
     """
+    from chat.model import wrap_plain_text  # content is ProseMirror JSON
+
     bot = _bot()
     msg = MessageSchema(
         channel_id=uuid.UUID(bot.default_channel_id),
         sender_id=uuid.UUID(bot.bot_user_id),
         role=MessageRole.ASSISTANT,
-        content=content,
+        content=wrap_plain_text(content).to_json(),
     )
     await get_storage().put(msg)
     return {"ok": True, "message_id": str(msg.id)}
@@ -74,10 +76,12 @@ async def talos_read_messages(limit: int = 20) -> list[dict]:
     Args:
         limit: Maximum number of messages to return (default 20).
     """
+    from rag.message_text import doc_text  # flatten ProseMirror JSON to text
+
     bot = _bot()
     messages = await get_messages(uuid.UUID(bot.default_channel_id), limit=limit)
     return [
-        {"role": m.role.value, "content": m.content, "sent_at": m.sent_at.isoformat()}
+        {"role": m.role.value, "content": doc_text(m.content), "sent_at": m.sent_at.isoformat()}
         for m in messages
     ]
 

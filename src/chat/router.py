@@ -1,18 +1,21 @@
-from typing import cast
+from datetime import datetime
+from typing import Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from auth.utils.session import SessionDep
-from model import DatabaseDep
+from database import DatabaseDep
 from workspace import require_perms as require
+from .model import extract_mentioned_user_ids_from_raw
 from .realtime import get_channel_online
 from .service import (
     get_message_by_id,
     get_messages,
     store_message,
 )
+from .search import search_messages
 
 channel = APIRouter(tags=["chat"])
 
@@ -20,9 +23,36 @@ channel = APIRouter(tags=["chat"])
 # TODO: support message editing, deletion, reactions, threads, etc. (See Requirements)
 #  support same facilities as websocket?
 
-# TODO: support rich text, attachments, replies, etc. (See Requirements)
 class SendRequest(BaseModel):
-    text: str
+    """Plain text OR a full ProseMirror doc (mentions ride in `content`)."""
+    text: str | None = None
+    content: dict[str, Any] | None = None
+    reply_to_id: UUID | None = None
+    attachment_ids: list[UUID] = []
+
+
+class ChatMessageResponse(BaseModel):
+    """Response model for a single chat message."""
+    id: UUID
+    channel_id: UUID
+    sender_id: UUID | None
+    role: str
+    # ProseMirror doc dict (rich-msg contract — same shape the socket delivers).
+    content: dict[str, Any]
+    sent_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ChatSearchResponse(BaseModel):
+    """Response model for chat search results."""
+    messages: list[ChatMessageResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    has_next: bool
+    has_previous: bool
 
 
 @channel.post("/messages", dependencies=[require("channel.message:send")])
@@ -34,12 +64,45 @@ async def post_message(channel_id: UUID, req: SendRequest, session: SessionDep):
     Does NOT push a real-time notification — use the WebSocket endpoint for that.
     """
     from chat.realtime import sio
-    message = await store_message(channel_id=channel_id, user_id=cast(UUID, session.sub), content=req.text)
+    from rag.message_text import doc_text
 
-    sio.send(
-        {"message": message.model_dump_json()},
-        room=f"channel:{channel_id}"
+    payload = req.content if req.content is not None else req.text
+    if payload is None or (isinstance(payload, str) and not payload.strip()):
+        if req.attachment_ids:
+            payload = ""  # attachment-only message: empty body is fine
+        else:
+            raise HTTPException(status_code=400, detail="Message is empty")
+
+    message = await store_message(
+        channel_id=channel_id,
+        user_id=cast(UUID, session.sub),
+        content=payload,
+        reply_to_id=req.reply_to_id,
+        attachment_ids=req.attachment_ids,
     )
+
+    # Broadcast to everyone in the channel room. NOTE: this MUST be awaited — sio.send on
+    # an AsyncServer returns a coroutine, and a bare (un-awaited) call silently no-ops.
+    # Payload shape is kept identical to the WebSocket `message` handler so clients have a
+    # single shape to parse: the serialized MessageSchema dict.
+    await sio.send(
+        message.model_dump(mode="json"),
+        room=f"channel:{channel_id}",
+    )
+
+    import asyncio
+    from chat.realtime import _notify_channel_members
+    asyncio.create_task(_notify_channel_members(
+        channel_id=channel_id,
+        sender_id=cast(UUID, session.sub),
+        content=doc_text(message.content),
+        mentioned_user_ids=extract_mentioned_user_ids_from_raw(message.content),
+        message_id=message.id,
+    ))
+
+    from chat.ai import maybe_ai_reply
+    await maybe_ai_reply(channel_id, message.content, cast(UUID, session.sub))
+
     return {
         "id": message.id,
         "sent_at": message.sent_at,
@@ -49,7 +112,7 @@ async def post_message(channel_id: UUID, req: SendRequest, session: SessionDep):
 @channel.get(
     "/messages",
     summary="Get paginated message history",
-    dependencies=[require("channel:view", "channel.message:view_history")]
+    dependencies=[require("channel:view")]
 )
 async def get_channel_messages(
         channel_id: UUID,
@@ -64,18 +127,6 @@ async def get_channel_messages(
 
 
 @channel.get(
-    "/messages/{message_id}",
-    summary="Get a single message by ID",
-    dependencies=[require("channel:view", "channel.message:view_history")]
-)
-async def get_single_message(channel_id: UUID, message_id: UUID):
-    msg = await get_message_by_id(message_id)
-    if msg is None:
-        raise HTTPException(status_code=404, detail="Message not found")
-    return msg
-
-
-@channel.get(
     "/online",
     summary="List users currently online in a channel",
     dependencies=[require("channel:view", "channel.member:view_presence")]
@@ -84,3 +135,78 @@ def get_online_users(channel_id: UUID, db: DatabaseDep):
     """Returns the list of user_ids that have an active WebSocket connection and are channel members."""
     online = get_channel_online(channel_id, db)
     return {"channel_id": channel_id, "online_users": online}
+
+
+@channel.get(
+    "/messages/search",
+    summary="Search messages in a channel",
+    dependencies=[require("channel:view", "channel.message:view_history")]
+)
+async def search_channel_messages(
+    channel_id: UUID,
+    text: str | None = Query(None, description="Search in message content"),
+    author_id: UUID | None = Query(None, description="Filter by sender/author ID"),
+    start_date: datetime | None = Query(None, description="Filter messages from this date onwards"),
+    end_date: datetime | None = Query(None, description="Filter messages up to this date"),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+) -> ChatSearchResponse:
+    """
+    Search chat messages within a channel.
+
+    Supports filtering by:
+    - text: Full-text search in message content
+    - author_id: Sender/author of the message
+    - start_date/end_date: Date range filter
+    - Pagination via page and page_size
+    """
+    offset = (page - 1) * page_size
+    messages, total = await search_messages(
+        channel_id=channel_id,
+        text=text,
+        author_id=author_id,
+        start_date=start_date,
+        end_date=end_date,
+        limit=page_size,
+        offset=offset,
+    )
+
+    # Convert messages to response format
+    message_responses = [
+        ChatMessageResponse(
+            id=msg.id,
+            channel_id=msg.channel_id,
+            sender_id=msg.sender_id,
+            role=msg.role,
+            content=msg.content,
+            sent_at=msg.sent_at,
+        )
+        for msg in messages
+    ]
+
+    total_pages = (total + page_size - 1) // page_size
+    has_next = page < total_pages
+    has_previous = page > 1
+
+    return ChatSearchResponse(
+        messages=message_responses,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+        has_next=has_next,
+        has_previous=has_previous,
+    )
+
+
+# Registered after /messages/search: the static path must match first.
+@channel.get(
+    "/messages/{message_id}",
+    summary="Get a single message by ID",
+    dependencies=[require("channel:view")]
+)
+async def get_single_message(channel_id: UUID, message_id: UUID):
+    msg = await get_message_by_id(message_id)
+    if msg is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return msg

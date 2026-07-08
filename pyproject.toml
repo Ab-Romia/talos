@@ -53,6 +53,7 @@ dependencies = [
     "s3fs>=2023.6.0",
     "pyrefly>=0.45.0",
     "httpx>=0.28.1",
+    "prosemirror>=0.6.1",
     "mcp>=1.2.0",
     "slack-bolt>=1.21.0",
 ]

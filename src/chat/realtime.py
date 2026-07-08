@@ -10,10 +10,10 @@ from sqlalchemy.dialects.postgresql import BitString
 from sqlalchemy.orm import Session
 
 from config import cfg
-from model import SessionLocal
+from database import SessionLocal
 from utils.logger import get_logger
 from workspace.model import WorkspaceMember, Channel
-from .model import MessageSchema
+from .model import MessageCreateSchema
 
 mgr = socketio.AsyncRedisManager(cfg().redis.url, channel="sio#")
 sio = socketio.AsyncServer(
@@ -92,7 +92,7 @@ def sio_exc(func):
             return await func(*args, **kwargs)
         except Exception as exc:
             get_logger(__name__).exception("Error in Socket.IO handler", exc_info=exc)
-            return {"error": str(exc)}
+            return {"error": "Something went wrong. Please try again."}
 
     return wrapper
 
@@ -156,17 +156,21 @@ async def disconnect(sid: str, _) -> None:
 
 @sio.event
 @sio_exc
-@require_perms("message:send", "channel:view")
+@require_perms("channel.message:send", "channel:view")
 async def message(sid: str, data: dict[str, Any]):
     from chat import store_message
 
-    incoming = MessageSchema(**data)
+    # MessageCreateSchema coerces plain-string content into a ProseMirror doc
+    # and validates rich content against chat_schema (rich-msg contract).
+    incoming = MessageCreateSchema(**data)
     sess = await sio.get_session(sid)
 
     message = await store_message(
         channel_id=incoming.channel_id,
         user_id=sess["user_id"],
         content=incoming.content,
+        reply_to_id=incoming.reply_to_id,
+        attachment_ids=incoming.attachment_ids,
     )
 
     await sio.send(
@@ -174,6 +178,9 @@ async def message(sid: str, data: dict[str, Any]):
         room=f"channel:{message.channel_id}",
         skip_sid=sid,
     )
+
+    from chat.ai import maybe_ai_reply
+    await maybe_ai_reply(message.channel_id, message.content, sess["user_id"])
 
     # Concurrently fetch sessions of all participants to get their user_ids for the ack response.
     participants = sio.manager.get_participants("/", f"channel:{message.channel_id}")
@@ -188,9 +195,93 @@ async def message(sid: str, data: dict[str, Any]):
         if not isinstance(sess, Exception)
     ]
 
+    from rag.message_text import doc_text
+    from chat.model import extract_mentioned_user_ids_from_raw
+    asyncio.create_task(_notify_channel_members(
+        channel_id=message.channel_id,
+        sender_id=sess["user_id"],
+        content=doc_text(message.content),
+        mentioned_user_ids=extract_mentioned_user_ids_from_raw(message.content),
+        message_id=message.id,
+    ))
+
     return "OK", {  # ack
         "delivered_to": delivered_to,
     },
+
+
+async def _notify_channel_members(channel_id: UUID, sender_id: UUID, content: str,
+                                  mentioned_user_ids: list[UUID] | None = None,
+                                  message_id: UUID | None = None):
+    log = get_logger(__name__)
+    try:
+        with SessionLocal() as db:
+            from auth.model import User
+            from notifications.service import push_notification
+            from notifications.model import NotificationTag
+
+            channel = db.get(Channel, channel_id)
+            if not channel:
+                log.warning("_notify: channel %s not found", channel_id)
+                return
+
+            members = _get_channel_members(db, channel_id)
+            log.info(f"_notify: channel={channel_id} sender={sender_id} members={members}")
+            mentioned = {uid for uid in (mentioned_user_ids or []) if uid in members and uid != sender_id}
+            recipients = [uid for uid in members if uid != sender_id and uid not in mentioned]
+            body = content[:200] if content else ""
+
+            sender = db.get(User, sender_id)
+            sender_name = (sender.name or sender.username) if sender else "Someone"
+
+            group_name = channel.description or "Group"
+            if mentioned:
+                if channel.is_group:
+                    where = f"{sender_name} mentioned you in {group_name}"
+                elif channel.is_direct:
+                    where = sender_name
+                else:
+                    where = f"{sender_name} mentioned you in #{channel.name}"
+                await push_notification(
+                    db=db,
+                    user_ids=list(mentioned),
+                    title=where,
+                    body=body,
+                    data={
+                        "channel_id": str(channel_id),
+                        "workspace_id": str(channel.workspace_id),
+                        "mention": True,
+                        "direct": channel.is_direct,
+                        **({"message_id": str(message_id)} if message_id else {}),
+                    },
+                    tags=[NotificationTag.SOCIAL],
+                )
+
+            if recipients:
+                if channel.is_group:
+                    title = f"{sender_name} · {group_name}"
+                elif channel.is_direct:
+                    title = sender_name
+                else:
+                    title = f"#{channel.name}"
+                await push_notification(
+                    db=db,
+                    user_ids=recipients,
+                    title=title,
+                    body=body,
+                    data={
+                        "channel_id": str(channel_id),
+                        "workspace_id": str(channel.workspace_id),
+                        "direct": channel.is_direct,
+                        **({"message_id": str(message_id)} if message_id else {}),
+                    },
+                    tags=[NotificationTag.SOCIAL],
+                )
+                log.info(f"_notify: push_notification sent to {len(recipients)} users")
+            else:
+                log.info("_notify: no recipients, skipping")
+    except Exception:
+        log.exception("Failed to send channel notifications")
 
 
 @sio.event
@@ -251,6 +342,17 @@ def _channel_perms():
 def _get_accessible_channels(db: orm.Session, user_id: UUID) -> set[UUID]:
     """ Channels visible to a user"""
     from permissions.model import Role, ChannelRoleOverride
+    from workspace.model import Workspace, DMParticipant
+
+    # Owners can see all channels in their workspaces (bypass bitfield check) —
+    # EXCEPT direct messages, which only their two participants may see.
+    owned = set(db.scalars(
+        select(Channel.id)
+        .join(Workspace, Workspace.id == Channel.workspace_id)
+        .where(Workspace.owner_id == user_id)
+        .where(Channel.deleted_at.is_(None))
+        .where(Channel.is_direct.is_(False))
+    ))
 
     zero = BitString.from_int(0, cfg().auth.permission_bitstring_length)
     override_deny = func.coalesce(ChannelRoleOverride.deny_mask, zero)
@@ -261,9 +363,10 @@ def _get_accessible_channels(db: orm.Session, user_id: UUID) -> set[UUID]:
     rows = db.scalars(
         select(Channel.id)
         .join(Role, Role.workspace_id == Channel.workspace_id)
-        .join(ChannelRoleOverride, ChannelRoleOverride.role_id == Role.id, isouter=True)
+        .join(ChannelRoleOverride, (ChannelRoleOverride.role_id == Role.id) & (ChannelRoleOverride.channel_id == Channel.id), isouter=True)
         .where(Role.users.any(id=user_id))
         .where(Channel.deleted_at.is_(None))
+        .where(Channel.is_direct.is_(False))
         .having(  # = (role & ~override.deny | override.allow) & channel_view_perm_mask > 0
             func.bit_or(
                 Role.allow_mask
@@ -274,24 +377,45 @@ def _get_accessible_channels(db: orm.Session, user_id: UUID) -> set[UUID]:
         )
         .group_by(Channel.id)
     )
-    return set(rows)
+
+    # Direct messages: membership only.
+    dms = set(db.scalars(
+        select(DMParticipant.channel_id)
+        .join(Channel, Channel.id == DMParticipant.channel_id)
+        .where(DMParticipant.user_id == user_id)
+        .where(Channel.deleted_at.is_(None))
+    ))
+
+    return owned | set(rows) | dms
 
 
-# TODO:
 def _get_channel_members(db: Session, channel_id: UUID) -> set[UUID]:
-    """All workspace members who share the workspace this channel belongs to."""
+    """All workspace members who can view this channel (owners always included).
+    For direct messages: exactly the two participants."""
+    from workspace.model import Workspace, DMParticipant
+
+    channel = db.get(Channel, channel_id)
+    if not channel:
+        return set()
+
+    if channel.is_direct:
+        return set(db.scalars(
+            select(DMParticipant.user_id).where(DMParticipant.channel_id == channel_id)
+        ))
+
+    owner_id = db.scalar(
+        select(Workspace.owner_id).where(Workspace.id == channel.workspace_id)
+    )
 
     members = db.scalars(
         select(WorkspaceMember.user_id)
-        .join(Channel, Channel.workspace_id == WorkspaceMember.workspace_id)
-        .where(Channel.id == channel_id)
-        .where(Channel.deleted_at.is_(None))
+        .where(WorkspaceMember.workspace_id == channel.workspace_id)
     )
 
     def has_access(user_id: UUID) -> bool:
-        # noinspection PyUnresolvedReferences
+        if user_id == owner_id:
+            return True
         from permissions import user_perms, ScopedPermission
-
         return ScopedPermission.from_str("channel:view") in user_perms(
             workspace_id=None,
             channel_id=channel_id,

@@ -1,14 +1,17 @@
+import os
 import uuid
 
 from pywebpush import webpush_async, WebPushException
-from sqlalchemy import update
+from sqlalchemy import update, select
 from starlette import status
 from taskiq.message import TaskiqMessage
 
 from broker import broker, register_callback
 from config import cfg
-from model import SessionLocal
+from database import SessionLocal
 from utils.datetime import utcnow
+from utils.email import send_email
+from utils.email_templates import notification_email
 from utils.logger import get_logger
 from .model import NotificationsChannel, NotificationDelivery, DeliveryStatus, NotificationSchema, \
     PushSubscriptionSchema, PushSubscription
@@ -98,7 +101,53 @@ async def webpush(notification: NotificationSchema, subscription: PushSubscripti
         logger.info(f"Marked notification {notification.id} as SENT (via subscription {subscription.id})")
 
 
-@broker.task()
+def _mark_email(notification_id: uuid.UUID, new_status: DeliveryStatus):
+    with SessionLocal() as db:
+        db.execute(
+            update(NotificationDelivery)
+            .where(NotificationDelivery.notification_id == notification_id)
+            .where(NotificationDelivery.channel == NotificationsChannel.EMAIL)
+            .where(NotificationDelivery.status == DeliveryStatus.PENDING)
+            .values(status=new_status,
+                    sent_at=(utcnow() if new_status == DeliveryStatus.SENT else None))
+        )
+        db.commit()
+
+
+@broker.task(retry_on_error=True, max_retries=3, delay=15)
 async def email(notification: NotificationSchema):
-    # TODO:
-    pass
+    """Deliver a notification by email to the recipient's primary address.
+
+    Resolves the address from the notification's user (the schema carries no
+    email) and marks the EMAIL delivery SENT on success. A missing recipient
+    is a permanent failure (no retry); transport errors are swallowed by
+    send_email itself, so this task treats a completed send as SENT.
+    """
+    from auth.model import User
+
+    with SessionLocal() as db:
+        to = db.scalar(select(User.primary_email).where(User.id == notification.user_id))
+
+    if not to:
+        _mark_email(notification.id, DeliveryStatus.FAILED)
+        logger.info(f"No email address for user {notification.user_id}; marked delivery FAILED")
+        return
+
+    frontend_origin = os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173").rstrip("/")
+    data = notification.data or {}
+    link = frontend_origin
+    channel_id = data.get("channel_id")
+    if channel_id:
+        query = f"?channel={channel_id}"
+        if data.get("workspace_id"):
+            query += f"&workspace={data['workspace_id']}"
+        if data.get("message_id"):
+            query += f"&msg={data['message_id']}"
+        link = f"{frontend_origin}/chat{query}"
+    elif data.get("url"):
+        link = f"{frontend_origin}{data['url']}"
+
+    html, text = notification_email(notification.title, notification.body, url=link)
+    await send_email(to, html, subject=notification.title, text=text)
+    _mark_email(notification.id, DeliveryStatus.SENT)
+    logger.info(f"Marked notification {notification.id} email delivery as SENT")

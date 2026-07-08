@@ -180,14 +180,16 @@ class TestPresenceTracking:
         payload = MessageSchema(
             channel_id=test_channel.id,
             sender_id=user_sender.id,
-            content="Hello recipient!",
+            content={"type": "doc",
+                     "content": [{"type": "paragraph",
+                                  "content": [{"type": "text", "text": "Hello recipient!"}]}]},
         ).model_dump(mode="json")
         payload["workspace_id"] = str(test_workspace.id)
 
         await sender.call("message", payload)
         message = await wait_task
 
-        assert message["content"] == "Hello recipient!"
+        assert message["content"]["content"][0]["content"][0]["text"] == "Hello recipient!"
         assert UUID(message["sender_id"]) == user_sender.id
         assert UUID(message["channel_id"]) == test_channel.id
 

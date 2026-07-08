@@ -739,6 +739,15 @@ wheels = [
 ]
 
 [[package]]
+name = "cssselect"
+version = "1.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ec/2e/cdfd8b01c37cbf4f9482eefd455853a3cf9c995029a46acd31dfaa9c1dd6/cssselect-1.4.0.tar.gz", hash = "sha256:fdaf0a1425e17dfe8c5cf66191d211b357cf7872ae8afc4c6762ddd8ac47fc92", size = 40589, upload-time = "2026-01-29T07:00:26.701Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/20/0c/7bb51e3acfafd16c48875bf3db03607674df16f5b6ef8d056586af7e2b8b/cssselect-1.4.0-py3-none-any.whl", hash = "sha256:c0ec5c0191c8ee39fcc8afc1540331d8b55b0183478c50e9c8a79d44dbceb1d8", size = 18540, upload-time = "2026-01-29T07:00:24.994Z" },
+]
+
+[[package]]
 name = "cuda-bindings"
 version = "13.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1299,6 +1308,7 @@ dependencies = [
     { name = "numpy" },
     { name = "openai" },
     { name = "pillow" },
+    { name = "prosemirror" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -1383,6 +1393,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.4.6" },
     { name = "openai", specifier = ">=2.40.0" },
     { name = "pillow", specifier = ">=12.2.0" },
+    { name = "prosemirror", specifier = ">=0.6.1" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.4" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pydantic-settings", specifier = ">=2.14.1" },
@@ -3490,6 +3501,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/cb/ef/3c6ecf8b317aa982f309835e8f96987466123c6e596646d4e6a1dfcd080f/propcache-0.4.1-cp314-cp314t-win_amd64.whl", hash = "sha256:990f6b3e2a27d683cb7602ed6c86f15ee6b43b1194736f9baaeb93d0016633b1", size = 46259, upload-time = "2025-10-08T19:48:34.226Z" },
     { url = "https://files.pythonhosted.org/packages/c4/2d/346e946d4951f37eca1e4f55be0f0174c52cd70720f84029b02f296f4a38/propcache-0.4.1-cp314-cp314t-win_arm64.whl", hash = "sha256:ecef2343af4cc68e05131e45024ba34f6095821988a9d0a02aa7c73fcc448aa9", size = 40428, upload-time = "2025-10-08T19:48:35.441Z" },
     { url = "https://files.pythonhosted.org/packages/5b/5a/bc7b4a4ef808fa59a816c17b20c4bef6884daebbdf627ff2a161da67da19/propcache-0.4.1-py3-none-any.whl", hash = "sha256:af2a6052aeb6cf17d3e46ee169099044fd8224cbaf75c76a2ef596e8163e2237", size = 13305, upload-time = "2025-10-08T19:49:00.792Z" },
+]
+
+[[package]]
+name = "prosemirror"
+version = "0.6.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cssselect" },
+    { name = "lxml" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d6/8a/36cd9224f70441fd66d428f7cad650923d949d0d9395cbae82aab6b78df5/prosemirror-0.6.1.tar.gz", hash = "sha256:eec45a4f35d03ddb58700199292646c34b334bbad385a21679fc7a8d181cd272", size = 76262, upload-time = "2026-02-21T15:43:01.272Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8c/6b/ff4f2362320c53ea989ef32e4ac978233b65ffb2e6e3131aea7860c740cb/prosemirror-0.6.1-py3-none-any.whl", hash = "sha256:f9d38313a72af1c579cbb87beac3a765f399416afc4567cb016aca53ec4cdae6", size = 67868, upload-time = "2026-02-21T15:43:00.3Z" },
 ]
 
 [[package]]

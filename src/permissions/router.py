@@ -11,7 +11,7 @@ from starlette.status import HTTP_201_CREATED, HTTP_204_NO_CONTENT
 from auth.dependencies import user_id
 from auth.model import User
 from auth.utils import errors
-from model import DatabaseDep
+from database import DatabaseDep
 from permissions import UserPermissionsDep, db_permission
 from permissions.model import Role, RolePermission, ChannelRoleOverride, PermissionSet, ScopedPermission
 from workspace import is_owner, require_perms, WorkspaceID, RoleID
@@ -205,6 +205,7 @@ def update_workspace_role_permissions(
                        for p in request_permissions.iter(db))
 
     role.permissions.clear()
+    db.flush()
     role.permissions.extend([
         RolePermission(
             permission_id=p.id,
@@ -213,6 +214,9 @@ def update_workspace_role_permissions(
         if p is not None  # silently ignore invalid permissions
     ])
     db.commit()
+
+    from chat.sync import notify_workspace
+    notify_workspace(db, workspace_id, "permissions")
 
     return RoleResp.from_attributes(role, include_permissions=True)
 
@@ -225,7 +229,7 @@ def update_workspace_role_permissions(
 def update_workspace_role_members(
         workspace_id: WorkspaceID,
         role_id: RoleID,
-        member_ids: Annotated[list[uuid.UUID], Form()],
+        member_ids: Annotated[list[uuid.UUID], Form(default_factory=list)],
         db: DatabaseDep,
 ):
     """
@@ -242,6 +246,9 @@ def update_workspace_role_members(
     role.users.extend(m for m in new_members if m is not None)
 
     db.commit()
+
+    from chat.sync import notify_workspace
+    notify_workspace(db, workspace_id, "permissions")
 
     return RoleResp.from_attributes(role, include_permissions=True, include_users=True)
 
@@ -261,6 +268,9 @@ def delete_workspace_role(workspace_id: WorkspaceID, role_id: RoleID, db: Databa
 
     db.delete(role)
     db.commit()
+
+    from chat.sync import notify_workspace
+    notify_workspace(db, workspace_id, "permissions")
 
 
 @workspace.get("/my_permissions")
@@ -316,7 +326,20 @@ def get_channel_role_override(channel_id: uuid.UUID, role_id: RoleID, db: Databa
     if override is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Override not found")
 
-    return override
+    return {
+        "role_id": str(override.role_id),
+        "channel_id": str(override.channel_id),
+        "permission_overrides": [
+            {
+                "resource": po.permission.resource,
+                "action": po.permission.action,
+                "scope": po.scope.value,
+                "is_deny": po.is_deny,
+            }
+            for po in override.permission_overrides
+            if po.permission is not None
+        ],
+    }
 
 
 @channel.put("/roles/{role_id}", dependencies=[require_perms("workspace.role:manage")])
@@ -362,6 +385,8 @@ def update_channel_roles_override(
         for p, is_deny in permissions
     )
 
+    override.permission_overrides.clear()
+    db.flush()
     override.permission_overrides.extend(
         RolePermission(
             permission_id=p.id,
@@ -372,6 +397,12 @@ def update_channel_roles_override(
     )
 
     db.commit()
+
+    from chat.sync import notify_workspace
+    ch = db.get(Channel, channel_id)
+    if ch is not None:
+        notify_workspace(db, ch.workspace_id, "permissions")
+
     return override
 
 
@@ -396,8 +427,12 @@ def delete_channel_roles_override(channel_id: uuid.UUID, role_id: RoleID, db: Da
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Cannot delete override for workspace base role")
 
+    workspace_id = override.channel.workspace_id
     db.delete(override)
     db.commit()
+
+    from chat.sync import notify_workspace
+    notify_workspace(db, workspace_id, "permissions")
 
 
 @channel.get("/my_permissions")

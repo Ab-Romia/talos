@@ -1,16 +1,71 @@
 from uuid import UUID
 
-from .model import MessageSchema, MessageRole
+from sqlalchemy import select
+
+from database import AsyncSessionLocal
+from .model import MessageSchema, MessageRole, wrap_plain_text
 from .storage import get_storage
 
 
-async def store_message(channel_id: UUID, user_id: UUID, content: str) -> MessageSchema:
-    """Persist a user message to both hot and cold storage."""
+async def _resolve_attachments(channel_id: UUID, attachment_ids: list[UUID]) -> list[dict]:
+    """Attachment metadata for ids that really live in THIS channel — an id
+    from another channel (or another user's DM) is silently dropped."""
+    from filesystem.model import File
+
+    if not attachment_ids:
+        return []
+    async with AsyncSessionLocal() as db:
+        rows = (await db.scalars(
+            select(File).where(
+                File.id.in_(attachment_ids),
+                File.channel_id == channel_id,
+                File.deleted_at.is_(None),
+            )
+        )).all()
+    return [
+        {"id": str(f.id), "filename": f.filename, "content_type": f.content_type, "size_bytes": f.size_bytes}
+        for f in rows
+    ]
+
+
+async def store_message(channel_id: UUID, user_id: UUID, content: dict | str,
+                        reply_to_id: UUID | None = None,
+                        attachment_ids: list[UUID] | None = None) -> MessageSchema:
+    """
+    Persist a user message to storage.
+
+    `content` accepts:
+      - dict  — already-validated ProseMirror JSON from MessageCreateSchema
+      - str   — plain text from a bot; auto-wrapped into a paragraph doc
+    """
+    if isinstance(content, str):
+        raw = wrap_plain_text(content).to_json()
+    else:
+        raw = content  # already validated by MessageCreateSchema upstream
+
     msg = MessageSchema(
         channel_id=channel_id,
         sender_id=user_id,
         role=MessageRole.USER,
-        content=content,
+        content=raw,
+        reply_to_id=reply_to_id,
+        attachments=await _resolve_attachments(channel_id, attachment_ids or []),
+    )
+    await get_storage().put(msg)
+
+    # Chat-memory indexing happens via the segment-based cron indexer
+    # (processing.chat_tasks), driven by messages.indexed_at — no per-message
+    # enqueue here.
+    return msg
+
+
+async def store_assistant_message(channel_id: UUID, sender_id: UUID, content: str) -> MessageSchema:
+    """Persist an AI assistant message. Not indexed to avoid retrieval feedback loops."""
+    msg = MessageSchema(
+        channel_id=channel_id,
+        sender_id=sender_id,
+        role=MessageRole.ASSISTANT,
+        content=wrap_plain_text(content).to_json(),
     )
     await get_storage().put(msg)
     return msg
@@ -26,5 +81,5 @@ async def get_messages(
 
 
 async def get_message_by_id(message_id: UUID) -> MessageSchema | None:
-    """Fetch a single message; hot cache checked first, then cold store."""
+    """Fetch a single message; storage checked (hot cache first if configured)."""
     return await get_storage().get_by_id(message_id)

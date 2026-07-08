@@ -9,8 +9,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from auth.model import Session
 from config import cfg
-from model import DatabaseDep
-from model.utils import DATETIME
+from database import DatabaseDep
+from utils.types import DATETIME
 from .jwt import verify_token, BaseJWTClaims
 from ..utils import errors, jwt
 
@@ -63,7 +63,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
                     key=cfg().auth.session_cookie_key,
                     value=token,
                     path="/",
-                    secure=True,
+                    secure=cfg().auth.session_cookie_secure,
                     httponly=True,
                     samesite="lax",
                     max_age=int(delta.total_seconds())
@@ -127,17 +127,19 @@ def verified_session(claims: UnverifiedSessionDep, db: DatabaseDep):
     return claims
 
 
-def new_session(claims: UnverifiedSessionDep, db: DatabaseDep):
+def new_session(claims: UnverifiedSessionDep, db: DatabaseDep, request: Request = None):
     # TODO: handle existing session (e.g. revoke previous session, or allow multiple sessions per user)
     yield claims
 
     assert claims.sub is not None, "User ID (sub) must be set for new session"
     assert claims.jti is not None, "Session ID (jti) must be set for new session"
 
+    user_agent = request.headers.get("user-agent") if request is not None else None
     sess = Session(
         id=claims.jti,
         user_id=claims.sub,
         last_used_at=func.now(),
+        user_agent=user_agent[:1024] if user_agent else None,
     )
     db.merge(sess)
     db.commit()
@@ -166,9 +168,10 @@ def revoke_by_uid(user_id: uuid.UUID, db: DatabaseDep, except_id: uuid.UUID = No
 
 
 def get_by_uid(user_id: uuid.UUID, db: DatabaseDep):
-    sessions = db.scalars(
-        select(Session.id, Session.last_used_at, Session.user_agent)
+    # Materialized rows (db.execute, not db.scalars — scalars would drop all but
+    # the first column). Newest activity first.
+    return db.execute(
+        select(Session.id, Session.last_used_at, Session.user_agent, Session.created_at)
         .where(Session.user_id == user_id)
-    )
-
-    return sessions
+        .order_by(Session.last_used_at.desc())
+    ).all()

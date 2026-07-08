@@ -258,12 +258,6 @@ def build_vectorstore(chunks, embeddings):
     return vs
 
 
-@lru_cache(maxsize=1)
-def _cross_encoder():
-    HuggingFaceCrossEncoder = _lc()["HuggingFaceCrossEncoder"]
-    return HuggingFaceCrossEncoder(model_name="cross-encoder/ms-marco-MiniLM-L-6-v2")
-
-
 def build_retriever(
     vectorstore,
     chunks,
@@ -272,89 +266,34 @@ def build_retriever(
     use_hybrid: bool = False,
     use_rerank: bool = False,
 ):
-    """Mirror of `src/rag/retrieval/retrievers.py::get_retriever` for eval.
-
-    We re-implement here (rather than calling the production function) because
-    the production function depends on `RagConfig`; we want to vary flags
-    explicitly per ablation row.
+    """Thin adapter over the PRODUCTION build_rag_pipeline for the notebook's
+    retrieval-only IR sweep. Eval retrieval is now the exact code the app ships;
+    the per-sweep flags are translated into a RagConfig.
     """
-    base_kwargs = {"k": top_k}
-    dense = vectorstore.as_retriever(
-        search_type="similarity", search_kwargs=base_kwargs
+    from config import RagConfig
+    from rag.retrieval.retrievers import build_rag_pipeline
+
+    cfg = RagConfig(
+        retrieval_top_k=top_k,
+        use_hybrid_retrieval=use_hybrid,
+        use_reranking=use_rerank,
     )
-    if use_hybrid:
-        BM25Retriever = _lc()["BM25Retriever"]
-        EnsembleRetriever = _lc()["EnsembleRetriever"]
-        bm25 = BM25Retriever.from_documents(chunks)
-        bm25.k = top_k
-        base = EnsembleRetriever(retrievers=[dense, bm25], weights=[0.5, 0.5])
-    else:
-        base = dense
-
-    if use_rerank:
-        CrossEncoderReranker = _lc()["CrossEncoderReranker"]
-        ContextualCompressionRetriever = _lc()["ContextualCompressionRetriever"]
-        reranker = CrossEncoderReranker(model=_cross_encoder(), top_n=top_k)
-        return ContextualCompressionRetriever(
-            base_compressor=reranker, base_retriever=base
-        )
-    return base
+    return build_rag_pipeline(cfg, vectorstore, corpus=chunks)
 
 
 # ---------------------------------------------------------------------------
-# Inlined production helpers
+# HyDE query embedder (constructed from the eval's injected models)
 # ---------------------------------------------------------------------------
-#
-# `src/rag/__init__.py` re-exports `vector_store` at import time, and
-# `vector_store.py` currently carries unresolved merge-conflict markers on
-# this branch. To keep the eval runnable independent of that, we inline the
-# three small helpers we need from `src/rag/retrieval` here. The production
-# code paths these mirror are:
-#   - `rag.retrieval.query_processing.get_hyde_embeddings`
-#   - `rag.retrieval.query_processing.get_query_rewriter` (built from
-#     `config.QUERY_REWRITE_PROMPT | llm` — done inline in `RagVariant`)
-#   - `rag.retrieval.compression.compression_retriever`
 
 
 def _hyde_embeddings(base_embeddings, llm):
-    """Mirror of `rag.retrieval.query_processing.get_hyde_embeddings`."""
+    """Build a HyDE query embedder from the eval's injected llm + base
+    embeddings (same construction as production get_hyde_embeddings, with the
+    models injected so the notebook controls them)."""
     from langchain_classic.chains.hyde.base import HypotheticalDocumentEmbedder
 
     return HypotheticalDocumentEmbedder.from_llm(
         llm=llm, base_embeddings=base_embeddings, prompt_key="web_search"
-    )
-
-
-def _compression_retriever(
-    base_retriever, compression_type: str, llm, embeddings, threshold: float = 0.76
-):
-    """Mirror of `rag.retrieval.compression.compression_retriever`. Threshold
-    is configurable so the eval can sweep across calibration points (the v2
-    run surfaced 0.76 as too aggressive for `text-embedding-3-small`)."""
-    from langchain_classic.retrievers import ContextualCompressionRetriever
-    from langchain_classic.retrievers.document_compressors import (
-        LLMChainExtractor,
-        EmbeddingsFilter,
-        DocumentCompressorPipeline,
-    )
-
-    if compression_type == "embeddings":
-        compressor = EmbeddingsFilter(
-            embeddings=embeddings, similarity_threshold=threshold
-        )
-    elif compression_type == "llm":
-        compressor = LLMChainExtractor.from_llm(llm)
-    elif compression_type == "pipeline":
-        compressor = DocumentCompressorPipeline(
-            transformers=[
-                EmbeddingsFilter(embeddings=embeddings, similarity_threshold=threshold),
-                LLMChainExtractor.from_llm(llm),
-            ]
-        )
-    else:
-        return base_retriever
-    return ContextualCompressionRetriever(
-        base_compressor=compressor, base_retriever=base_retriever
     )
 
 
@@ -375,14 +314,28 @@ class VariantConfig:
     compression_threshold: float = 0.76
     top_k: int = 5
 
+    def to_rag_config(self):
+        """Translate this ablation row into the production RagConfig so eval
+        drives the exact pipeline the app ships (build_rag_pipeline reads it)."""
+        from config import RagConfig, CompressionType
+        return RagConfig(
+            use_query_rewrite=self.use_rewrite,
+            use_hyde=self.use_hyde,
+            use_reranking=self.use_rerank,
+            use_hybrid_retrieval=self.use_hybrid,
+            compression_type=CompressionType(self.compression),
+            compression_similarity_threshold=self.compression_threshold,
+            retrieval_top_k=self.top_k,
+        )
+
 
 def default_variants(top_k: int = 5) -> list[VariantConfig]:
     """The ablation grid in EVALUATION_PLAN.md §4.2.
 
     Includes:
-      * `production_default` — the actual `src/config/config.py` ship config
-        (dense retrieval + cross-encoder rerank, no rewriting / HyDE / hybrid /
-        compression). This is the row the report should headline.
+      * `production_default` — DERIVED from the live `global_rag_config`, so this
+        row is always exactly the config the app ships (no drift). This is the
+        row the report should headline.
       * Single-component additions on top of `dense_only`: `+rewrite`, `+hyde`,
         `+rerank`, `hybrid+rerank`.
       * `compression_calibrated` — same as `everything_on_stress` but with the
@@ -393,12 +346,17 @@ def default_variants(top_k: int = 5) -> list[VariantConfig]:
         its langchain-default threshold. NAME CHANGED to make clear this is a
         stress test, not the deployed config.
     """
+    from config import global_rag_config as _c
     return [
         VariantConfig(name="closed_book", use_retrieval=False, top_k=top_k),
         VariantConfig(name="dense_only", top_k=top_k),
         VariantConfig(
             name="production_default",
-            use_rerank=True,
+            use_rewrite=_c.use_query_rewrite,
+            use_hyde=_c.use_hyde,
+            use_rerank=_c.use_reranking,
+            use_hybrid=_c.use_hybrid_retrieval,
+            compression=_c.compression_type.value,
             top_k=top_k,
         ),
         VariantConfig(name="+rewrite", use_rewrite=True, top_k=top_k),
@@ -484,32 +442,24 @@ class RagVariant:
                     chunks, base_embeddings
                 )
 
-            self.retriever = build_retriever(
-                self.vectorstore,
-                chunks,
-                top_k=config.top_k,
-                use_hybrid=config.use_hybrid,
-                use_rerank=config.use_rerank,
+            # THE production retriever composition (dense/hybrid -> rerank with
+            # candidate widening -> compression), driven by this row's config.
+            from rag.retrieval.retrievers import build_rag_pipeline
+            self.retriever = build_rag_pipeline(
+                config.to_rag_config(), self.vectorstore, corpus=chunks
             )
-            if config.compression != "none":
-                self.retriever = _compression_retriever(
-                    self.retriever,
-                    compression_type=config.compression,
-                    llm=llm,
-                    embeddings=base_embeddings,
-                    threshold=config.compression_threshold,
-                )
         else:
             self.retriever = None
 
-        from config import RAG_PROMPT_WITHOUT_MEMORY, QUERY_REWRITE_PROMPT
+        from config import RAG_PROMPT, QUERY_REWRITE_PROMPT
 
         if config.use_rewrite:
             self.rewriter = QUERY_REWRITE_PROMPT | llm
         else:
             self.rewriter = None
 
-        self.answer_prompt = RAG_PROMPT_WITHOUT_MEMORY
+        # Production answer prompt; eval has no conversation, so chat_history=[].
+        self.answer_prompt = RAG_PROMPT
         # Closed-book uses a separate plain prompt so the LLM isn't told to
         # "use the following context" when there is none.
         from langchain_core.prompts import ChatPromptTemplate
@@ -551,7 +501,8 @@ class RagVariant:
         if self.retriever is not None:
             retrieved = list(self.retriever.invoke(query_for_retrieval))
             context = "\n\n".join(d.page_content for d in retrieved)
-            msg = self.answer_prompt.invoke({"context": context, "question": question})
+            msg = self.answer_prompt.invoke(
+                {"context": context, "question": question, "chat_history": []})
         else:
             # Closed-book / no-retrieval baseline — no "context" framing.
             msg = self.closed_book_prompt.invoke({"question": question})
@@ -576,7 +527,8 @@ class RagVariant:
         """Run the generator with externally supplied contexts (for the
         counterfactual-noise diagnostic). No caching — each call is unique."""
         joined = "\n\n".join(contexts)
-        msg = self.answer_prompt.invoke({"context": joined, "question": question})
+        msg = self.answer_prompt.invoke(
+            {"context": joined, "question": question, "chat_history": []})
         ai_msg = self.llm.invoke(msg)
         return ai_msg.content if hasattr(ai_msg, "content") else str(ai_msg)
 

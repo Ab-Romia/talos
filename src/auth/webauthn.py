@@ -1,16 +1,18 @@
+import os
 from datetime import timedelta
 from typing import Annotated
+from uuid import UUID
 
 import webauthn
 from fastapi import APIRouter, Depends, Form, HTTPException, status
-from sqlalchemy import insert, select, update
+from sqlalchemy import delete, insert, select, update
 from webauthn.helpers import bytes_to_base64url, base64url_to_bytes
 from webauthn.helpers.exceptions import InvalidRegistrationResponse, InvalidAuthenticationResponse
 from webauthn.helpers.structs import PublicKeyCredentialDescriptor, AuthenticatorSelectionCriteria, \
     ResidentKeyRequirement
 
 from config import cfg
-from model import DatabaseDep
+from database import DatabaseDep
 from .dependencies import sudo, UserDep
 from .model import Issuer, IdentityProvider
 from .utils import errors
@@ -21,11 +23,14 @@ router = APIRouter()
 
 
 def _rp_id() -> str:
+    # The registrable domain (no scheme/port). Bare "localhost" is valid.
     return cfg().app_host
 
 
 def _origin() -> str:
-    return cfg().app_host
+    # The full web origin the ceremony runs in — the frontend page, not the API
+    # host. The browser stamps clientDataJSON.origin with this exact value.
+    return os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173").rstrip("/")
 
 
 class WebAuthnChallengeClaims(BaseJWTClaims):
@@ -42,7 +47,7 @@ async def generate_passkey_new(user: UserDep, db: DatabaseDep):
 
     # For registration (authenticated user): generate registration options
     credentials = db.scalars(
-        select(IdentityProvider.data["credential_id"])
+        select(IdentityProvider.data["credential_id"].as_string())
         .where(IdentityProvider.issuer == Issuer.passkey)
         .where(IdentityProvider.user_id == user.id)
     ).all()
@@ -124,6 +129,42 @@ async def register_passkey(
 
     return {"message": "Passkey registered successfully",
             "credential": verified.credential_id.hex()}
+
+
+@router.get("")
+async def list_passkeys(user: UserDep, db: DatabaseDep):
+    """Return the caller's registered passkeys for display/management."""
+    rows = db.scalars(
+        select(IdentityProvider)
+        .where(IdentityProvider.issuer == Issuer.passkey, IdentityProvider.user_id == user.id)
+        .order_by(IdentityProvider.created_at.desc())
+    ).all()
+    return [
+        {
+            "id": str(r.id),
+            "name": (r.data or {}).get("name") or "Passkey",
+            "device_type": (r.data or {}).get("device_type"),
+            "backed_up": bool((r.data or {}).get("backed_up")),
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.delete("/{passkey_id}", dependencies=[Depends(sudo)])
+async def delete_passkey(passkey_id: UUID, user: UserDep, db: DatabaseDep):
+    """Remove one of the caller's passkeys."""
+    result = db.execute(
+        delete(IdentityProvider).where(
+            IdentityProvider.id == passkey_id,
+            IdentityProvider.user_id == user.id,
+            IdentityProvider.issuer == Issuer.passkey,
+        )
+    )
+    if result.rowcount == 0:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Passkey not found")
+    db.commit()
+    return {"message": "Passkey removed"}
 
 
 @router.post("/challenge")

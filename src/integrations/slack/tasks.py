@@ -5,9 +5,7 @@ this task. Here on the worker we run the (slow) embedded agent and post the repl
 """
 import asyncio
 import hashlib
-import os
 import re
-import tempfile
 import uuid
 
 from broker import broker
@@ -146,7 +144,7 @@ async def ingest_slack_file(
     from sqlalchemy import select
 
     from filesystem.model import File, FileStatus
-    from model import SessionLocal
+    from database import SessionLocal
 
     workspace_id = uuid.UUID(bot.default_workspace_id)
     channel_id = uuid.UUID(bot.default_channel_id)
@@ -166,15 +164,25 @@ async def ingest_slack_file(
                 await reply(f"{filename} is already ingested.")
                 return
 
-            # ── Store bytes in MinIO, scoped to the bot's workspace/channel ──
-            from filesystem.storage.minio import MinIOFileSystem
+            # ── Store bytes in MinIO at an exact object key (main's addressing
+            # convention: File.uri == "minio://<exact-key>"; process_document
+            # downloads by that key with an unscoped client) ──
+            from s3fs import S3FileSystem
 
-            fs = MinIOFileSystem(
-                cfg().minio, workspace_id=workspace_id, channel_id=channel_id
+            _m = cfg().minio
+            endpoint = str(_m.internal_endpoint)
+            if not endpoint.startswith("http"):
+                endpoint = f"{'https' if _m.secure else 'http'}://{endpoint}"
+            raw_fs = S3FileSystem(
+                key=_m.access_key,
+                secret=_m.secret_key.get_secret_value(),
+                endpoint_url=endpoint,
+                use_ssl=_m.secure,
+                asynchronous=True,
+                skip_instance_cache=True,
             )
-            path = f"slack/{filename}"
-            await fs._pipe_file(path, data)
-            uri = fs.unstrip_protocol(path)
+            object_key = f"{_m.bucket}/{workspace_id}/slack/{filename}"
+            await raw_fs._pipe_file(object_key, data)
 
             # ── Record the File row ──
             file_row = File(
@@ -186,69 +194,17 @@ async def ingest_slack_file(
                 size_bytes=len(data),
                 sha256checksum=sha,
                 processing_status=FileStatus.UPLOADED,
-                uri=uri,
+                uri=f"minio://{object_key}",
             )
             db.add(file_row)
             db.commit()
             file_pk = file_row.id
 
-            # ── Extract text ──
-            ext = os.path.splitext(filename)[1].lower()
-            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-                tmp.write(data)
-                tmp_path = tmp.name
-            try:
-                from processing.documents import _extract_text
+            # ── Extract, chunk, embed — the shared pipeline (handles fallback
+            # extraction, OCR, idempotent re-ingest, chunk_count) ──
+            from processing.documents import process_document
 
-                elements = _extract_text(tmp_path, content_type)
-            finally:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
-
-            from langchain_core.documents import Document
-
-            docs = [
-                Document(
-                    page_content=el_text,
-                    metadata={
-                        "workspace_id": str(workspace_id),
-                        "file_id": str(file_pk),
-                        "filename": filename,
-                        "page_number": el_meta.get("page_number", 0),
-                    },
-                )
-                for el_text, el_meta in elements
-                if el_text and el_text.strip()
-            ]
-
-            if not docs:
-                file_row.processing_status = FileStatus.PROCESSED
-                db.commit()
-                await reply(f"No text could be extracted from {filename}.")
-                return
-
-            # ── Chunk ──
-            from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-            from config import global_rag_config
-
-            splitter = RecursiveCharacterTextSplitter(
-                chunk_size=global_rag_config.chunk_size,
-                chunk_overlap=global_rag_config.chunk_overlap,
-                separators=["\n\n", "\n", ". ", " ", ""],
-            )
-            chunks = splitter.split_documents(docs)
-            for i, chunk in enumerate(chunks):
-                chunk.metadata["chunk_index"] = i
-
-            # ── Embed into Milvus (idempotent: clear prior chunks first) ──
-            from rag.vector_store import delete_file_chunks
-
-            delete_file_chunks(str(file_pk), workspace_id=str(workspace_id))
-
-            from rag.ingestion import ingest_file_chunks
-
-            ingest_file_chunks(chunks, str(workspace_id), str(file_pk))
+            await process_document(file_row, db, storage=None)
 
             file_row.processing_status = FileStatus.INDEXED
             db.commit()
@@ -257,10 +213,11 @@ async def ingest_slack_file(
                 "Slack file ingested",
                 filename=filename,
                 file_db_id=str(file_pk),
-                num_chunks=len(chunks),
+                num_chunks=file_row.chunk_count,
             )
             await reply(
-                f"Ingested {filename} — {len(chunks)} chunks. You can now ask me about it."
+                f"Ingested {filename} — {file_row.chunk_count} chunks. "
+                "You can now ask me about it."
             )
     except Exception:
         logger.exception("Slack file ingestion failed", filename=filename)

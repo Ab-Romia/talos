@@ -13,8 +13,8 @@ from auth.model import User, IdentityProvider, Issuer, Session as UserSession
 from auth.password import hash_password
 from auth.utils.jwt import create_token
 from auth.utils.session import SessionClaims
+from database import SessionLocal
 from filesystem.model import File, FileStatus
-from model import SessionLocal
 from permissions.model import Role, RolePermission, Permission, PermissionScope, DEFAULT_EVERYONE_ROLE_ID, \
     STATIC_ROLE_ID, ScopedPermission
 from workspace.model import Workspace, Channel
@@ -23,7 +23,7 @@ from workspace.model import Workspace, Channel
 @pytest.fixture(scope="session", autouse=True)
 async def init():
     from app import lifespan
-    from model import engine, Base
+    from database import engine, Base
     Base.metadata.drop_all(engine)
 
     async with lifespan(app):
@@ -33,7 +33,7 @@ async def init():
 @pytest.fixture(autouse=True)
 def db_session():
     """Provide a per-test DB and override app dependency to return it."""
-    from model import _get_db
+    from database import _get_db
 
     with SessionLocal() as db:
         try:
@@ -283,7 +283,6 @@ def test_permissions():
         # messaging
         ("channel.member", "view_presence", [*PermissionScope]),
         ("channel.message", "send", [*PermissionScope]),
-        ("channel.message", "view_history", [*PermissionScope]),
     ]
 
 
