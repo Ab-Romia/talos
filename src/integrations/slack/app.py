@@ -1,0 +1,84 @@
+"""Slack bolt app + FastAPI adapter.
+
+Built only when Slack is configured, so the main app still boots without it. Event
+listeners do the minimum (enqueue a task) and return, to satisfy Slack's 3s ack.
+"""
+import re
+
+from config import cfg
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+_MENTION = re.compile(r"<@[^>]+>\s*")
+
+bolt_app = None
+slack_handler = None
+
+
+def _build():
+    """Construct the bolt app + FastAPI handler. Returns (app, handler) or (None, None)."""
+    if cfg().slack is None:
+        logger.info("Slack not configured; skipping bolt app.")
+        return None, None
+
+    from slack_bolt.adapter.fastapi.async_handler import AsyncSlackRequestHandler
+    from slack_bolt.async_app import AsyncApp
+
+    from integrations.slack import tasks
+
+    app = AsyncApp(
+        token=cfg().slack.bot_token.get_secret_value(),
+        signing_secret=cfg().slack.signing_secret.get_secret_value(),
+        process_before_response=True,
+    )
+
+    async def _enqueue(event: dict) -> None:
+        text = _MENTION.sub("", event.get("text", "")).strip()
+
+        # Shared files ingest regardless of whether the message has text.
+        for f in event.get("files", []):
+            await tasks.ingest_slack_file.kiq(
+                file_id=f.get("id", ""),
+                filename=f.get("name") or "unnamed",
+                mimetype=f.get("mimetype") or "",
+                size=int(f.get("size") or 0),
+                url=f.get("url_private_download") or f.get("url_private") or "",
+                channel=event["channel"],
+                thread_ts=event.get("thread_ts") or event.get("ts"),
+            )
+
+        if not text:
+            return
+        await tasks.run_agent_turn.kiq(
+            slack_user=event.get("user", ""),
+            channel=event["channel"],
+            text=text,
+            thread_ts=event.get("thread_ts") or event.get("ts"),
+            msg_ts=event.get("ts"),
+        )
+
+    def _is_retry(request) -> bool:
+        # Slack redelivers events it thinks timed out; processing them again
+        # yields duplicate replies. The original delivery has no retry header.
+        return bool(request.headers.get("x-slack-retry-num"))
+
+    @app.event("app_mention")
+    async def on_mention(event, request):
+        if _is_retry(request):
+            return
+        await _enqueue(event)
+
+    @app.event("message")
+    async def on_message(event, request):
+        # Only direct messages, and never react to bot/own messages (avoids loops).
+        if event.get("channel_type") != "im" or event.get("bot_id"):
+            return
+        if _is_retry(request):
+            return
+        await _enqueue(event)
+
+    return app, AsyncSlackRequestHandler(app)
+
+
+bolt_app, slack_handler = _build()

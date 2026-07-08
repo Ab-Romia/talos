@@ -17,8 +17,8 @@ def get_llm(provider: str = "openai", streaming: bool | None = None,
             streaming=streaming,
             api_key=config.openai_api_key,
             base_url=config.openai_base_url,
-            timeout=60,
-            max_retries=0,
+            timeout=config.llm_timeout,
+            max_retries=config.llm_max_retries,
         )
     else:
         raise ValueError(f"Unknown LLM provider: {provider}")

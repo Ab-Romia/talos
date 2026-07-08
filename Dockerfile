@@ -45,4 +45,9 @@ CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
 
 # ── Worker target: taskiq background worker ──
 FROM base AS worker
-CMD ["taskiq", "worker", "broker:broker", "notifications.tasks", "processing.tasks", "--app-dir=src"]
+CMD ["taskiq", "worker", "broker:broker", "notifications.tasks", "processing.tasks", "integrations.slack.tasks", "--app-dir=src"]
+
+# ── MCP target: FastMCP integrations server ──
+FROM base AS mcp
+EXPOSE 8001
+CMD ["python", "-m", "integrations.mcp_server"]

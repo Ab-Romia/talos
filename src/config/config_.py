@@ -127,6 +127,50 @@ class PushConfig(BaseModel):
     vapid_subject: str
 
 
+class JiraConfig(BaseModel):
+    """Jira Cloud integration (read/process tickets of a configurable board)."""
+    base_url: str  # e.g. https://yourorg.atlassian.net
+    email: str
+    api_token: SecretStr
+    project_key: str  # default project, e.g. "TAL"
+    board_id: str | None = None  # optional default board id
+
+
+class GithubConfig(BaseModel):
+    """GitHub integration (implement tickets / open PRs in a configurable repo)."""
+    api_url: str = "https://api.github.com"
+    token: SecretStr
+    owner: str
+    repo: str
+    default_base_branch: str = "main"
+
+
+class SlackConfig(BaseModel):
+    """Slack bot integration."""
+    bot_token: SecretStr  # xoxb-...
+    signing_secret: SecretStr
+    app_token: SecretStr | None = None  # xapp-..., socket mode (local dev)
+    socket_mode: bool = False
+    # Minimal identity mapping: slack_user_id -> Talos user uuid (string).
+    user_map: dict[str, str] = {}
+    default_talos_user_id: str  # fallback Talos user for unmapped Slack users
+
+
+class BotConfig(BaseModel):
+    """Identity and scope the embedded agent uses to act inside Talos."""
+    bot_user_id: str  # Talos service-user uuid (message sender)
+    default_workspace_id: str  # workspace the bot operates in
+    default_channel_id: str  # channel the bot mirrors Slack into
+    rag_collection: str = "documents_v2"
+
+
+class McpConfig(BaseModel):
+    """FastMCP server transport settings."""
+    host: str = "0.0.0.0"
+    port: int = 8001
+    transport: str = "streamable-http"  # or "sse"
+
+
 class DatabaseConfig(BaseModel):
     protocol: str = "postgresql+psycopg"
     async_protocol: str = "postgresql+psycopg"
@@ -158,6 +202,12 @@ class Config(BaseSettings):
     redis: RedisConfig = RedisConfig()
     files: FilesConfig = FilesConfig()
     push: PushConfig | None = None
+
+    jira: JiraConfig | None = None
+    github: GithubConfig | None = None
+    slack: SlackConfig | None = None
+    bot: BotConfig | None = None
+    mcp: McpConfig = McpConfig()
 
     model_config = SettingsConfigDict(
         env_file='.env',

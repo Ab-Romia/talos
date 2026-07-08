@@ -1,0 +1,233 @@
+"""Offloaded Slack agent turn.
+
+The events webhook must return within Slack's 3-second window, so it only enqueues
+this task. Here on the worker we run the (slow) embedded agent and post the reply.
+"""
+import asyncio
+import hashlib
+import re
+import uuid
+
+from broker import broker
+from config import cfg
+from integrations import agent
+from integrations.slack import service
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+_MENTION = re.compile(r"<@[^>]+>\s*")
+_HISTORY_LIMIT = 24  # prior turns fed to the agent (thread expansion inflates counts)
+_HISTORY_MSG_CHARS = 2000
+
+
+async def _conversation_history(
+    channel: str, thread_ts: str | None, msg_ts: str | None
+) -> list[tuple[str, str]]:
+    """Prior conversation as (role, content) pairs, oldest first.
+
+    Inside a thread, that's the thread so far; for a top-level mention
+    (whose "thread" is just itself), fall back to the channel's recent
+    messages so the bot still has context. The current message (matched
+    by ts) is excluded — it's passed to the agent separately.
+    """
+    if not thread_ts:
+        return []
+
+    if msg_ts is not None and thread_ts != msg_ts:
+        messages = await service.fetch_thread(channel, thread_ts)
+    else:
+        messages = await service.fetch_channel_history(channel)
+
+    history: list[tuple[str, str]] = []
+    for msg in messages:
+        if msg_ts is not None and msg.get("ts") == msg_ts:
+            continue
+        content = _MENTION.sub("", msg.get("text", "")).strip()
+        if not content:
+            continue
+        role = "assistant" if msg.get("bot_id") else "user"
+        history.append((role, content[:_HISTORY_MSG_CHARS]))
+    return history[-_HISTORY_LIMIT:]
+
+
+@broker.task()
+async def run_agent_turn(
+    slack_user: str,
+    channel: str,
+    text: str,
+    thread_ts: str | None = None,
+    msg_ts: str | None = None,
+) -> None:
+    """Run the embedded agent for one Slack message and reply in-thread."""
+    talos_user = service.resolve_talos_user(slack_user)
+    logger.info("Slack turn", slack_user=slack_user, talos_user=talos_user, channel=channel)
+
+    history = await _conversation_history(channel, thread_ts, msg_ts)
+
+    try:
+        # Hard deadline so a stalled upstream (LLM/tool) never leaves the
+        # user without any reply.
+        reply = await asyncio.wait_for(
+            agent.answer(text, history=history), timeout=240
+        )
+    except (TimeoutError, asyncio.TimeoutError):
+        logger.error("Agent turn timed out", channel=channel)
+        reply = "Sorry — that took too long. Please try again."
+    except Exception:
+        logger.exception("Agent turn failed")
+        reply = "Sorry — something went wrong while handling that."
+
+    # The agent may return an empty final message after a tool-only turn
+    # (e.g. it posted into the Talos channel); Slack rejects empty text.
+    if not reply or not reply.strip():
+        reply = "Done."
+
+    await service.post_message(channel, reply, thread_ts=thread_ts)
+
+
+@broker.task()
+async def ingest_slack_file(
+    file_id: str,
+    filename: str,
+    mimetype: str,
+    size: int,
+    url: str,
+    channel: str,
+    thread_ts: str | None = None,
+) -> None:
+    """Download a file shared with the Slack bot, store it, and index it for RAG.
+
+    Bytes go to MinIO, a ``File`` row is recorded against the bot's default
+    workspace/channel, and the text is chunked + embedded into Milvus. Every
+    terminal outcome is confirmed in-thread.
+    """
+
+    async def reply(text: str) -> None:
+        await service.post_message(channel, text, thread_ts=thread_ts)
+
+    files_cfg = cfg().files
+    bot = cfg().bot
+
+    # ── Cheap guards before touching the network ──
+    if mimetype not in files_cfg.document_mime_types:
+        await reply(f"Sorry, I can only ingest documents (pdf, docx, txt, md) — skipped {filename}.")
+        return
+    if size > files_cfg.max_size:
+        await reply(
+            f"Sorry, {filename} is too large to ingest "
+            f"(max {files_cfg.max_size // (1024 * 1024)} MiB)."
+        )
+        return
+    if not url:
+        await reply(f"Sorry — I couldn't access {filename} on Slack.")
+        return
+
+    try:
+        data = await service.download_file(url)
+    except Exception:
+        logger.exception("Slack file download failed", filename=filename, slack_file_id=file_id)
+        await reply(f"Sorry — failed to download {filename} from Slack.")
+        return
+
+    # Re-sniff the MIME type from the actual bytes; Slack's metadata is advisory.
+    import magic
+
+    detected = magic.from_buffer(data, mime=True)
+    if detected != mimetype and detected not in files_cfg.document_mime_types:
+        await reply(f"Sorry, {filename} doesn't look like a document I can ingest — skipped.")
+        return
+    content_type = detected if detected in files_cfg.document_mime_types else mimetype
+
+    sha = hashlib.sha256(data).hexdigest()
+
+    from sqlalchemy import select
+
+    from filesystem.model import File, FileStatus
+    from database import SessionLocal
+
+    workspace_id = uuid.UUID(bot.default_workspace_id)
+    channel_id = uuid.UUID(bot.default_channel_id)
+    file_pk: uuid.UUID | None = None
+
+    try:
+        with SessionLocal() as db:
+            # ── Dedupe on content hash within the bot's workspace ──
+            existing = db.execute(
+                select(File).where(
+                    File.sha256checksum == sha,
+                    File.workspace_id == workspace_id,
+                    File.deleted_at.is_(None),
+                )
+            ).scalars().first()
+            if existing is not None:
+                await reply(f"{filename} is already ingested.")
+                return
+
+            # ── Store bytes in MinIO at an exact object key (main's addressing
+            # convention: File.uri == "minio://<exact-key>"; process_document
+            # downloads by that key with an unscoped client) ──
+            from s3fs import S3FileSystem
+
+            _m = cfg().minio
+            endpoint = str(_m.internal_endpoint)
+            if not endpoint.startswith("http"):
+                endpoint = f"{'https' if _m.secure else 'http'}://{endpoint}"
+            raw_fs = S3FileSystem(
+                key=_m.access_key,
+                secret=_m.secret_key.get_secret_value(),
+                endpoint_url=endpoint,
+                use_ssl=_m.secure,
+                asynchronous=True,
+                skip_instance_cache=True,
+            )
+            object_key = f"{_m.bucket}/{workspace_id}/slack/{filename}"
+            await raw_fs._pipe_file(object_key, data)
+
+            # ── Record the File row ──
+            file_row = File(
+                workspace_id=workspace_id,
+                channel_id=channel_id,
+                uploader_id=uuid.UUID(bot.bot_user_id),
+                filename=filename,
+                content_type=content_type,
+                size_bytes=len(data),
+                sha256checksum=sha,
+                processing_status=FileStatus.UPLOADED,
+                uri=f"minio://{object_key}",
+            )
+            db.add(file_row)
+            db.commit()
+            file_pk = file_row.id
+
+            # ── Extract, chunk, embed — the shared pipeline (handles fallback
+            # extraction, OCR, idempotent re-ingest, chunk_count) ──
+            from processing.documents import process_document
+
+            await process_document(file_row, db, storage=None)
+
+            file_row.processing_status = FileStatus.INDEXED
+            db.commit()
+
+            logger.info(
+                "Slack file ingested",
+                filename=filename,
+                file_db_id=str(file_pk),
+                num_chunks=file_row.chunk_count,
+            )
+            await reply(
+                f"Ingested {filename} — {file_row.chunk_count} chunks. "
+                "You can now ask me about it."
+            )
+    except Exception:
+        logger.exception("Slack file ingestion failed", filename=filename)
+        if file_pk is not None:
+            try:
+                with SessionLocal() as db:
+                    row = db.get(File, file_pk)
+                    if row is not None:
+                        row.processing_status = FileStatus.PROCESSING_FAILED
+                        db.commit()
+            except Exception:
+                logger.exception("Could not mark file as failed", filename=filename)
+        await reply(f"Sorry — failed to ingest {filename}.")

@@ -40,7 +40,7 @@ services:
       HF_HOME: /models/hf
     volumes:
       - hf_cache:/models
-    command: [ "taskiq", "worker", "broker:broker", "notifications.tasks", "processing.tasks", "processing.chat_tasks", "--app-dir=src" ]
+    command: [ "taskiq", "worker", "broker:broker", "notifications.tasks", "processing.tasks", "processing.chat_tasks", "integrations.slack.tasks", "--app-dir=src" ]
     depends_on:
       postgres:
         condition: service_healthy
@@ -64,6 +64,32 @@ services:
     volumes:
       - hf_cache:/models
     command: [ "taskiq", "scheduler", "scheduler:scheduler", "processing.chat_tasks", "--app-dir=src" ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  mcp:
+    profiles: ["integrations"]   # FastMCP server (Jira/GitHub/Slack tools)
+    build:
+      context: .
+      target: mcp
+    hostname: talos-mcp
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-talos_app}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-talos}
+      MILVUS_HOST: milvus-standalone
+      MINIO__INTERNAL_ENDPOINT: minio:9000
+      MINIO__EXTERNAL_ENDPOINT: ${MINIO_EXTERNAL_ENDPOINT:-localhost:9000}
+      REDIS__URL: redis://redis:6379
+      MCP__HOST: 0.0.0.0
+      MCP__PORT: "8001"
+    command: [ "python", "-m", "integrations.mcp_server" ]
+    ports:
+      - "8001:8001"
     depends_on:
       postgres:
         condition: service_healthy

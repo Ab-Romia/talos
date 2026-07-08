@@ -69,3 +69,8 @@ if cfg().is_test:
 async def startup(_state):
     from utils.import_sa_models import import_sa_models
     import_sa_models()
+
+    # Chat storage is bound in the FastAPI lifespan; the worker runs the Slack agent
+    # turn (which persists messages) in its own process, so bind it here too.
+    from chat.storage import bind_chat_storage, DatabaseStorageBackend
+    bind_chat_storage(DatabaseStorageBackend())
