@@ -6,7 +6,7 @@ the Talos tools from the shared registry.
 """
 import asyncio
 
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from integrations.tools import AGENT_TOOLS
 from rag.generation import get_llm
@@ -36,9 +36,16 @@ def _llm():
     return _llm_with_tools
 
 
-async def answer(text: str) -> str:
-    """Run one agent turn over ``text`` and return the final reply."""
-    messages = [SystemMessage(_SYSTEM), HumanMessage(text)]
+async def answer(text: str, history: list[tuple[str, str]] | None = None) -> str:
+    """Run one agent turn over ``text`` and return the final reply.
+
+    ``history`` is prior conversation as ("user" | "assistant", content)
+    pairs, oldest first — e.g. the Slack thread so far.
+    """
+    messages: list = [SystemMessage(_SYSTEM)]
+    for role, content in history or []:
+        messages.append(AIMessage(content) if role == "assistant" else HumanMessage(content))
+    messages.append(HumanMessage(text))
 
     for _ in range(_MAX_STEPS):
         response = await _llm().ainvoke(messages)

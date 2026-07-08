@@ -5,6 +5,7 @@ this task. Here on the worker we run the (slow) embedded agent and post the repl
 """
 import hashlib
 import os
+import re
 import tempfile
 import uuid
 
@@ -16,17 +17,50 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+_MENTION = re.compile(r"<@[^>]+>\s*")
+_HISTORY_LIMIT = 12  # prior turns fed to the agent
+_HISTORY_MSG_CHARS = 2000
+
+
+async def _thread_history(
+    channel: str, thread_ts: str | None, msg_ts: str | None
+) -> list[tuple[str, str]]:
+    """Prior thread messages as (role, content) pairs, oldest first.
+
+    The current message (matched by ts) is excluded — it's passed to the
+    agent separately as the live turn.
+    """
+    if not thread_ts:
+        return []
+
+    history: list[tuple[str, str]] = []
+    for msg in await service.fetch_thread(channel, thread_ts):
+        if msg_ts is not None and msg.get("ts") == msg_ts:
+            continue
+        content = _MENTION.sub("", msg.get("text", "")).strip()
+        if not content:
+            continue
+        role = "assistant" if msg.get("bot_id") else "user"
+        history.append((role, content[:_HISTORY_MSG_CHARS]))
+    return history[-_HISTORY_LIMIT:]
+
 
 @broker.task()
 async def run_agent_turn(
-    slack_user: str, channel: str, text: str, thread_ts: str | None = None
+    slack_user: str,
+    channel: str,
+    text: str,
+    thread_ts: str | None = None,
+    msg_ts: str | None = None,
 ) -> None:
     """Run the embedded agent for one Slack message and reply in-thread."""
     talos_user = service.resolve_talos_user(slack_user)
     logger.info("Slack turn", slack_user=slack_user, talos_user=talos_user, channel=channel)
 
+    history = await _thread_history(channel, thread_ts, msg_ts)
+
     try:
-        reply = await agent.answer(text)
+        reply = await agent.answer(text, history=history)
     except Exception:
         logger.exception("Agent turn failed")
         reply = "Sorry — something went wrong while handling that."

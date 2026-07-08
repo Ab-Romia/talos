@@ -32,6 +32,23 @@ async def post_message(channel: str, text: str, thread_ts: str | None = None) ->
     await _web().chat_postMessage(channel=channel, text=text, thread_ts=thread_ts)
 
 
+async def fetch_thread(channel: str, thread_ts: str, limit: int = 20) -> list[dict]:
+    """Fetch the messages of a Slack thread (oldest first).
+
+    Needs the ``channels:history`` scope for channel threads (``im:history``
+    covers DMs). Returns [] when history is unavailable so the agent turn
+    still runs, just without context.
+    """
+    try:
+        resp = await _web().conversations_replies(
+            channel=channel, ts=thread_ts, limit=limit
+        )
+        return resp.get("messages") or []
+    except Exception:
+        logger.exception("Could not fetch Slack thread history", channel=channel)
+        return []
+
+
 async def download_file(url: str) -> bytes:
     """Download a Slack-hosted file. ``url_private*`` URLs require the bot token."""
     headers = {"Authorization": f"Bearer {cfg().slack.bot_token.get_secret_value()}"}

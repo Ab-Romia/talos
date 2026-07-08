@@ -55,6 +55,7 @@ def _build():
             channel=event["channel"],
             text=text,
             thread_ts=event.get("thread_ts") or event.get("ts"),
+            msg_ts=event.get("ts"),
         )
 
     @app.event("app_mention")
