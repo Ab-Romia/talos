@@ -19,7 +19,7 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 _MENTION = re.compile(r"<@[^>]+>\s*")
-_HISTORY_LIMIT = 12  # prior turns fed to the agent
+_HISTORY_LIMIT = 24  # prior turns fed to the agent (thread expansion inflates counts)
 _HISTORY_MSG_CHARS = 2000
 
 

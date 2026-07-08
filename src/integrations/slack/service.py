@@ -49,18 +49,36 @@ async def fetch_thread(channel: str, thread_ts: str, limit: int = 20) -> list[di
         return []
 
 
-async def fetch_channel_history(channel: str, limit: int = 15) -> list[dict]:
-    """Recent top-level messages of a channel, oldest first.
+async def fetch_channel_history(
+    channel: str, limit: int = 15, expand_threads: int = 5
+) -> list[dict]:
+    """Recent channel messages, oldest first, with recent threads expanded.
 
-    Used to give the agent context on top-level mentions (which have no
-    thread of their own). Same ``channels:history`` scope as threads.
+    ``conversations.history`` returns only top-level messages — facts stated
+    inside a thread would be invisible — so the newest ``expand_threads``
+    threaded messages are replaced by their full reply chain. Used to give
+    the agent context on top-level mentions (which have no thread of their
+    own). Same ``channels:history`` scope as threads.
     """
     try:
         resp = await _web().conversations_history(channel=channel, limit=limit)
-        return list(reversed(resp.get("messages") or []))  # newest-first -> oldest-first
+        messages = list(reversed(resp.get("messages") or []))  # newest-first -> oldest-first
     except Exception:
         logger.exception("Could not fetch Slack channel history", channel=channel)
         return []
+
+    expanded: list[dict] = []
+    budget = expand_threads
+    for msg in messages:
+        if msg.get("reply_count") and budget > 0:
+            budget -= 1
+            # Replies include the thread root as the first element.
+            expanded.extend(
+                await fetch_thread(channel, msg.get("thread_ts") or msg["ts"], limit=10)
+            )
+        else:
+            expanded.append(msg)
+    return expanded
 
 
 async def download_file(url: str) -> bytes:
