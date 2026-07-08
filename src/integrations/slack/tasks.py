@@ -3,6 +3,7 @@
 The events webhook must return within Slack's 3-second window, so it only enqueues
 this task. Here on the worker we run the (slow) embedded agent and post the reply.
 """
+import asyncio
 import hashlib
 import os
 import re
@@ -60,7 +61,14 @@ async def run_agent_turn(
     history = await _thread_history(channel, thread_ts, msg_ts)
 
     try:
-        reply = await agent.answer(text, history=history)
+        # Hard deadline so a stalled upstream (LLM/tool) never leaves the
+        # user without any reply.
+        reply = await asyncio.wait_for(
+            agent.answer(text, history=history), timeout=240
+        )
+    except (TimeoutError, asyncio.TimeoutError):
+        logger.error("Agent turn timed out", channel=channel)
+        reply = "Sorry — that took too long. Please try again."
     except Exception:
         logger.exception("Agent turn failed")
         reply = "Sorry — something went wrong while handling that."

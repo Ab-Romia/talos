@@ -42,6 +42,8 @@ class RagConfig(BaseSettings):
 
     llm_temperature: float = 0.0
     llm_streaming: bool = True
+    llm_timeout: float = 60.0  # per-request timeout (s); default client waits 600s
+    llm_max_retries: int = 2
 
     langchain_tracing_v2: bool = False
     langchain_api_key: SecretStr | None = None

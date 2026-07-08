@@ -23,6 +23,8 @@ def get_llm(provider: str = "openai", streaming: bool | None = None):
             streaming=streaming,
             api_key=global_rag_config.openai_api_key,
             base_url=global_rag_config.openai_base_url,
+            timeout=global_rag_config.llm_timeout,
+            max_retries=global_rag_config.llm_max_retries,
         )
     else:
         raise ValueError(f"Unknown LLM provider: {provider}")
