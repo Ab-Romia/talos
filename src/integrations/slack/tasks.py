@@ -65,6 +65,11 @@ async def run_agent_turn(
         logger.exception("Agent turn failed")
         reply = "Sorry — something went wrong while handling that."
 
+    # The agent may return an empty final message after a tool-only turn
+    # (e.g. it posted into the Talos channel); Slack rejects empty text.
+    if not reply or not reply.strip():
+        reply = "Done."
+
     await service.post_message(channel, reply, thread_ts=thread_ts)
 
 

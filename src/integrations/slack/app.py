@@ -58,14 +58,23 @@ def _build():
             msg_ts=event.get("ts"),
         )
 
+    def _is_retry(request) -> bool:
+        # Slack redelivers events it thinks timed out; processing them again
+        # yields duplicate replies. The original delivery has no retry header.
+        return bool(request.headers.get("x-slack-retry-num"))
+
     @app.event("app_mention")
-    async def on_mention(event):
+    async def on_mention(event, request):
+        if _is_retry(request):
+            return
         await _enqueue(event)
 
     @app.event("message")
-    async def on_message(event):
+    async def on_message(event, request):
         # Only direct messages, and never react to bot/own messages (avoids loops).
         if event.get("channel_type") != "im" or event.get("bot_id"):
+            return
+        if _is_retry(request):
             return
         await _enqueue(event)
 

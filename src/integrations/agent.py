@@ -19,7 +19,10 @@ _SYSTEM = (
     "Use the available tools to answer questions about the team's documents "
     "(rag_ask), read or post channel messages, and list files. "
     "Prefer rag_ask for any question that may be answered by uploaded documents, "
-    "and cite the sources it returns. Keep replies concise and Slack-friendly."
+    "and cite the sources it returns. Keep replies concise and Slack-friendly. "
+    "Always answer the user directly in this conversation; use talos_post_message "
+    "only when explicitly asked to post something to the Talos channel, and even "
+    "then confirm to the user what you did."
 )
 
 _MAX_STEPS = 5
