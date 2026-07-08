@@ -67,11 +67,15 @@ async def fetch_channel_history(
         logger.exception("Could not fetch Slack channel history", channel=channel)
         return []
 
+    # Nearly every root is threaded (each bot reply creates a thread), so
+    # spend the expansion budget on the NEWEST threads — that's where the
+    # facts relevant to a fresh question live.
+    threaded = [m for m in messages if m.get("reply_count")]
+    to_expand = {m["ts"] for m in threaded[-expand_threads:]}
+
     expanded: list[dict] = []
-    budget = expand_threads
     for msg in messages:
-        if msg.get("reply_count") and budget > 0:
-            budget -= 1
+        if msg["ts"] in to_expand:
             # Replies include the thread root as the first element.
             expanded.extend(
                 await fetch_thread(channel, msg.get("thread_ts") or msg["ts"], limit=10)
