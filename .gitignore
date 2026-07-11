@@ -18,3 +18,6 @@ HOW_TO_TEST_ASK.txt
 chat-ui/
 src/graduation_project.egg-info/
 /graphify-out
+
+# IDE
+.idea/
